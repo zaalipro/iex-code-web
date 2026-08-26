@@ -305,7 +305,7 @@ with open(source, "r", encoding="utf-8") as stream:
             except ValueError: raise SystemExit("MAX_TOKENS must be an integer")
             if not 1 <= value <= 128_000: raise SystemExit("MAX_TOKENS is out of range")
         settings[mapped] = value
-with open(destination, "x", encoding="utf-8") as stream:
+with open(destination, "w", encoding="utf-8") as stream:
     json.dump(settings, stream, ensure_ascii=False, separators=(",", ":"))
     stream.write("\n")
 PY
