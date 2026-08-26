@@ -1,0 +1,5 @@
+services:
+  proxy:
+    ports:
+      - "${IEX_CODE_PUBLIC_BIND:-0.0.0.0}:${IEX_CODE_PUBLIC_PORT:-4000}:8443"
+

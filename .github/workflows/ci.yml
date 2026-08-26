@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MIX_ENV: test
+
+jobs:
+  quality:
+    name: Test and quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Erlang and Elixir
+        uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9 # v1.20.4
+        with:
+          otp-version: 28.4.2
+          elixir-version: 1.18.4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.14.0
+          cache: npm
+          cache-dependency-path: assets/package-lock.json
+
+      - name: Install Hex and Rebar
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Restore locked Mix build cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            deps
+            _build/test/lib
+            !_build/test/lib/iex_code
+          key: ${{ runner.os }}-otp-28.4.2-elixir-1.18.4-mix-${{ hashFiles('mix.lock', 'mix.exs', 'config/config.exs', 'config/test.exs') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get --check-locked
+
+      - name: Install and build assets
+        run: |
+          mix tailwind.install --if-missing
+          mix esbuild.install --if-missing
+          npm ci --prefix assets --no-audit --no-fund
+          mix assets.build
+
+      - name: Audit dependencies when supported
+        run: |
+          if mix help deps.audit >/dev/null 2>&1; then
+            mix deps.audit
+          else
+            echo "mix deps.audit is not available; skipping dependency audit."
+          fi
+
+      - name: Check deployment script syntax
+        run: |
+          bash -n install.sh deploy/iex-code-web
+          sh -n deploy/entrypoint.sh deploy/healthcheck.sh
+
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Run project precommit checks
+        run: mix precommit
+
+      - name: Ensure checks did not rewrite tracked files
+        run: git diff --exit-code
+
+  container:
+    name: Deployment artifacts
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Validate Compose configuration
+        env:
+          IEX_CODE_APP_ENV_FILE: /tmp/iex-code-web-ci.env
+          IEX_CODE_STATE_DIR: /tmp/iex-code-web-state
+          IEX_CODE_WORKSPACE_DIR: /tmp/iex-code-web-workspaces
+        run: |
+          : >"$IEX_CODE_APP_ENV_FILE"
+          mkdir -p "$IEX_CODE_STATE_DIR" "$IEX_CODE_WORKSPACE_DIR"
+
+          IEX_CODE_PUBLIC_HOST=127.0.0.1 \
+          IEX_CODE_PUBLIC_PORT=4000 \
+          IEX_CODE_CADDYFILE="$PWD/deploy/Caddyfile.ip" \
+            docker compose \
+              -f compose.yaml -f deploy/compose.caddy-ip.yaml \
+              --profile caddy config --format json \
+              > /tmp/iex-code-web-caddy-ip.json
+
+          IEX_CODE_PUBLIC_HOST=iex.example.com \
+          IEX_CODE_PUBLIC_PORT=443 \
+          IEX_CODE_CADDYFILE="$PWD/deploy/Caddyfile" \
+            docker compose \
+              -f compose.yaml -f deploy/compose.caddy-domain.yaml \
+              --profile caddy config --format json \
+              > /tmp/iex-code-web-caddy.json
+
+          IEX_CODE_PUBLIC_HOST=iex.example.com \
+          IEX_CODE_PUBLIC_PORT=49152 \
+          IEX_CODE_CADDYFILE="$PWD/deploy/Caddyfile" \
+            docker compose \
+              -f compose.yaml -f deploy/compose.behind-proxy.yaml \
+              config --format json \
+              > /tmp/iex-code-web-behind-proxy.json
+
+          python3 - <<'PY'
+          import json
+
+          with open("/tmp/iex-code-web-caddy-ip.json", encoding="utf-8") as source:
+              caddy_ip = json.load(source)
+          assert set(caddy_ip["services"]) == {"app", "proxy"}
+          assert "ports" not in caddy_ip["services"]["app"]
+          ip_ports = caddy_ip["services"]["proxy"]["ports"]
+          assert len(ip_ports) == 1
+          assert ip_ports[0]["published"] == "4000"
+          assert ip_ports[0]["target"] == 8443
+
+          with open("/tmp/iex-code-web-caddy.json", encoding="utf-8") as source:
+              caddy = json.load(source)
+          assert set(caddy["services"]) == {"app", "proxy"}
+          assert "ports" not in caddy["services"]["app"]
+          assert {port["published"] for port in caddy["services"]["proxy"]["ports"]} == {"80", "443"}
+
+          with open("/tmp/iex-code-web-behind-proxy.json", encoding="utf-8") as source:
+              behind_proxy = json.load(source)
+          assert set(behind_proxy["services"]) == {"app"}
+          ports = behind_proxy["services"]["app"]["ports"]
+          assert len(ports) == 1
+          assert ports[0]["host_ip"] == "127.0.0.1"
+          assert ports[0]["published"] == "49152"
+          assert ports[0]["target"] == 4000
+          PY
+
+      - name: Validate Dockerfile
+        run: docker build --check .
+
+      - name: Validate public TLS proxy configuration
+        run: |
+          docker run --rm \
+            --env CADDY_SITE_HOST=iex.example.com \
+            --mount "type=bind,source=${PWD}/deploy/Caddyfile,target=/etc/caddy/Caddyfile,readonly" \
+            caddy:2.10.2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile
+
+          docker run --rm \
+            --env CADDY_SITE_HOST=127.0.0.1 \
+            --mount "type=bind,source=${PWD}/deploy/Caddyfile.ip,target=/etc/caddy/Caddyfile,readonly" \
+            caddy:2.10.2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile
+
+      - name: Build container without publishing
+        run: docker build --pull --tag "iex-code-web:ci-${GITHUB_SHA}" .

@@ -1,0 +1,71 @@
+<Layouts.app flash={@flash}>
+  <main
+    id="admin-login-page"
+    class="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[#090c10] px-4 py-10 text-[#f0f6fc]"
+  >
+    <div class="pointer-events-none absolute inset-0 opacity-50 [background-image:linear-gradient(rgba(255,255,255,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.02)_1px,transparent_1px)] [background-size:44px_44px]">
+    </div>
+    <section class="relative w-full max-w-md border border-[#2a323c] bg-[#10151b] p-6 shadow-2xl shadow-black/40 sm:p-8">
+      <div class="mb-8 flex items-start justify-between gap-5">
+        <div>
+          <p class="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ff8a68]">
+            Private control plane
+          </p>
+          <h1 class="mt-3 text-3xl font-semibold tracking-[-0.04em] text-white">
+            Unlock IexCode
+          </h1>
+        </div>
+        <span class="flex size-11 shrink-0 items-center justify-center border border-emerald-400/25 bg-emerald-400/[0.06] text-emerald-300">
+          <.icon name="hero-lock-closed" class="size-5" />
+        </span>
+      </div>
+
+      <p class="mb-6 text-sm leading-6 text-gray-400">
+        Enter the administrator token generated during installation. It is used only to verify this request and is never stored in your browser session.
+      </p>
+
+      <div
+        :if={@error}
+        id="admin-login-error"
+        role="alert"
+        class="mb-5 border border-rose-400/25 bg-rose-400/[0.06] px-4 py-3 text-sm text-rose-200"
+      >
+        {@error}
+      </div>
+
+      <div
+        :if={!@configured?}
+        id="admin-login-unconfigured"
+        role="status"
+        class="mb-5 border border-amber-400/25 bg-amber-400/[0.06] px-4 py-3 text-sm leading-6 text-amber-100"
+      >
+        Administrator authentication is unavailable. Ask the server operator to configure it.
+      </div>
+
+      <.form for={@form} id="admin-login-form" action={~p"/login"} method="post" class="space-y-5">
+        <.input
+          field={@form[:token]}
+          id="admin-login-token"
+          type="password"
+          label="Administrator token"
+          autocomplete="current-password"
+          required
+          maxlength="4096"
+          class="w-full border border-[#343d48] bg-[#090d12] px-3 py-3 font-mono text-sm text-white outline-none transition focus:border-[#ff8a68] focus:ring-2 focus:ring-[#ff8a68]/20"
+        />
+        <button
+          id="admin-login-submit"
+          type="submit"
+          disabled={!@configured?}
+          class="inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[#f27d60] px-5 text-sm font-semibold text-[#160b08] transition hover:bg-[#ff9275] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          Open workspace <.icon name="hero-arrow-right" class="size-4" />
+        </button>
+      </.form>
+
+      <p class="mt-6 border-t border-[#29313a] pt-5 font-mono text-[10px] uppercase tracking-[0.12em] text-gray-500">
+        Single-owner access · session expires automatically
+      </p>
+    </section>
+  </main>
+</Layouts.app>

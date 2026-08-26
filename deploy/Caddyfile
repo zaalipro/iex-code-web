@@ -1,0 +1,35 @@
+{
+	admin off
+	http_port 8080
+	https_port 8443
+}
+
+{$CADDY_SITE_HOST} {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+	}
+
+	request_body {
+		max_size 16MB
+	}
+
+	reverse_proxy app:4000 {
+		flush_interval -1
+		header_up Host {http.request.host}
+		header_up X-Forwarded-Proto https
+		header_up X-Real-IP {http.request.remote.host}
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,15 @@
+.git
+.github
+.agents
+_build
+deps
+assets/node_modules
+cover
+doc
+tmp
+research
+*.db
+*.db-*
+erl_crash.dump
+.DS_Store
+

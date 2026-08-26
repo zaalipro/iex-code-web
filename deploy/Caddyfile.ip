@@ -1,0 +1,36 @@
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://{$CADDY_SITE_HOST}:8443 {
+	tls internal
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+	}
+
+	request_body {
+		max_size 16MB
+	}
+
+	reverse_proxy app:4000 {
+		flush_interval -1
+		header_up Host {http.request.host}
+		header_up X-Forwarded-Proto https
+		header_up X-Real-IP {http.request.remote.host}
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

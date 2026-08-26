@@ -1,0 +1,5 @@
+services:
+  app:
+    ports:
+      - "127.0.0.1:${IEX_CODE_PUBLIC_PORT:-4000}:4000"
+

@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly CONFIG_FILE=/etc/iex-code-web/install.conf
+
+die() {
+  printf 'iex-code-web: %s\n' "$*" >&2
+  exit 1
+}
+
+require_root() {
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || die "run this command as root"
+}
+
+load_config() {
+  [[ -r "$CONFIG_FILE" ]] || die "missing $CONFIG_FILE; run the installer first"
+  # The installer creates this root-owned file from validated scalar values.
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+  : "${IEX_CODE_SOURCE_DIR:?missing source directory}"
+  : "${IEX_CODE_APP_ENV_FILE:?missing app environment file}"
+  : "${IEX_CODE_STATE_DIR:?missing state directory}"
+  : "${IEX_CODE_WORKSPACE_DIR:?missing workspace directory}"
+  : "${IEX_CODE_PUBLIC_PORT:?missing public port}"
+  IEX_CODE_PUBLIC_IP=${IEX_CODE_PUBLIC_IP:-}
+  IEX_CODE_PUBLIC_BIND=${IEX_CODE_PUBLIC_BIND:-0.0.0.0}
+  IEX_CODE_PUBLIC_HOST=${IEX_CODE_PUBLIC_HOST:-$IEX_CODE_PUBLIC_IP}
+  IEX_CODE_CADDYFILE=${IEX_CODE_CADDYFILE:-$IEX_CODE_SOURCE_DIR/deploy/Caddyfile.ip}
+  IEX_CODE_BEHIND_PROXY=${IEX_CODE_BEHIND_PROXY:-false}
+  IEX_CODE_BACKUP_DIR=${IEX_CODE_BACKUP_DIR:-/var/backups/iex-code-web}
+  IEX_CODE_APP_UID=${IEX_CODE_APP_UID:-10001}
+  IEX_CODE_APP_GID=${IEX_CODE_APP_GID:-10001}
+}
+
+detect_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+  elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+  else
+    die "Docker Compose is not installed"
+  fi
+}
+
+compose() {
+  local -a topology=()
+  if [[ $IEX_CODE_BEHIND_PROXY == true ]]; then
+    topology=(-f "$IEX_CODE_SOURCE_DIR/deploy/compose.behind-proxy.yaml")
+  elif [[ -n ${IEX_CODE_PUBLIC_DOMAIN:-} ]]; then
+    topology=(-f "$IEX_CODE_SOURCE_DIR/deploy/compose.caddy-domain.yaml" --profile caddy)
+  else
+    topology=(-f "$IEX_CODE_SOURCE_DIR/deploy/compose.caddy-ip.yaml" --profile caddy)
+  fi
+  IEX_CODE_APP_ENV_FILE="$IEX_CODE_APP_ENV_FILE" \
+  IEX_CODE_STATE_DIR="$IEX_CODE_STATE_DIR" \
+  IEX_CODE_WORKSPACE_DIR="$IEX_CODE_WORKSPACE_DIR" \
+  IEX_CODE_PUBLIC_IP="$IEX_CODE_PUBLIC_IP" \
+  IEX_CODE_PUBLIC_HOST="$IEX_CODE_PUBLIC_HOST" \
+  IEX_CODE_CADDYFILE="$IEX_CODE_CADDYFILE" \
+  IEX_CODE_PUBLIC_BIND="$IEX_CODE_PUBLIC_BIND" \
+  IEX_CODE_PUBLIC_PORT="$IEX_CODE_PUBLIC_PORT" \
+  IEX_CODE_APP_UID="$IEX_CODE_APP_UID" \
+  IEX_CODE_APP_GID="$IEX_CODE_APP_GID" \
+    "${COMPOSE[@]}" --project-directory "$IEX_CODE_SOURCE_DIR" \
+      -f "$IEX_CODE_SOURCE_DIR/compose.yaml" "${topology[@]}" "$@"
+}
+
+running_app() {
+  [[ -n "$(compose ps -q app 2>/dev/null || true)" ]]
+}
+
+backup() (
+  local requested_destination=${1:-}
+  mkdir -p -m 0700 "$IEX_CODE_BACKUP_DIR"
+
+  local timestamp staging archive container_staging
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  staging=$(mktemp -d "$IEX_CODE_STATE_DIR/.backup-${timestamp}.XXXXXX")
+  trap 'rm -rf -- "$staging"' EXIT
+  archive="$IEX_CODE_BACKUP_DIR/iex-code-web-${timestamp}.tar.gz"
+  if [[ -n "$requested_destination" ]]; then
+    if [[ -d "$requested_destination" ]]; then
+      archive="$requested_destination/iex-code-web-${timestamp}.tar.gz"
+    else
+      archive=$requested_destination
+    fi
+    mkdir -p -m 0700 "$(dirname "$archive")"
+  fi
+  container_staging="/var/lib/iex-code/$(basename "$staging")"
+  chown "$IEX_CODE_APP_UID:$IEX_CODE_APP_GID" "$staging"
+  chmod 0700 "$staging"
+
+  if [[ -f "$IEX_CODE_STATE_DIR/iex_code.db" ]]; then
+    if running_app; then
+      compose exec -T app sqlite3 /var/lib/iex-code/iex_code.db \
+        ".backup '$container_staging/iex_code.db'" >/dev/null
+    else
+      compose run --rm --no-deps app sqlite3 /var/lib/iex-code/iex_code.db \
+        ".backup '$container_staging/iex_code.db'" >/dev/null
+    fi
+  fi
+
+  local -a members=()
+  [[ -f "$staging/iex_code.db" ]] && members+=(iex_code.db)
+  [[ -d "$IEX_CODE_STATE_DIR/research" ]] && members+=(research)
+  ((${#members[@]} > 0)) || die "there is no database or research data to back up"
+
+  local temp_archive="$archive.partial"
+  rm -f -- "$temp_archive"
+  if [[ -f "$staging/iex_code.db" && -d "$IEX_CODE_STATE_DIR/research" ]]; then
+    tar -czf "$temp_archive" -C "$staging" iex_code.db \
+      -C "$IEX_CODE_STATE_DIR" research
+  elif [[ -f "$staging/iex_code.db" ]]; then
+    tar -czf "$temp_archive" -C "$staging" iex_code.db
+  else
+    tar -czf "$temp_archive" -C "$IEX_CODE_STATE_DIR" research
+  fi
+  mv -f -- "$temp_archive" "$archive"
+  sha256sum "$archive" >"$archive.sha256"
+  chmod 0600 "$archive" "$archive.sha256"
+  printf '%s\n' "$archive"
+)
+
+safe_archive() {
+  local archive=$1
+  python3 - "$archive" <<'PY'
+import pathlib, sys, tarfile
+
+with tarfile.open(sys.argv[1], "r:gz") as bundle:
+    for member in bundle.getmembers():
+        path = pathlib.PurePosixPath(member.name)
+        allowed = member.name == "iex_code.db" or member.name == "research" or \
+            (path.parts and path.parts[0] == "research")
+        if path.is_absolute() or ".." in path.parts or not allowed:
+            raise SystemExit(1)
+        if not (member.isfile() or member.isdir()):
+            raise SystemExit(1)
+PY
+}
+
+restore() (
+  local archive=${1:-}
+  [[ -n "$archive" && -f "$archive" ]] || die "restore requires an existing .tar.gz backup"
+  safe_archive "$archive" || die "backup contains an unsafe or unexpected path"
+
+  if [[ -f "$IEX_CODE_STATE_DIR/iex_code.db" || -d "$IEX_CODE_STATE_DIR/research" ]]; then
+    printf 'Creating a safety backup before restore...\n' >&2
+    backup >/dev/null
+  fi
+
+  local staging
+  staging=$(mktemp -d "$IEX_CODE_STATE_DIR/.restore.XXXXXX")
+  trap 'rm -rf -- "$staging"' EXIT
+  tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$staging"
+
+  compose down
+  rm -f -- "$IEX_CODE_STATE_DIR/iex_code.db" \
+    "$IEX_CODE_STATE_DIR/iex_code.db-wal" "$IEX_CODE_STATE_DIR/iex_code.db-shm"
+  rm -rf -- "$IEX_CODE_STATE_DIR/research"
+  if [[ -f "$staging/iex_code.db" ]]; then
+    install -o "$IEX_CODE_APP_UID" -g "$IEX_CODE_APP_GID" -m 0600 \
+      "$staging/iex_code.db" "$IEX_CODE_STATE_DIR/iex_code.db"
+  fi
+  if [[ -d "$staging/research" ]]; then
+    cp -a -- "$staging/research" "$IEX_CODE_STATE_DIR/research"
+    chown -R "$IEX_CODE_APP_UID:$IEX_CODE_APP_GID" "$IEX_CODE_STATE_DIR/research"
+  fi
+  compose up -d
+  printf 'Restore complete. Use `iex-code-web status` to check readiness.\n'
+)
+
+usage() {
+  cat <<'EOF'
+Usage: iex-code-web COMMAND [OPTIONS]
+
+Commands:
+  start                  Start the deployment
+  stop                   Stop the deployment without removing it
+  status                 Show service status
+  logs [SERVICE]         Follow logs (app or proxy; all services by default)
+  restart                Restart the deployment
+  update                 Back up, update source, rebuild, and restart
+  backup [DEST]          Create a backup, optionally at DEST or in DEST directory
+  restore FILE.tar.gz    Restore a backup after taking a safety backup
+  reset-token            Rotate the one-time admin token and revoke sessions
+  token                  Alias for reset-token
+  config                 Print non-secret deployment configuration
+  uninstall [--purge]    Remove services; preserve data unless --purge is explicit
+EOF
+}
+
+main() {
+  require_root
+  load_config
+  detect_compose
+
+  local command=${1:-}
+  shift || true
+  case "$command" in
+    start) compose up -d ;;
+    stop) compose stop ;;
+    status) compose ps ;;
+    logs)
+      if (($#)); then compose logs --tail=200 -f "$1"; else compose logs --tail=200 -f; fi
+      ;;
+    restart) compose restart ;;
+    update) exec "$IEX_CODE_SOURCE_DIR/install.sh" --update-only ;;
+    backup) backup "${1:-}" ;;
+    restore) restore "${1:-}" ;;
+    token|reset-token) exec "$IEX_CODE_SOURCE_DIR/install.sh" --update-only --rotate-token ;;
+    config)
+      if [[ $IEX_CODE_BEHIND_PROXY == true || -n ${IEX_CODE_PUBLIC_DOMAIN:-} ]]; then
+        printf 'URL=https://%s\n' "$IEX_CODE_PUBLIC_HOST"
+      else
+        printf 'URL=https://%s:%s\n' "$IEX_CODE_PUBLIC_HOST" "$IEX_CODE_PUBLIC_PORT"
+      fi
+      printf 'SOURCE_DIR=%s\nSTATE_DIR=%s\nWORKSPACE_DIR=%s\nBACKUP_DIR=%s\n' \
+        "$IEX_CODE_SOURCE_DIR" "$IEX_CODE_STATE_DIR" "$IEX_CODE_WORKSPACE_DIR" \
+        "$IEX_CODE_BACKUP_DIR"
+      ;;
+    uninstall)
+      if [[ ${1:-} == --purge ]]; then
+        compose down --remove-orphans --volumes
+      else
+        compose down --remove-orphans
+      fi
+      rm -rf -- "$IEX_CODE_SOURCE_DIR"
+      rm -f -- /usr/local/bin/iex-code-web
+      if [[ ${1:-} == --purge ]]; then
+        rm -rf -- "$IEX_CODE_STATE_DIR" "$IEX_CODE_WORKSPACE_DIR" \
+          "$IEX_CODE_BACKUP_DIR" /etc/iex-code-web
+        printf 'Services, configuration, workspaces, backups, and state were purged.\n'
+      else
+        printf 'Services removed. State, workspaces, backups, and configuration were preserved.\n'
+      fi
+      ;;
+    help|-h|--help|'') usage ;;
+    *) die "unknown command: $command" ;;
+  esac
+}
+
+main "$@"

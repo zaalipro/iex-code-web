@@ -1,0 +1,85 @@
+name: iex-code-web
+
+services:
+  app:
+    image: ${IEX_CODE_IMAGE:-iex-code-web:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_UID: ${IEX_CODE_APP_UID:-10001}
+        APP_GID: ${IEX_CODE_APP_GID:-10001}
+    env_file:
+      - ${IEX_CODE_APP_ENV_FILE:?set IEX_CODE_APP_ENV_FILE}
+    environment:
+      DATABASE_PATH: /var/lib/iex-code/iex_code.db
+      HOME: /var/lib/iex-code/home
+      IEX_CODE_ALLOW_REMOTE: "true"
+      IEX_CODE_BIND: 0.0.0.0
+      IEX_CODE_DEFAULT_WORKSPACE: /workspaces/default
+      IEX_CODE_WORKSPACE_ROOT: /workspaces
+      PHX_SERVER: "true"
+      PORT: "4000"
+    user: "${IEX_CODE_APP_UID:-10001}:${IEX_CODE_APP_GID:-10001}"
+    expose:
+      - "4000"
+    volumes:
+      - type: bind
+        source: ${IEX_CODE_STATE_DIR:-/var/lib/iex-code-web}
+        target: /var/lib/iex-code
+      - type: bind
+        source: ${IEX_CODE_WORKSPACE_DIR:-/srv/iex-code-workspaces}
+        target: /workspaces
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/iex-code-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  proxy:
+    image: iex-code-web-proxy:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: proxy
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      CADDY_SITE_HOST: ${IEX_CODE_PUBLIC_HOST:-127.0.0.1}
+    user: "10002:10002"
+    profiles: ["caddy"]
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+        mode: 0444
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+configs:
+  caddyfile:
+    file: ${IEX_CODE_CADDYFILE:-./deploy/Caddyfile.ip}
+
+volumes:
+  caddy_data:
+  caddy_config:
