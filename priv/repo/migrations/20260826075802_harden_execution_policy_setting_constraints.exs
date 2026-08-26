@@ -21,7 +21,7 @@ defmodule IexCode.Repo.Migrations.HardenExecutionPolicySettingConstraints do
     openai_api_key TEXT,
     openai_base_url TEXT DEFAULT 'https://cli.llmotions.com/v1',
     default_model_provider TEXT DEFAULT 'openai',
-    default_model TEXT DEFAULT 'gemini-3.7-flash-high',
+    default_model TEXT DEFAULT 'deepseek-v4-pro',
     swarm_agent_count INTEGER DEFAULT 4,
     auto_save INTEGER DEFAULT 1,
     inserted_at TEXT NOT NULL,

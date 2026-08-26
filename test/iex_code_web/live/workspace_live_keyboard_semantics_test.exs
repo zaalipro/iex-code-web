@@ -51,11 +51,23 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
   end
 
   test "kanban ribbons and cards are native buttons", %{view: view, task: task} do
-    assert has_element?(view, "button[id^='kanban-col-'][aria-expanded='false']")
+    assert has_element?(view, "#kanban-board[role='region'][aria-label='Task status board']")
+
+    assert has_element?(
+             view,
+             "button#kanban-col-scheduled[data-column-variant='collapsed'][aria-expanded='false'] .kanban-column__label"
+           )
 
     view
     |> element("#kanban-col-ready")
     |> render_click()
+
+    assert has_element?(view, "#kanban-col-ready[data-column-variant='expanded']")
+
+    assert has_element?(
+             view,
+             "button#kanban-collapse-ready[aria-expanded='true'][aria-controls='kanban-cards-ready']"
+           )
 
     assert has_element?(view, "button#task-card-#{task.id}")
   end

@@ -86,7 +86,7 @@ defmodule IexCode.Execution.Policy do
     "swarm_max_retries" => 3,
     "default_tools" => %{"ast_search" => true, "web_search" => false},
     "model_provider" => "openai",
-    "model_name" => "gemini-3.7-flash-high",
+    "model_name" => "deepseek-v4-pro",
     "temperature" => 0.2,
     "max_tokens" => 4_096
   }

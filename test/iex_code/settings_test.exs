@@ -18,7 +18,7 @@ defmodule IexCode.SettingsTest do
       policy = Settings.execution_policy(schema_defaults)
 
       assert schema_defaults.default_model_provider == "openai"
-      assert schema_defaults.default_model == "gemini-3.7-flash-high"
+      assert schema_defaults.default_model == "deepseek-v4-pro"
       assert schema_defaults.openai_base_url == "https://cli.llmotions.com/v1"
       assert persisted.default_model_provider == schema_defaults.default_model_provider
       assert persisted.default_model == schema_defaults.default_model
@@ -30,7 +30,7 @@ defmodule IexCode.SettingsTest do
     test "initializes default settings when database is empty" do
       settings = Settings.get_settings()
       assert %AppSettings{} = settings
-      assert settings.default_model == "gemini-3.7-flash-high"
+      assert settings.default_model == "deepseek-v4-pro"
       assert settings.openai_base_url == "https://cli.llmotions.com/v1"
       # No default API key is ever injected; it must come from the environment or stay unset.
       assert settings.openai_api_key in [nil, "", System.get_env("OPENAI_API_KEY")]

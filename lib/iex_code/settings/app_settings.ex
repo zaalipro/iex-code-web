@@ -12,7 +12,7 @@ defmodule IexCode.Settings.AppSettings do
     field :openai_api_key, :string, redact: true
     field :openai_base_url, :string, default: "https://cli.llmotions.com/v1"
     field :default_model_provider, :string, default: "openai"
-    field :default_model, :string, default: "gemini-3.7-flash-high"
+    field :default_model, :string, default: "deepseek-v4-pro"
     field :swarm_agent_count, :integer, default: 4
     field :auto_save, :boolean, default: true
     field :temperature, :float, default: 0.2

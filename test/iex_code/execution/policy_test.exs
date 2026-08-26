@@ -37,9 +37,9 @@ defmodule IexCode.Execution.PolicyTest do
              "swarm_max_retries" => 3,
              "allowed_tools" => @core_tools ++ ["ast_search"],
              "model_provider" => "openai",
-             "model_name" => "gemini-3.7-flash-high",
+             "model_name" => "deepseek-v4-pro",
              "model_route_sha256" =>
-               "534796b017880f757da49ce898f1c150d6550ea6c407142f115e52cf65e7eb0d",
+               "9a272b777943c8ecd1f529ffcb5d3f6e5f8f582ec7ace161cd7aa28f17a7dd7f",
              "temperature" => 0.2,
              "max_tokens" => 4_096
            }
@@ -276,7 +276,7 @@ defmodule IexCode.Execution.PolicyTest do
     assert policy["swarm_agent_count"] == 4
     assert policy["swarm_max_retries"] == 3
     assert policy["model_provider"] == "openai"
-    assert policy["model_name"] == "gemini-3.7-flash-high"
+    assert policy["model_name"] == "deepseek-v4-pro"
     assert policy["temperature"] == 0.2
     assert policy["max_tokens"] == 4_096
   end

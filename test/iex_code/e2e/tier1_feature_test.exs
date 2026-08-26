@@ -37,7 +37,7 @@ defmodule IexCode.E2E.Tier1FeatureTest do
       settings = Settings.get_settings()
       assert %AppSettings{} = settings
       assert settings.default_model_provider == "openai"
-      assert settings.default_model == "gemini-3.7-flash-high"
+      assert settings.default_model == "deepseek-v4-pro"
       assert settings.openai_base_url == "https://cli.llmotions.com/v1"
       assert settings.swarm_agent_count == 4
       assert IexCode.Repo.aggregate(AppSettings, :count) == 1

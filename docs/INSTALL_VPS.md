@@ -179,7 +179,7 @@ and access model produced by `install.sh` before changing permissions.
 3. Enter `https://cli.llmotions.com/v1` as the base URL (or your own
    OpenAI-compatible endpoint).
 4. Enter `<YOUR_LLMOTIONS_API_KEY>` in the password field.
-5. Set the model to `ox-alpha` (or another exact identifier supported by the
+5. Set the model to `deepseek-v4-pro` (or another exact identifier supported by the
    provider).
 6. Save and run a harmless interactive prompt.
 

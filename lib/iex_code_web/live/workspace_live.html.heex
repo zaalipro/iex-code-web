@@ -1029,7 +1029,12 @@
             </div>
 
             <!-- Kanban 8-Column Accordion Board -->
-            <div class="flex-1 flex gap-3 overflow-x-auto pb-2 select-none">
+            <div
+              id="kanban-board"
+              role="region"
+              aria-label="Task status board"
+              class="flex flex-1 snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain px-0.5 pb-3 pt-0.5"
+            >
               <%= for col_status <- Kanban.Task.statuses() do %>
                 <% col_tasks = Enum.filter(@tasks, &(&1.status == col_status))
                 is_expanded = @expanded_column == col_status %>
@@ -1038,10 +1043,12 @@
                   <!-- Expanded Column -->
                   <div
                     id={"kanban-col-#{col_status}"}
-                    class="w-80 flex-shrink-0 bg-[#11151c] border border-[#21262d] rounded-2xl flex flex-col h-full overflow-hidden transition-all duration-200"
+                    data-status={col_status}
+                    data-column-variant="expanded"
+                    class="kanban-column kanban-column--expanded flex h-full flex-shrink-0 snap-start flex-col"
                   >
                     <!-- Column Header -->
-                    <div class="p-3.5 border-b border-[#21262d] flex items-center justify-between shrink-0">
+                    <div class="kanban-column__header flex shrink-0 items-center justify-between border-b p-3.5">
                       <div class="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-gray-300">
                         <span class={[
                           "w-2 h-2 rounded-full",
@@ -1056,14 +1063,22 @@
                           col_status == "done" && "bg-gray-500"
                         ]}></span>
                         <span class="uppercase">{String.upcase(col_status)}</span>
-                        <span class="text-gray-500 text-[11px]">({length(col_tasks)})</span>
+                        <span
+                          class="kanban-column__count rounded-full px-2 text-[10px] font-mono"
+                          aria-label={"#{length(col_tasks)} tasks"}
+                        >
+                          {length(col_tasks)}
+                        </span>
                       </div>
                       <button
+                        id={"kanban-collapse-#{col_status}"}
                         type="button"
                         phx-click="toggle_column"
                         phx-value-status={col_status}
+                        aria-controls={"kanban-cards-#{col_status}"}
+                        aria-expanded="true"
                         aria-label={"Collapse #{col_status} column"}
-                        class="text-gray-500 hover:text-white p-1 rounded-lg hover:bg-[#161b22] transition-smooth"
+                        class="kanban-column__collapse rounded-lg p-1 text-gray-500 transition-smooth active:scale-95"
                         title="Collapse Column"
                       >
                         <.icon name="hero-chevron-left" class="w-3.5 h-3.5" />
@@ -1149,16 +1164,17 @@
                     phx-value-status={col_status}
                     phx-hook=".KanbanDrag"
                     data-status={col_status}
+                    data-column-variant="collapsed"
                     aria-label={"Expand #{col_status} column"}
                     aria-expanded="false"
-                    class="w-12 flex-shrink-0 bg-[#11151c] border border-[#21262d] hover:border-gray-500 rounded-2xl flex flex-col items-center py-4 justify-between transition-smooth cursor-pointer group"
+                    class="kanban-column kanban-column--collapsed group flex flex-shrink-0 snap-start flex-col items-center justify-between px-2 py-4"
                     title={"Click to expand #{col_status} column"}
                   >
-                    <div class="flex flex-col items-center gap-3">
+                    <div class="flex w-full flex-col items-center gap-3">
                       <span class={[
-                        "w-2.5 h-2.5 rounded-full shrink-0",
+                        "h-2.5 w-2.5 shrink-0 rounded-full ring-4 ring-white/[0.025]",
                         col_status == "running" &&
-                          "bg-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse",
+                          "bg-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.8)] motion-safe:animate-pulse",
                         col_status == "ready" && "bg-blue-400",
                         col_status == "scheduled" && "bg-indigo-400",
                         col_status == "todo" && "bg-purple-400",
@@ -1167,12 +1183,12 @@
                         col_status == "review" && "bg-amber-400",
                         col_status == "done" && "bg-gray-500"
                       ]}></span>
-                      <span class="writing-vertical text-xs font-mono font-bold uppercase tracking-wider text-gray-400 group-hover:text-white transition-colors">
+                      <span class="kanban-column__label block w-full text-center font-mono font-bold uppercase">
                         {String.upcase(col_status)}
                       </span>
                     </div>
 
-                    <span class="px-2 py-0.5 rounded-full bg-[#1c2128] text-[10px] font-mono text-gray-400 border border-white/5">
+                    <span class="kanban-column__count rounded-full px-2 py-1 text-[10px] font-mono">
                       {length(col_tasks)}
                     </span>
                   </button>
@@ -3594,6 +3610,7 @@
                           <%= for {model_id, label, provider_label, provider_id} <- [
                             {"ox-alpha", "OX Alpha", "LLMotions · OpenAI-compatible", "openai"},
                             {"gemini-3.7-flash-high", "Gemini 3.7 Flash High", "OpenAI-compatible", "openai"},
+                            {"deepseek-v4-pro", "DeepSeek V4 Pro", "OpenAI-compatible", "openai"},
                             {"gpt-5.4-turbo", "GPT 5.4 Turbo", "OpenAI", "openai"},
                             {"claude-3.7-sonnet", "Claude 3.7 Sonnet", "Anthropic", "anthropic"}
                           ] do %>

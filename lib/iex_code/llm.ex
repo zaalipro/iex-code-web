@@ -34,7 +34,7 @@ defmodule IexCode.LLM do
           (session && session.model_provider) || settings.default_model_provider || "openai"
 
         raw_model =
-          (session && session.model_name) || settings.default_model || "claude-3-7-sonnet"
+          (session && session.model_name) || settings.default_model || "deepseek-v4-pro"
 
         if Limits.valid_model_name?(raw_model) do
           do_chat(

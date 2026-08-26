@@ -22,8 +22,8 @@ defmodule IexCode.Repo.Migrations.CreateInitialSchema do
 
       add :title, :string, null: false
       add :swarm_mode, :boolean, default: false, null: false
-      add :model_provider, :string, default: "anthropic", null: false
-      add :model_name, :string, default: "claude-3-7-sonnet", null: false
+      add :model_provider, :string, default: "openai", null: false
+      add :model_name, :string, default: "deepseek-v4-pro", null: false
       add :temperature, :float, default: 0.2
       add :status, :string, default: "idle", null: false
 
@@ -80,9 +80,9 @@ defmodule IexCode.Repo.Migrations.CreateInitialSchema do
       add :anthropic_api_key, :string
       add :anthropic_base_url, :string, default: "https://api.anthropic.com"
       add :openai_api_key, :string
-      add :openai_base_url, :string, default: "https://api.openai.com/v1"
-      add :default_model_provider, :string, default: "anthropic"
-      add :default_model, :string, default: "claude-3-7-sonnet"
+      add :openai_base_url, :string, default: "https://cli.llmotions.com/v1"
+      add :default_model_provider, :string, default: "openai"
+      add :default_model, :string, default: "deepseek-v4-pro"
       add :swarm_agent_count, :integer, default: 4
       add :auto_save, :boolean, default: true
 

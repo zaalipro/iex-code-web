@@ -25,7 +25,7 @@ defmodule IexCode.Repo.Migrations.AddExecutionPolicySettings do
       SET anthropic_base_url = COALESCE(NULLIF(anthropic_base_url, ''), 'https://api.anthropic.com'),
           openai_base_url = COALESCE(NULLIF(openai_base_url, ''), 'https://cli.llmotions.com/v1'),
           default_model_provider = COALESCE(NULLIF(default_model_provider, ''), 'openai'),
-          default_model = COALESCE(NULLIF(default_model, ''), 'gemini-3.7-flash-high'),
+          default_model = COALESCE(NULLIF(default_model, ''), 'deepseek-v4-pro'),
           swarm_agent_count = CASE WHEN swarm_agent_count IS NULL OR swarm_agent_count < 4 THEN 4 ELSE swarm_agent_count END,
           auto_save = COALESCE(auto_save, 1),
           temperature = COALESCE(temperature, 0.2),

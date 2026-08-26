@@ -73,7 +73,7 @@ After signing in, open **Settings → Model providers** and configure:
 | Provider | `OpenAI or compatible` |
 | Base URL | `https://cli.llmotions.com/v1` |
 | API key | `<YOUR_LLMOTIONS_API_KEY>` |
-| Model | `ox-alpha` |
+| Model | `deepseek-v4-pro` |
 
 Model identifiers are passed through unchanged. Blank credential fields preserve
 the saved secret; **Remove credential** clears it. Credentials entered in Settings

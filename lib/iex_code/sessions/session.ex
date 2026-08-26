@@ -11,7 +11,7 @@ defmodule IexCode.Sessions.Session do
     field :title, :string
     field :swarm_mode, :boolean, default: false
     field :model_provider, :string, default: "openai"
-    field :model_name, :string, default: "gemini-3.7-flash-high"
+    field :model_name, :string, default: "deepseek-v4-pro"
     field :temperature, :float, default: 0.2
     field :status, :string, default: "idle"
 

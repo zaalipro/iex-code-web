@@ -238,6 +238,16 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
     updated = Sessions.get_session!(session.id)
     assert updated.model_name == "ox-alpha"
     assert updated.model_provider == "openai"
+
+    render_click(view, "toggle_dropdown", %{"name" => "model"})
+
+    view
+    |> element("button[phx-click='change_model'][phx-value-model='deepseek-v4-pro']")
+    |> render_click()
+
+    updated = Sessions.get_session!(session.id)
+    assert updated.model_name == "deepseek-v4-pro"
+    assert updated.model_provider == "openai"
   end
 
   test "session Settings route renders scoped provider-reported usage", %{

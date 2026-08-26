@@ -16,7 +16,7 @@ defmodule IexCode.Settings do
 
   @default_openai_base "https://cli.llmotions.com/v1"
   @default_provider "openai"
-  @default_model "gemini-3.7-flash-high"
+  @default_model "deepseek-v4-pro"
   @settings_topic "settings"
   @stale_update_attempts 64
   @tool_atoms %{"ast_search" => :ast_search, "web_search" => :web_search}
