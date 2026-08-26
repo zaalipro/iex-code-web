@@ -6,7 +6,7 @@ ARG ELIXIR_IMAGE=elixir:1.18.4-otp-28-slim
 # Docker refuses to execute such a binary after all capabilities are dropped,
 # even when Caddy listens only on unprivileged container ports. A plain copy
 # intentionally strips that extended attribute.
-FROM caddy:2.10.2-alpine AS proxy
+FROM caddy:2.11.4-alpine AS proxy
 RUN cp /usr/bin/caddy /usr/local/bin/caddy-unprivileged \
     && chmod 0555 /usr/local/bin/caddy-unprivileged \
     && addgroup -g 10002 iexproxy \
