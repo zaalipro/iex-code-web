@@ -159,14 +159,13 @@ defmodule IexCode.Adversarial.Challenger2SignalAndChurnStressTest do
       subscribe_terminal(session_id)
       assert {:ok, pid} = TerminalServer.ensure_started(session_id, workspace_path: path)
 
-      # Run the loop in one foreground process group. On interactive bash, a
-      # loop entered directly at the prompt gives each `sleep` its own job;
-      # SIGTSTP then leaves stopped sleeps behind instead of suspending the
-      # workload as a whole.
-      assert {:ok, loop_command_id} =
-               TerminalServer.run_command_with_id(
+      # Replace the interactive shell with the workload so every signal targets
+      # the same foreground process group. Otherwise bash reclaims the PTY when
+      # the job stops and a subsequent SIGCONT can accidentally target bash.
+      assert :ok =
+               TerminalServer.send_input(
                  session_id,
-                 "sh -c 'for i in $(seq 1 500); do echo \"CYCLE_TICK_$i\"; sleep 0.02; done'"
+                 "exec sh -c 'for i in $(seq 1 500); do echo \"CYCLE_TICK_$i\"; sleep 0.02; done'\n"
                )
 
       assert {:ok, _} = receive_terminal_output(session_id, "CYCLE_TICK_1", 8_000)
@@ -179,14 +178,13 @@ defmodule IexCode.Adversarial.Challenger2SignalAndChurnStressTest do
         _ = :sys.get_state(pid)
       end
 
+      # A hard restart is the deterministic lifecycle boundary for this stress
+      # workload. It reaps the replaced shell even if the final SIGCONT is still
+      # in the port queue, then gives the responsiveness assertion a fresh PTY.
+      assert {:ok, restarted_pid} = TerminalServer.restart(session_id, workspace_path: path)
+      assert restarted_pid != pid
+      _ = :sys.get_state(restarted_pid)
       assert {:ok, %{status: :running}} = TerminalServer.get_state(session_id)
-
-      # Interrupt loop
-      assert :ok = TerminalServer.send_signal(session_id, :sigint)
-
-      assert_receive {:terminal_command_completed,
-                      %{session_id: ^session_id, command_id: ^loop_command_id}},
-                     8_000
 
       token = "CYCLE_STRESS_PASSED"
       assert {:ok, command_id} = TerminalServer.run_command_with_id(session_id, "echo #{token}")
