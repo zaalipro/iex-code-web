@@ -43,7 +43,7 @@ defmodule IexCode.Tools.GitStagingAdversarialStressTest do
 
       # Set up bare remote and clone to test remote tracking
       bare_remote = Path.join(tmp_base, "remote.git")
-      {_, 0} = System.cmd("git", ["init", "--bare", bare_remote])
+      {_, 0} = System.cmd("git", ["init", "--bare", "-b", "main", bare_remote])
       {_, 0} = System.cmd("git", ["remote", "add", "origin", bare_remote], cd: repo_dir)
       {_, 0} = System.cmd("git", ["push", "-u", "origin", "main"], cd: repo_dir)
 
@@ -93,13 +93,13 @@ defmodule IexCode.Tools.GitStagingAdversarialStressTest do
 
       # Setup remote
       bare_remote = Path.join(tmp_base, "bare_remote.git")
-      {_, 0} = System.cmd("git", ["init", "--bare", bare_remote])
+      {_, 0} = System.cmd("git", ["init", "--bare", "-b", "main", bare_remote])
       {_, 0} = System.cmd("git", ["remote", "add", "origin", bare_remote], cd: repo1)
       {_, 0} = System.cmd("git", ["push", "-u", "origin", "main"], cd: repo1)
 
       # Clone repo2 from bare remote
       repo2 = Path.join(tmp_base, "repo2")
-      {_, 0} = System.cmd("git", ["clone", bare_remote, repo2])
+      {_, 0} = System.cmd("git", ["clone", "--branch", "main", bare_remote, repo2])
       {_, 0} = System.cmd("git", ["config", "user.name", "Tester 2"], cd: repo2)
       {_, 0} = System.cmd("git", ["config", "user.email", "tester2@iexcode.local"], cd: repo2)
 

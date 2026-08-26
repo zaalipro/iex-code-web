@@ -604,11 +604,17 @@ defmodule IexCode.Tools.TerminalSessionTest do
       # Plain and colored input
       token1 = "SEARCHABLE_LINE_ONE"
       token2 = "SEARCHABLE_LINE_TWO"
-      assert :ok = TerminalSession.send_input(session_id, "echo #{token1}\n")
-      assert {:ok, _} = receive_matching_output(session_id, token1)
+      assert {:ok, command_id1} = TerminalSession.run_command(session_id, "echo #{token1}")
 
-      assert :ok = TerminalSession.send_input(session_id, "echo #{token2}\n")
-      assert {:ok, _} = receive_matching_output(session_id, token2)
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command_id: ^command_id1, exit_code: 0}},
+                     8_000
+
+      assert {:ok, command_id2} = TerminalSession.run_command(session_id, "echo #{token2}")
+
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command_id: ^command_id2, exit_code: 0}},
+                     8_000
 
       # Substring search
       assert {:ok, results} = TerminalSession.search_history(session_id, "SEARCHABLE_LINE")

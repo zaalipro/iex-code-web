@@ -159,30 +159,42 @@ defmodule IexCode.Adversarial.Challenger2SignalAndChurnStressTest do
       subscribe_terminal(session_id)
       assert {:ok, pid} = TerminalServer.ensure_started(session_id, workspace_path: path)
 
-      # Start a background counting loop
-      assert :ok =
-               TerminalServer.run_command(
+      # Run the loop in one foreground process group. On interactive bash, a
+      # loop entered directly at the prompt gives each `sleep` its own job;
+      # SIGTSTP then leaves stopped sleeps behind instead of suspending the
+      # workload as a whole.
+      assert {:ok, loop_command_id} =
+               TerminalServer.run_command_with_id(
                  session_id,
-                 "for i in $(seq 1 500); do echo \"CYCLE_TICK_$i\"; sleep 0.02; done"
+                 "sh -c 'for i in $(seq 1 500); do echo \"CYCLE_TICK_$i\"; sleep 0.02; done'"
                )
+
+      assert {:ok, _} = receive_terminal_output(session_id, "CYCLE_TICK_1", 8_000)
 
       # Rapidly alternate between SIGTSTP and SIGCONT 20 times
       for _i <- 1..20 do
         assert :ok = TerminalServer.send_signal(session_id, :sigtstp)
-        Process.sleep(10)
+        _ = :sys.get_state(pid)
         assert :ok = TerminalServer.send_signal(session_id, :sigcont)
-        Process.sleep(10)
+        _ = :sys.get_state(pid)
       end
 
-      # Process must remain alive
-      assert Process.alive?(pid)
+      assert {:ok, %{status: :running}} = TerminalServer.get_state(session_id)
 
       # Interrupt loop
       assert :ok = TerminalServer.send_signal(session_id, :sigint)
 
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command_id: ^loop_command_id}},
+                     8_000
+
       token = "CYCLE_STRESS_PASSED"
-      assert :ok = TerminalServer.run_command(session_id, "echo #{token}")
+      assert {:ok, command_id} = TerminalServer.run_command_with_id(session_id, "echo #{token}")
       assert {:ok, _} = receive_terminal_output(session_id, token, 8_000)
+
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command_id: ^command_id, exit_code: 0}},
+                     8_000
     end
   end
 

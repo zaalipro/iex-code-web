@@ -248,7 +248,10 @@ defmodule IexCode.Tools.TerminalServer do
 
   defp run_locked_agent_command(session_id, command, agent_name, occupant, op_id, timeout_ms) do
     token = "CMD_FIN_#{:erlang.unique_integer([:positive])}"
-    wrapped_cmd = "#{command}; echo '__AGENT_EXIT:'$?':TOKEN:#{token}__'\n"
+    # The command may end in a shell comment. Start the completion probe on a
+    # fresh line so an interactive bash cannot consume it as part of that
+    # comment and leave the collector waiting forever.
+    wrapped_cmd = "#{command}\necho '__AGENT_EXIT:'$?':TOKEN:#{token}__'\n"
     collector_owner = self()
     collector_ready_ref = make_ref()
 

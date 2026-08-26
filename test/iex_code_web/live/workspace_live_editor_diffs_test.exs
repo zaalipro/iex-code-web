@@ -280,7 +280,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
         "defmodule DemoHunk do\n  def val, do: 1\nend\n"
       )
 
-      {_, 0} = System.cmd("git", ["init"], cd: path)
+      init_git_repo!(path)
       {_, 0} = System.cmd("git", ["add", "."], cd: path)
       {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
 
@@ -317,7 +317,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
         "defmodule AllHunks do\n  def x, do: 1\nend\n"
       )
 
-      {_, 0} = System.cmd("git", ["init"], cd: path)
+      init_git_repo!(path)
       {_, 0} = System.cmd("git", ["add", "."], cd: path)
       {_, 0} = System.cmd("git", ["commit", "-m", "Init"], cd: path)
 

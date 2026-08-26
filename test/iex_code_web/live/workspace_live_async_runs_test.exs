@@ -163,6 +163,8 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     conn: conn,
     workspace_path: path
   } do
+    configure_research_providers!(["tavily", "duckduckgo"])
+
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
@@ -181,7 +183,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
         "time_budget_minutes" => "45",
         "research_level" => "high",
         "research_max_sources" => "18",
-        "providers" => %{"duckduckgo" => "true"}
+        "providers" => %{"tavily" => "true", "duckduckgo" => "true"}
       }
     })
     |> render_change()
@@ -214,13 +216,11 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     assert run.metadata["research"]["max_sources"] == 18
     assert run.metadata["research"]["fetch_parallelism"] == 4
-    assert "duckduckgo" in run.metadata["research"]["ranked_providers"]
+    assert run.metadata["research"]["ranked_providers"] == ["tavily", "duckduckgo"]
 
     steps = Runs.list_steps(run)
     step_keys = Enum.map(steps, & &1.key)
-    assert length(step_keys) == 20
-    assert "research.plan.1" in step_keys
-    assert "research.report.verify" in step_keys
+    assert step_keys == Enum.sort(high_research_step_keys(["tavily", "duckduckgo"]))
 
     assert Enum.all?(
              Enum.filter(steps, &(&1.kind == "research_source_fetch")),
@@ -230,6 +230,34 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert has_element?(view, "#async-run-research-manifest")
     assert has_element?(view, "#async-run-token-budget[data-budget-limit='100000']")
     assert has_element?(view, "#async-run-cost-budget", "Cost · reported or reserved")
+  end
+
+  defp configure_research_providers!(enabled_providers) do
+    settings = Settings.get_settings()
+
+    providers =
+      Map.new(settings.search_providers, fn {provider, config} ->
+        {provider, Map.put(config, "enabled", provider in enabled_providers)}
+      end)
+      |> put_in(["tavily", "api_key"], "tavily-test-key")
+
+    assert {:ok, _settings} =
+             Settings.update_settings(%{
+               search_providers: providers,
+               search_provider_order: enabled_providers
+             })
+  end
+
+  defp high_research_step_keys(providers) do
+    Enum.flat_map(1..3, fn round ->
+      ["research.plan.#{round}"] ++
+        Enum.map(providers, &"research.search.ranked.#{round}.#{&1}") ++
+        [
+          "research.evidence.merge.#{round}",
+          "research.source.fetch.#{round}",
+          "research.evidence.audit.#{round}"
+        ]
+    end) ++ ["research.report.synthesize", "research.report.verify"]
   end
 
   defp typed_dag_manifest do

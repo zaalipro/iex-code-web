@@ -120,7 +120,7 @@ defmodule IexCode.Tools.GitBranchTest do
   describe "Git.fetch/2 and Git.pull/3" do
     setup %{tmp_dir: tmp_dir, repo_dir: repo_dir} do
       bare_dir = Path.join(tmp_dir, "bare_remote.git")
-      {_, 0} = System.cmd("git", ["init", "--bare", bare_dir])
+      {_, 0} = System.cmd("git", ["init", "--bare", "-b", "main", bare_dir])
 
       # Add bare remote to repo_dir and push main
       {_, 0} = System.cmd("git", ["remote", "add", "origin", bare_dir], cd: repo_dir)
@@ -128,7 +128,7 @@ defmodule IexCode.Tools.GitBranchTest do
 
       # Create a secondary clone to produce remote commits
       clone_dir = Path.join(tmp_dir, "second_clone")
-      {_, 0} = System.cmd("git", ["clone", bare_dir, clone_dir])
+      {_, 0} = System.cmd("git", ["clone", "--branch", "main", bare_dir, clone_dir])
       {_, 0} = System.cmd("git", ["config", "user.name", "Second User"], cd: clone_dir)
       {_, 0} = System.cmd("git", ["config", "user.email", "second@example.com"], cd: clone_dir)
 

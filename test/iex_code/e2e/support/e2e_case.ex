@@ -124,12 +124,20 @@ defmodule IexCode.E2E.Case do
   """
   def init_temp_git_repo(files \\ %{}) do
     dir = create_temp_workspace(files)
-    System.cmd("git", ["init"], cd: dir)
-    System.cmd("git", ["config", "user.name", "IexCode Test"], cd: dir)
-    System.cmd("git", ["config", "user.email", "test@iexcode.local"], cd: dir)
-    System.cmd("git", ["add", "."], cd: dir)
-    System.cmd("git", ["commit", "-m", "Initial commit", "--allow-empty"], cd: dir)
+    init_git_repo!(dir)
+    {_, 0} = System.cmd("git", ["add", "."], cd: dir)
+    {_, 0} = System.cmd("git", ["commit", "-m", "Initial commit", "--allow-empty"], cd: dir)
     {:ok, dir}
+  end
+
+  @doc """
+  Initializes Git with a deterministic branch and repository-local test identity.
+  """
+  def init_git_repo!(dir) do
+    {_, 0} = System.cmd("git", ["init", "-b", "main"], cd: dir)
+    {_, 0} = System.cmd("git", ["config", "user.name", "IexCode Test"], cd: dir)
+    {_, 0} = System.cmd("git", ["config", "user.email", "test@iexcode.local"], cd: dir)
+    dir
   end
 
   def workspace_file_path(workspace_path, relative_path) do
