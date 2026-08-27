@@ -190,18 +190,20 @@ defmodule IexCode.Tools.GitBoundedDiffTest do
     with open(producer_path, "w") as output:
         output.write(f"{os.getpid()} {os.getpgrp()} {os.getsid(0)}")
     with open(child_path, "w") as output:
-        output.write(str(child.pid))
+        output.write(f"{child.pid} {os.getpgid(child.pid)} {os.getsid(child.pid)}")
     #{loop}
     """
   end
 
   defp assert_boundary_and_descendant_dead(producer_path, child_path) do
     {producer_pid, process_group, session} = read_process_boundary!(producer_path)
-    child_pid = child_path |> File.read!() |> String.to_integer()
+    {child_pid, child_group, child_session} = read_process_boundary!(child_path)
 
     assert producer_pid == process_group
     assert producer_pid == session
     assert child_pid != producer_pid
+    assert child_group == process_group
+    assert child_session == session
     assert_process_dead(producer_pid)
     assert_process_dead(child_pid)
   end
@@ -233,6 +235,11 @@ defmodule IexCode.Tools.GitBoundedDiffTest do
         except ProcessLookupError:
             sys.exit(0)
         time.sleep(0.02)
+    try:
+        with open(f"/proc/{pid}/stat", "r") as stat:
+            print(stat.read(), file=sys.stderr)
+    except FileNotFoundError:
+        sys.exit(0)
     sys.exit(1)
     """
 

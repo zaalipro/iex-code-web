@@ -540,14 +540,19 @@ defmodule IexCode.Tools.PTYAdapter do
 
     try do
       # Attempt process group kill first (-pid), then single process kill
-      case System.cmd("kill", ["-" <> to_string(sig_num), "-" <> to_string(os_pid)],
+      # `--` is required before a negative PID. Without it, some Linux kill(1)
+      # implementations parse the process-group id as another signal option
+      # and leave the group running even though the single-PID fallback works.
+      case System.cmd(
+             "kill",
+             ["-" <> to_string(sig_num), "--", "-" <> to_string(os_pid)],
              stderr_to_stdout: true
            ) do
         {_, 0} ->
           :ok
 
         _ ->
-          System.cmd("kill", ["-" <> to_string(sig_num), to_string(os_pid)],
+          System.cmd("kill", ["-" <> to_string(sig_num), "--", to_string(os_pid)],
             stderr_to_stdout: true
           )
 
