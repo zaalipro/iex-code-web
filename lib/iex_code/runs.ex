@@ -503,7 +503,7 @@ defmodule IexCode.Runs do
                 timestamp
               )
 
-            terminal_attrs = transition_attrs(new_status, attrs)
+            terminal_attrs = transition_attrs(new_status, attrs, timestamp)
 
             terminal_attrs =
               if opts[:preserve_lease] do
@@ -7219,9 +7219,10 @@ defmodule IexCode.Runs do
     |> Repo.insert!()
   end
 
-  defp transition_attrs(status, attrs) do
+  defp transition_attrs(status, attrs), do: transition_attrs(status, attrs, now())
+
+  defp transition_attrs(status, attrs, now) do
     attrs = normalize_attrs(attrs)
-    now = now()
     attrs = Map.put(attrs, :status, status)
 
     cond do

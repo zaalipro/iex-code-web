@@ -13,6 +13,8 @@ services:
       - ${IEX_CODE_APP_ENV_FILE:?set IEX_CODE_APP_ENV_FILE}
     environment:
       DATABASE_PATH: /var/lib/iex-code/iex_code.db
+      ERL_AFLAGS: "+Q ${IEX_CODE_NOFILE_LIMIT:-65536}"
+      ELIXIR_ERL_OPTIONS: "+Q ${IEX_CODE_NOFILE_LIMIT:-65536}"
       HOME: /var/lib/iex-code/home
       IEX_CODE_ALLOW_REMOTE: "true"
       IEX_CODE_BIND: 0.0.0.0
@@ -31,6 +33,12 @@ services:
         source: ${IEX_CODE_WORKSPACE_DIR:-/srv/iex-code-workspaces}
         target: /workspaces
     init: true
+    mem_limit: "${IEX_CODE_MEMORY_LIMIT_MIB:-1024}m"
+    mem_reservation: "${IEX_CODE_MEMORY_RESERVATION_MIB:-512}m"
+    ulimits:
+      nofile:
+        soft: ${IEX_CODE_NOFILE_LIMIT:-65536}
+        hard: ${IEX_CODE_NOFILE_LIMIT:-65536}
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m,mode=1777

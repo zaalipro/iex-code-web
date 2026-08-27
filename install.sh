@@ -10,6 +10,9 @@ readonly APP_ENV_FILE=$CONFIG_DIR/app.env
 readonly INSTALL_CONFIG=$CONFIG_DIR/install.conf
 readonly STATE_DIR=/var/lib/iex-code-web
 WORKSPACE_DIR=/srv/iex-code-workspaces
+MEMORY_LIMIT_MIB=1024
+MEMORY_RESERVATION_MIB=512
+NOFILE_LIMIT=65536
 readonly BACKUP_DIR=/var/backups/iex-code-web
 readonly APP_UID=10001
 readonly APP_GID=10001
@@ -36,6 +39,9 @@ PORT_SET=false
 REPO_SET=false
 REF_SET=false
 WORKSPACE_SET=false
+MEMORY_LIMIT_SET=false
+MEMORY_RESERVATION_SET=false
+NOFILE_SET=false
 
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
@@ -56,6 +62,10 @@ Options:
   --port PORT           Public HTTPS port (default: 4000)
   --bind IP             Address on which Docker publishes the port (default: 0.0.0.0)
   --workspace-root DIR  Host directory mounted as /workspaces
+  --memory-limit-mib N  App hard memory limit in MiB (default: 1024; 256..65536)
+  --memory-reservation-mib N
+                        App soft memory reservation in MiB (default: 512; 128..limit)
+  --nofile-limit N      App file descriptor and BEAM port limit (default: 65536)
   --env-file FILE       Import allowlisted model/search settings once via protected JSON
   --repo URL            Git repository (default: official repository)
   --source-ref REF      Git branch/tag/commit (default: main)
@@ -79,6 +89,9 @@ parse_args() {
       --bind) (($# >= 2)) || die "--bind requires a value"; PUBLIC_BIND=$2; BIND_SET=true; shift 2 ;;
       --port) (($# >= 2)) || die "--port requires a value"; PUBLIC_PORT=$2; PORT_SET=true; shift 2 ;;
       --workspace-root) (($# >= 2)) || die "--workspace-root requires a value"; WORKSPACE_ROOT_OVERRIDE=$2; WORKSPACE_SET=true; shift 2 ;;
+      --memory-limit-mib) (($# >= 2)) || die "--memory-limit-mib requires a value"; MEMORY_LIMIT_MIB=$2; MEMORY_LIMIT_SET=true; shift 2 ;;
+      --memory-reservation-mib) (($# >= 2)) || die "--memory-reservation-mib requires a value"; MEMORY_RESERVATION_MIB=$2; MEMORY_RESERVATION_SET=true; shift 2 ;;
+      --nofile-limit) (($# >= 2)) || die "--nofile-limit requires a value"; NOFILE_LIMIT=$2; NOFILE_SET=true; shift 2 ;;
       --env-file) (($# >= 2)) || die "--env-file requires a value"; MODEL_ENV_FILE=$2; shift 2 ;;
       --repo) (($# >= 2)) || die "--repo requires a value"; REPO=$2; REPO_SET=true; shift 2 ;;
       --ref|--source-ref) (($# >= 2)) || die "$1 requires a value"; REF=$2; REF_SET=true; shift 2 ;;
@@ -105,6 +118,12 @@ validate_args() {
     die "--repo must be a safe HTTPS or git@ SSH URL"
   [[ $WORKSPACE_DIR == /* && $WORKSPACE_DIR != *$'\n'* ]] || \
     die "--workspace-root must be an absolute path without newlines"
+  valid_bounded_integer "$MEMORY_LIMIT_MIB" 256 65536 || \
+    die "--memory-limit-mib must be an integer between 256 and 65536"
+  valid_bounded_integer "$MEMORY_RESERVATION_MIB" 128 "$MEMORY_LIMIT_MIB" || \
+    die "--memory-reservation-mib must be an integer between 128 and --memory-limit-mib"
+  valid_bounded_integer "$NOFILE_LIMIT" 4096 1048576 || \
+    die "--nofile-limit must be an integer between 4096 and 1048576"
   [[ $REPO != *$'\n'* ]] || die "repository URL must not contain newlines"
   [[ -z "$MODEL_ENV_FILE" || -r "$MODEL_ENV_FILE" ]] || die "cannot read --env-file"
   if [[ -n "$MODEL_ENV_FILE" ]]; then
@@ -113,6 +132,12 @@ validate_args() {
     mode=$(stat -c %a "$MODEL_ENV_FILE")
     ((10#$mode % 100 == 0)) || die "--env-file must not be accessible by group or other users"
   fi
+}
+
+valid_bounded_integer() {
+  local value=$1 minimum=$2 maximum=$3
+  [[ $value =~ ^[0-9]+$ && ${#value} -le 10 ]] || return 1
+  ((10#$value >= minimum && 10#$value <= maximum))
 }
 
 valid_ipv4() {
@@ -185,8 +210,17 @@ load_existing_config() {
     [[ $REPO_SET == true ]] || REPO=${IEX_CODE_REPO:-$REPO}
     [[ $REF_SET == true ]] || REF=${IEX_CODE_REF:-$REF}
     [[ $WORKSPACE_SET == true ]] || WORKSPACE_DIR=${IEX_CODE_WORKSPACE_DIR:-$WORKSPACE_DIR}
+    restore_resource_config
   fi
   [[ -z "$WORKSPACE_ROOT_OVERRIDE" ]] || WORKSPACE_DIR=$WORKSPACE_ROOT_OVERRIDE
+}
+
+restore_resource_config() {
+  [[ $MEMORY_LIMIT_SET == true ]] || \
+    MEMORY_LIMIT_MIB=${IEX_CODE_MEMORY_LIMIT_MIB:-$MEMORY_LIMIT_MIB}
+  [[ $MEMORY_RESERVATION_SET == true ]] || \
+    MEMORY_RESERVATION_MIB=${IEX_CODE_MEMORY_RESERVATION_MIB:-$MEMORY_RESERVATION_MIB}
+  [[ $NOFILE_SET == true ]] || NOFILE_LIMIT=${IEX_CODE_NOFILE_LIMIT:-$NOFILE_LIMIT}
 }
 
 detect_public_ip() {
@@ -232,6 +266,9 @@ compose() {
   IEX_CODE_PUBLIC_PORT="$PUBLIC_PORT" \
   IEX_CODE_APP_UID="$APP_UID" \
   IEX_CODE_APP_GID="$APP_GID" \
+  IEX_CODE_MEMORY_LIMIT_MIB="$MEMORY_LIMIT_MIB" \
+  IEX_CODE_MEMORY_RESERVATION_MIB="$MEMORY_RESERVATION_MIB" \
+  IEX_CODE_NOFILE_LIMIT="$NOFILE_LIMIT" \
     "${COMPOSE[@]}" --project-directory "$SOURCE_DIR" \
       -f "$SOURCE_DIR/compose.yaml" "${topology[@]}" "$@"
 }
@@ -381,6 +418,9 @@ write_environment() {
     printf 'IEX_CODE_PUBLIC_PORT=%q\n' "$PUBLIC_PORT"
     printf 'IEX_CODE_APP_UID=%q\n' "$APP_UID"
     printf 'IEX_CODE_APP_GID=%q\n' "$APP_GID"
+    printf 'IEX_CODE_MEMORY_LIMIT_MIB=%q\n' "$MEMORY_LIMIT_MIB"
+    printf 'IEX_CODE_MEMORY_RESERVATION_MIB=%q\n' "$MEMORY_RESERVATION_MIB"
+    printf 'IEX_CODE_NOFILE_LIMIT=%q\n' "$NOFILE_LIMIT"
     printf 'IEX_CODE_REPO=%q\n' "$REPO"
     printf 'IEX_CODE_REF=%q\n' "$REF"
   } >"$temp"
@@ -510,4 +550,6 @@ main() {
   printf 'Manage the service with: iex-code-web status|logs|update|backup|restore\n'
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]:-$0} == "$0" ]]; then
+  main "$@"
+fi

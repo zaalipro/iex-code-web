@@ -83,6 +83,8 @@ jobs:
         run: |
           bash -n install.sh deploy/iex-code-web
           sh -n deploy/entrypoint.sh deploy/healthcheck.sh
+          bash test/deploy/deployment_static_test.sh
+          bash test/deploy/status_command_test.sh
 
       - name: Check formatting
         run: mix format --check-formatted
@@ -138,6 +140,17 @@ jobs:
               config --format json \
               > /tmp/iex-code-web-behind-proxy.json
 
+          IEX_CODE_PUBLIC_HOST=iex.example.com \
+          IEX_CODE_PUBLIC_PORT=49152 \
+          IEX_CODE_CADDYFILE="$PWD/deploy/Caddyfile" \
+          IEX_CODE_MEMORY_LIMIT_MIB=2048 \
+          IEX_CODE_MEMORY_RESERVATION_MIB=768 \
+          IEX_CODE_NOFILE_LIMIT=131072 \
+            docker compose \
+              -f compose.yaml -f deploy/compose.behind-proxy.yaml \
+              config --format json \
+              > /tmp/iex-code-web-resource-overrides.json
+
           python3 - <<'PY'
           import json
 
@@ -164,6 +177,27 @@ jobs:
           assert ports[0]["host_ip"] == "127.0.0.1"
           assert ports[0]["published"] == "49152"
           assert ports[0]["target"] == 4000
+
+          app = behind_proxy["services"]["app"]
+          assert int(app["mem_limit"]) == 1_073_741_824
+          assert int(app["mem_reservation"]) == 536_870_912
+          assert app["ulimits"]["nofile"] == {"soft": 65_536, "hard": 65_536}
+          assert app["environment"]["ERL_AFLAGS"] == "+Q 65536"
+          assert app["environment"]["ELIXIR_ERL_OPTIONS"] == "+Q 65536"
+          assert "memswap_limit" not in app
+          assert app["restart"] == "unless-stopped"
+          assert app["stop_grace_period"] == "1m0s"
+
+          with open("/tmp/iex-code-web-resource-overrides.json", encoding="utf-8") as source:
+              overridden = json.load(source)["services"]["app"]
+          assert int(overridden["mem_limit"]) == 2_147_483_648
+          assert int(overridden["mem_reservation"]) == 805_306_368
+          assert overridden["ulimits"]["nofile"] == {
+              "soft": 131_072,
+              "hard": 131_072,
+          }
+          assert overridden["environment"]["ERL_AFLAGS"] == "+Q 131072"
+          assert overridden["environment"]["ELIXIR_ERL_OPTIONS"] == "+Q 131072"
           PY
 
       - name: Validate Dockerfile

@@ -59,6 +59,9 @@ sudo bash /tmp/iex-code-web-install.sh \
   --port <LISTEN_PORT> \
   --bind <BIND_ADDRESS> \
   --workspace-root <WORKSPACE_DIRECTORY> \
+  --memory-limit-mib 1024 \
+  --memory-reservation-mib 512 \
+  --nofile-limit 65536 \
   --env-file <ENV_FILE> \
   --source-ref <GIT_REF> \
   --yes
@@ -85,6 +88,39 @@ The installer binds it only to `127.0.0.1`. Configure the existing proxy for
 `https://<PUBLIC_DOMAIN>` with WebSocket upgrades, the original `Host`,
 `X-Forwarded-Proto: https`, and long read/send timeouts. Never publish the
 upstream on `0.0.0.0`.
+
+## Application memory guardrails
+
+The default installation gives the application container a 1,024 MiB hard
+memory limit and a 512 MiB soft reservation. It also caps both the container's
+open-file limit and the BEAM port table at 65,536. The port cap prevents OTP
+from sizing its port table from an excessively large host `nofile` limit, which
+can otherwise consume gigabytes before any work is running.
+
+The defaults are designed to keep an idle application comfortably below 600
+MiB while leaving room for interactive work. The hard limit is a safety
+boundary, not a guarantee that every workload will fit: large builds, many
+simultaneous agents, and memory-heavy repository commands may need more RAM.
+
+| Installer option | Default | Accepted range | Persisted key |
+| --- | ---: | ---: | --- |
+| `--memory-limit-mib` | `1024` | `256..65536` | `IEX_CODE_MEMORY_LIMIT_MIB` |
+| `--memory-reservation-mib` | `512` | `128..memory-limit` | `IEX_CODE_MEMORY_RESERVATION_MIB` |
+| `--nofile-limit` | `65536` | `4096..1048576` | `IEX_CODE_NOFILE_LIMIT` |
+
+Choose explicit limits during installation when necessary:
+
+```bash
+sudo bash /tmp/iex-code-web-install.sh \
+  --memory-limit-mib 2048 \
+  --memory-reservation-mib 768 \
+  --nofile-limit 131072
+```
+
+These values are stored in `/etc/iex-code-web/install.conf` and retained by
+`sudo iex-code-web update`. An older installation receives the current defaults
+on its next update unless it already has saved values. Do not put these settings
+in `app.env`; the installer passes them to Compose separately.
 
 ## First login
 
@@ -114,6 +150,7 @@ access layer. See [Domain and trusted TLS](#domain-and-trusted-tls).
 | --- | --- |
 | `/opt/iex-code-web/source` | Root-owned source checkout, `compose.yaml`, image metadata, and proxy configuration |
 | `/etc/iex-code-web/app.env` | Root-readable runtime secrets and settings |
+| `/etc/iex-code-web/install.conf` | Root-readable deployment topology and resource limits |
 | `/var/lib/iex-code-web` | Persistent SQLite database and research outputs |
 | `/var/backups/iex-code-web` | Root-only manager-created backup archives |
 | `/srv/iex-code-workspaces` | Host directory made available for checked-out repositories |

@@ -4,6 +4,21 @@ defmodule IexCodeWeb.SettingsLiveTest do
   alias IexCode.{Repo, Sessions, Settings}
   alias IexCode.Settings.AppSettings
 
+  setup do
+    previous_reader = Application.get_env(:iex_code, :runtime_status_reader)
+    previous_snapshot = Application.get_env(:iex_code, :runtime_status_reader_stub)
+
+    Application.put_env(:iex_code, :runtime_status_reader, IexCode.RuntimeStatusReaderStub)
+    Application.put_env(:iex_code, :runtime_status_reader_stub, runtime_snapshot(:idle))
+
+    on_exit(fn ->
+      restore_env(:runtime_status_reader, previous_reader)
+      restore_env(:runtime_status_reader_stub, previous_snapshot)
+    end)
+
+    :ok
+  end
+
   test "global route renders every settings section and accessible save controls", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/settings")
 
@@ -84,6 +99,134 @@ defmodule IexCodeWeb.SettingsLiveTest do
              "#settings-page",
              "Existing sessions retain only their session-level provider"
            )
+  end
+
+  test "runtime panel renders activity, memory, and BEAM facts", %{conn: conn} do
+    Application.put_env(:iex_code, :runtime_status_reader_stub, runtime_snapshot(:active))
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(view, "#settings-runtime-panel[data-state='active']")
+    assert has_element?(view, "#settings-runtime-state[data-tone='active']", "Active")
+    assert has_element?(view, "#settings-runtime-runs", "2 active · 3 queued · 8 capacity")
+    assert has_element?(view, "#settings-runtime-agents", "4")
+    assert has_element?(view, "#settings-runtime-fleets", "1")
+    assert has_element?(view, "#settings-runtime-sessions", "6")
+    assert has_element?(view, "#settings-runtime-terminals", "2")
+    assert has_element?(view, "#settings-runtime-memory-container", "512 MiB / 1.0 GiB")
+    assert has_element?(view, "#settings-runtime-beam-memory", "128 MiB")
+    assert has_element?(view, "#settings-runtime-ports", "7 / 65536")
+    assert has_element?(view, "#settings-runtime-dag-attempts", "5 active DAG attempts")
+    refute has_element?(view, "#runtime input")
+    refute has_element?(view, "#runtime select")
+    refute has_element?(view, "#runtime textarea")
+  end
+
+  test "runtime refresh changes only telemetry and preserves a dirty settings draft", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    view
+    |> form("#settings-form", %{"settings" => %{"default_model" => "unsaved-runtime-draft"}})
+    |> render_change()
+
+    Application.put_env(:iex_code, :runtime_status_reader_stub, runtime_snapshot(:active))
+    send(view.pid, :refresh_runtime_status)
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(view, "#settings-runtime-panel[data-state='active']")
+    assert has_element?(view, "#settings-runtime-state[data-tone='active']", "Active")
+    assert has_element?(view, "#settings-default-model[value='unsaved-runtime-draft']")
+    assert has_element?(view, "#settings-save-status", "Unsaved changes")
+    assert has_element?(view, "#settings-save:not([disabled])")
+  end
+
+  test "runtime refresh preserves an invalid settings draft and its navigation guard", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    view
+    |> form("#settings-form", %{"settings" => %{"max_tokens" => "0"}})
+    |> render_submit()
+
+    Application.put_env(:iex_code, :runtime_status_reader_stub, runtime_snapshot(:active))
+    send(view.pid, :refresh_runtime_status)
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(view, "#settings-runtime-panel[data-state='active']")
+    assert has_element?(view, "#settings-max-tokens[value='0'][aria-invalid='true']")
+    assert has_element?(view, "#settings-error-summary[role='alert']")
+    assert has_element?(view, "#settings-client-behaviors[data-dirty='true']")
+    assert has_element?(view, "#settings-return-workspace[data-unsaved-confirm]")
+  end
+
+  test "runtime reader failures render unavailable facts without crashing the LiveView", %{
+    conn: conn
+  } do
+    Application.put_env(:iex_code, :runtime_status_reader_stub, :raise)
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(view, "#settings-page")
+    assert has_element?(view, "#settings-runtime-panel[data-state='unavailable']")
+
+    assert has_element?(
+             view,
+             "#settings-runtime-state[data-tone='unavailable']",
+             "Unavailable"
+           )
+
+    assert has_element?(view, "#settings-runtime-runs", "Unavailable")
+    assert has_element?(view, "#settings-runtime-memory-container", "Unavailable")
+    assert has_element?(view, "#settings-runtime-ports", "Unavailable")
+  end
+
+  test "malformed runtime snapshots render unavailable facts instead of a false idle state", %{
+    conn: conn
+  } do
+    malformed_snapshot =
+      :idle
+      |> runtime_snapshot()
+      |> put_in([:dispatcher, :active], nil)
+
+    Application.put_env(:iex_code, :runtime_status_reader_stub, malformed_snapshot)
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(view, "#settings-page")
+    assert has_element?(view, "#settings-runtime-panel[data-state='unavailable']")
+
+    assert has_element?(
+             view,
+             "#settings-runtime-state[data-tone='unavailable']",
+             "Unavailable"
+           )
+
+    assert has_element?(view, "#settings-runtime-runs", "Unavailable")
+    assert has_element?(view, "#settings-runtime-memory-container", "Unavailable")
+    assert has_element?(view, "#settings-runtime-ports", "Unavailable")
+  end
+
+  test "a canonical unavailable snapshot with nil measurements remains unavailable", %{conn: conn} do
+    unavailable_snapshot = %{
+      state: :unavailable,
+      container: %{memory_current_bytes: nil, memory_limit_bytes: nil},
+      beam: %{memory_total_bytes: nil, port_count: nil, port_limit: nil},
+      dispatcher: %{active: nil, queued: nil, capacity: nil},
+      activity: %{
+        agents: nil,
+        fleets: nil,
+        sessions: nil,
+        terminals: nil,
+        dag_attempts: nil
+      }
+    }
+
+    Application.put_env(:iex_code, :runtime_status_reader_stub, unavailable_snapshot)
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(view, "#settings-runtime-panel[data-state='unavailable']")
+    assert has_element?(view, "#settings-runtime-runs", "Unavailable")
+    assert has_element?(view, "#settings-runtime-memory-container", "Unavailable")
   end
 
   test "session route shows valid context, scopes the return link, and rejects invalid context safely",
@@ -509,4 +652,28 @@ defmodule IexCodeWeb.SettingsLiveTest do
     assert has_element?(view, "#settings-external-update[role='alert']")
     assert has_element?(view, "#settings-default-model[value='continued-local-edit']")
   end
+
+  defp runtime_snapshot(state) do
+    work_counts =
+      if state == :active,
+        do: %{active: 2, queued: 3, agents: 4, fleets: 1, dag_attempts: 5},
+        else: %{active: 0, queued: 0, agents: 0, fleets: 0, dag_attempts: 0}
+
+    %{
+      state: state,
+      container: %{memory_current_bytes: 512 * 1_048_576, memory_limit_bytes: 1_073_741_824},
+      beam: %{memory_total_bytes: 128 * 1_048_576, port_count: 7, port_limit: 65_536},
+      dispatcher: %{active: work_counts.active, queued: work_counts.queued, capacity: 8},
+      activity: %{
+        agents: work_counts.agents,
+        fleets: work_counts.fleets,
+        sessions: 6,
+        terminals: 2,
+        dag_attempts: work_counts.dag_attempts
+      }
+    }
+  end
+
+  defp restore_env(key, nil), do: Application.delete_env(:iex_code, key)
+  defp restore_env(key, value), do: Application.put_env(:iex_code, key, value)
 end

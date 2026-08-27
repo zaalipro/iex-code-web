@@ -10,7 +10,10 @@ defmodule IexCodeWeb.SettingsLive do
 
   alias Ecto.Changeset
   alias IexCode.{Sessions, Settings}
+  alias IexCode.Observability.RuntimeStatus
   alias IexCode.Research.Registry, as: SearchRegistry
+
+  @runtime_refresh_interval 5_000
 
   @settings_sections [
     {"models", "Models"},
@@ -36,26 +39,30 @@ defmodule IexCodeWeb.SettingsLive do
 
     {usage_status, usage_rows, usage_totals, usage_message} = load_usage(context_session)
 
-    {:ok,
-     socket
-     |> assign(:page_title, "Settings")
-     |> assign(:settings, settings)
-     |> assign(:settings_form, settings_form(settings))
-     |> assign(:settings_status, :idle)
-     |> assign(:settings_message, "All changes are saved locally on this machine.")
-     |> assign(:saved_at, nil)
-     |> assign(:external_update?, false)
-     |> assign(:context_session, context_session)
-     |> assign(:invalid_session_context?, invalid_session_context?)
-     |> assign(:return_path, return_path(context_session))
-     |> assign(:search_provider_descriptors, ordered_descriptors(settings))
-     |> assign(:provider_filter, "")
-     |> assign(:expanded_providers, MapSet.new())
-     |> assign(:usage_status, usage_status)
-     |> assign(:usage_rows, usage_rows)
-     |> assign(:usage_totals, usage_totals)
-     |> assign(:usage_message, usage_message)
-     |> assign(:runtime_facts, runtime_facts())}
+    socket =
+      socket
+      |> assign(:page_title, "Settings")
+      |> assign(:settings, settings)
+      |> assign(:settings_form, settings_form(settings))
+      |> assign(:settings_status, :idle)
+      |> assign(:settings_message, "All changes are saved locally on this machine.")
+      |> assign(:saved_at, nil)
+      |> assign(:external_update?, false)
+      |> assign(:context_session, context_session)
+      |> assign(:invalid_session_context?, invalid_session_context?)
+      |> assign(:return_path, return_path(context_session))
+      |> assign(:search_provider_descriptors, ordered_descriptors(settings))
+      |> assign(:provider_filter, "")
+      |> assign(:expanded_providers, MapSet.new())
+      |> assign(:usage_status, usage_status)
+      |> assign(:usage_rows, usage_rows)
+      |> assign(:usage_totals, usage_totals)
+      |> assign(:usage_message, usage_message)
+      |> assign(:runtime_status, load_runtime_status())
+
+    if connected?(socket), do: schedule_runtime_refresh()
+
+    {:ok, socket}
   end
 
   @impl true
@@ -209,6 +216,11 @@ defmodule IexCodeWeb.SettingsLive do
       true ->
         {:noreply, assign_saved(socket, updated, "Settings updated")}
     end
+  end
+
+  def handle_info(:refresh_runtime_status, socket) do
+    schedule_runtime_refresh()
+    {:noreply, assign(socket, :runtime_status, load_runtime_status())}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -445,6 +457,67 @@ defmodule IexCodeWeb.SettingsLive do
 
   def optional_limit(value, _unit) when value in [nil, ""], do: "Preset ceiling"
   def optional_limit(value, unit), do: "#{value} #{unit}"
+
+  def runtime_state_label(%{state: :idle}), do: "Idle"
+  def runtime_state_label(%{state: :active}), do: "Active"
+  def runtime_state_label(_runtime_status), do: "Unavailable"
+
+  def runtime_state_tone(%{state: :idle}), do: "idle"
+  def runtime_state_tone(%{state: :active}), do: "active"
+  def runtime_state_tone(_runtime_status), do: "unavailable"
+
+  def runtime_state_note(%{state: :idle}),
+    do:
+      "No queued or running agent work was detected. Dormant terminals are not counted as activity."
+
+  def runtime_state_note(%{state: :active}),
+    do: "One or more runs, agents, fleets, or research attempts are currently working."
+
+  def runtime_state_note(_runtime_status),
+    do: "Runtime activity could not be measured safely. The settings page remains available."
+
+  def runtime_group(runtime_status, key) when is_map(runtime_status),
+    do: map_value(runtime_status, key, %{})
+
+  def runtime_group(_runtime_status, _key), do: %{}
+
+  def runtime_count(group, key) do
+    case map_value(group, key, nil) do
+      value when is_integer(value) and value >= 0 -> Integer.to_string(value)
+      _value -> "Unavailable"
+    end
+  end
+
+  def runtime_dispatcher_value(dispatcher) do
+    active = runtime_count(dispatcher, :active)
+    queued = runtime_count(dispatcher, :queued)
+    capacity = runtime_count(dispatcher, :capacity)
+
+    if "Unavailable" in [active, queued, capacity] do
+      "Unavailable"
+    else
+      "#{active} active · #{queued} queued · #{capacity} capacity"
+    end
+  end
+
+  def runtime_memory_value(container) do
+    current = format_runtime_bytes(map_value(container, :memory_current_bytes, nil))
+    limit = format_runtime_limit(map_value(container, :memory_limit_bytes, nil))
+
+    if current == "Unavailable" and limit == "Unavailable",
+      do: "Unavailable",
+      else: "#{current} / #{limit}"
+  end
+
+  def runtime_beam_memory_value(beam),
+    do: format_runtime_bytes(map_value(beam, :memory_total_bytes, nil))
+
+  def runtime_ports_value(beam) do
+    count = runtime_count(beam, :port_count)
+    limit = runtime_count(beam, :port_limit)
+
+    if "Unavailable" in [count, limit], do: "Unavailable", else: "#{count} / #{limit}"
+  end
 
   def form_error_count(form) do
     form.source
@@ -730,34 +803,106 @@ defmodule IexCodeWeb.SettingsLive do
   defp normalize_usage_result(_rows, _empty_message),
     do: {:error, [], "Usage telemetry is temporarily unavailable."}
 
-  defp runtime_facts do
-    [
-      %{
-        id: "dispatcher",
-        label: "Durable run dispatcher",
-        value: online_label(IexCode.Runs.RunDispatcher),
-        tone: online_tone(IexCode.Runs.RunDispatcher),
-        note: "Background runs persist independently of this browser page."
-      },
-      %{
-        id: "terminal",
-        label: "Terminal supervisor",
-        value: online_label(IexCode.Tools.TerminalSupervisor),
-        tone: online_tone(IexCode.Tools.TerminalSupervisor),
-        note: "Shell processes remain isolated by workspace and session ownership."
-      },
-      %{
-        id: "database",
-        label: "Settings storage",
-        value: "Local SQLite",
-        tone: "ready",
-        note: "Credentials are stored locally and never rendered back into this page."
-      }
-    ]
+  defp load_runtime_status do
+    source = Application.get_env(:iex_code, :runtime_status_reader, RuntimeStatus)
+    _ = Code.ensure_loaded(source)
+
+    source
+    |> apply(:snapshot, [])
+    |> normalize_runtime_status()
+  rescue
+    _exception -> unavailable_runtime_status()
+  catch
+    _kind, _reason -> unavailable_runtime_status()
   end
 
-  defp online_label(module), do: if(Process.whereis(module), do: "Online", else: "Offline")
-  defp online_tone(module), do: if(Process.whereis(module), do: "ready", else: "missing")
+  defp normalize_runtime_status(
+         %{
+           state: state,
+           container: %{
+             memory_current_bytes: container_memory,
+             memory_limit_bytes: container_limit
+           },
+           beam: %{
+             memory_total_bytes: beam_memory,
+             port_count: port_count,
+             port_limit: port_limit
+           },
+           dispatcher: %{active: active, queued: queued, capacity: capacity},
+           activity: %{
+             agents: agents,
+             fleets: fleets,
+             sessions: sessions,
+             terminals: terminals,
+             dag_attempts: dag_attempts
+           }
+         } = snapshot
+       )
+       when state in [:idle, :active, :unavailable] do
+    counts = [
+      container_memory,
+      beam_memory,
+      port_count,
+      port_limit,
+      active,
+      queued,
+      capacity,
+      agents,
+      fleets,
+      sessions,
+      terminals,
+      dag_attempts
+    ]
+
+    valid_shape? =
+      Enum.all?(counts, &optional_runtime_count?/1) and runtime_limit?(container_limit)
+
+    valid_state? =
+      case state do
+        :idle ->
+          Enum.all?([active, queued, agents, fleets, dag_attempts], &(&1 == 0))
+
+        _active_or_unavailable ->
+          true
+      end
+
+    if valid_shape? and valid_state?, do: snapshot, else: unavailable_runtime_status()
+  end
+
+  defp normalize_runtime_status(_snapshot), do: unavailable_runtime_status()
+
+  defp unavailable_runtime_status, do: %{state: :unavailable}
+
+  defp optional_runtime_count?(nil), do: true
+  defp optional_runtime_count?(value), do: runtime_count?(value)
+
+  defp runtime_count?(value), do: is_integer(value) and value >= 0
+
+  defp runtime_limit?(:unlimited), do: true
+  defp runtime_limit?(value), do: optional_runtime_count?(value)
+
+  defp schedule_runtime_refresh do
+    Process.send_after(self(), :refresh_runtime_status, @runtime_refresh_interval)
+  end
+
+  defp format_runtime_limit(:unlimited), do: "Unlimited"
+  defp format_runtime_limit(value), do: format_runtime_bytes(value)
+
+  defp format_runtime_bytes(bytes) when is_integer(bytes) and bytes >= 0 do
+    cond do
+      bytes >= 1_073_741_824 -> format_runtime_unit(bytes / 1_073_741_824, "GiB")
+      bytes >= 1_048_576 -> format_runtime_unit(bytes / 1_048_576, "MiB")
+      bytes >= 1_024 -> format_runtime_unit(bytes / 1_024, "KiB")
+      true -> "#{bytes} B"
+    end
+  end
+
+  defp format_runtime_bytes(_bytes), do: "Unavailable"
+
+  defp format_runtime_unit(value, unit) do
+    precision = if value >= 10, do: 0, else: 1
+    "#{:erlang.float_to_binary(value, decimals: precision)} #{unit}"
+  end
 
   defp map_value(map, key, default) when is_map(map) do
     Map.get(map, key, Map.get(map, to_string(key), default)) || default

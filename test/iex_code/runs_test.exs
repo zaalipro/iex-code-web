@@ -1833,7 +1833,7 @@ defmodule IexCode.RunsTest do
 
     assert completed.status == "completed"
     assert completed.lease_owner == "compat-worker"
-    assert DateTime.diff(completed.lease_expires_at, completed.completed_at, :second) >= 30
+    assert DateTime.diff(completed.lease_expires_at, completed.completed_at, :second) == 30
 
     assert Enum.map(Runs.list_steps(completed), &{&1.kind, &1.status}) == [
              {"prepare", "skipped"},

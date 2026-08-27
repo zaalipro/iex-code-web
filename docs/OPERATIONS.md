@@ -38,6 +38,41 @@ df -h /var/lib/iex-code-web /srv/iex-code-workspaces
 SQLite uses WAL mode. Short write contention is retried or bounded; persistent
 `database is locked`, read-only, or disk-full errors require operator action.
 
+`status` reports whether application work is idle or active and includes the
+current container/BEAM memory and BEAM port usage when runtime inspection is
+available. `idle` means there are no active or queued runs, active or paused
+agents, active fleets, or active DAG attempts. Sessions and dormant terminals
+are displayed but do not make the application active. Use Docker for a second,
+cgroup-level view:
+
+```bash
+APP_ID=$(sudo docker ps \
+  --filter label=com.docker.compose.project=iex-code-web \
+  --filter label=com.docker.compose.service=app --quiet | head -n1)
+sudo docker stats --no-stream "$APP_ID"
+sudo docker inspect --format \
+  'hard={{.HostConfig.Memory}} reservation={{.HostConfig.MemoryReservation}} ulimits={{json .HostConfig.Ulimits}}' \
+  "$APP_ID"
+sudo docker exec "$APP_ID" sh -lc \
+  'ulimit -n; cat /sys/fs/cgroup/memory.current; cat /sys/fs/cgroup/memory.max; cat /sys/fs/cgroup/memory.events'
+sudo docker exec "$APP_ID" /opt/iex-code/bin/iex_code rpc \
+  'IO.inspect(%{memory: :erlang.memory(:total), port_limit: :erlang.system_info(:port_limit)})'
+```
+
+With the default configuration, the hard limit is `1073741824` bytes, the
+reservation is `536870912` bytes, and `ulimit -n` is `65536`. During a verified
+idle period, container memory should normally stay below 600 MiB and BEAM memory
+below 300 MiB. Investigate active/queued work, terminals, and logs before
+attributing higher usage to an idle baseline. Any non-zero `oom` or `oom_kill`
+counter in `memory.events` needs investigation.
+
+To verify a stable idle baseline, first use `sudo iex-code-web status` to
+confirm zero active/queued work. Then sample `docker stats --no-stream` and the
+release RPC above for five continuous minutes. With default limits, every idle
+sample must remain below 600 MiB of container memory and 300 MiB of BEAM memory,
+the reported BEAM port limit must remain `65536`, and `memory.events` must show
+`oom 0` and `oom_kill 0`.
+
 ## Update
 
 ```bash
@@ -110,6 +145,22 @@ Show a redacted configuration summary:
 ```bash
 sudo iex-code-web config
 ```
+
+The summary includes the configured hard memory limit, soft reservation, and
+file-descriptor/BEAM-port limit. To change them, rerun the installed, inspected
+installer in update mode; the reservation must not exceed the hard limit:
+
+```bash
+sudo /opt/iex-code-web/source/install.sh --update-only \
+  --memory-limit-mib 1024 \
+  --memory-reservation-mib 512 \
+  --nofile-limit 65536
+```
+
+Do not lower the hard limit while work is active: Docker can terminate the app
+and its agent subprocesses if their combined cgroup crosses the new boundary.
+The deployment does not configure swap and does not automatically cancel work
+before an out-of-memory event.
 
 Edit root-owned configuration only when necessary:
 

@@ -984,26 +984,89 @@
             <.settings_section_header
               id="runtime-title"
               eyebrow="Runtime"
-              title="Operational facts"
-              description="Read-only state from the local OTP runtime. Service capacity and security boundaries are not editable browser preferences."
+              title="Live operational status"
+              description="Read-only activity, memory, and capacity facts from the local OTP runtime. Values refresh every five seconds while this page is open."
             />
-            <div class="divide-y divide-[#29313a] border-y border-[#29313a]">
-              <article
-                :for={fact <- @runtime_facts}
-                id={"settings-runtime-#{fact.id}"}
-                class="grid gap-2 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6"
-              >
-                <div>
-                  <h3 class="text-sm font-semibold text-gray-200">{fact.label}</h3><p class="mt-1 text-sm leading-5 text-gray-500">
-                    {fact.note}
+            <% container = runtime_group(@runtime_status, :container) %>
+            <% beam = runtime_group(@runtime_status, :beam) %>
+            <% dispatcher = runtime_group(@runtime_status, :dispatcher) %>
+            <% activity = runtime_group(@runtime_status, :activity) %>
+            <div
+              id="settings-runtime-panel"
+              data-state={@runtime_status.state}
+              class="settings-runtime-panel"
+            >
+              <div class="settings-runtime-overview">
+                <div class="min-w-0">
+                  <p class="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+                    Work state
+                  </p>
+                  <div class="mt-2 flex flex-wrap items-center gap-3">
+                    <span
+                      id="settings-runtime-state"
+                      role="status"
+                      aria-live="polite"
+                      data-tone={runtime_state_tone(@runtime_status)}
+                      class="settings-runtime-state"
+                    >
+                      <span class="settings-runtime-state-dot"></span>
+                      {runtime_state_label(@runtime_status)}
+                    </span>
+                    <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-gray-600">
+                      Auto-refresh · 5s
+                    </span>
+                  </div>
+                  <p
+                    id="settings-runtime-state-note"
+                    class="mt-3 max-w-[66ch] text-sm leading-6 text-gray-400"
+                  >
+                    {runtime_state_note(@runtime_status)}
                   </p>
                 </div>
-                <span data-tone={fact.tone} class="settings-runtime-value">{fact.value}</span>
-              </article>
+                <div id="settings-runtime-memory-container" class="settings-runtime-memory-hero">
+                  <span>Container memory</span>
+                  <strong>{runtime_memory_value(container)}</strong>
+                </div>
+              </div>
+
+              <dl id="settings-runtime-metrics" class="settings-runtime-grid">
+                <div
+                  id="settings-runtime-runs"
+                  class="settings-runtime-metric settings-runtime-metric-wide"
+                >
+                  <dt><.icon name="hero-queue-list" class="h-4 w-4" /> Runs</dt>
+                  <dd>{runtime_dispatcher_value(dispatcher)}</dd>
+                </div>
+                <div id="settings-runtime-agents" class="settings-runtime-metric">
+                  <dt>Agents</dt><dd>{runtime_count(activity, :agents)}</dd>
+                </div>
+                <div id="settings-runtime-fleets" class="settings-runtime-metric">
+                  <dt>Fleets</dt><dd>{runtime_count(activity, :fleets)}</dd>
+                </div>
+                <div id="settings-runtime-sessions" class="settings-runtime-metric">
+                  <dt>Sessions</dt><dd>{runtime_count(activity, :sessions)}</dd>
+                </div>
+                <div id="settings-runtime-terminals" class="settings-runtime-metric">
+                  <dt>Terminals</dt><dd>{runtime_count(activity, :terminals)}</dd>
+                </div>
+                <div id="settings-runtime-beam-memory" class="settings-runtime-metric">
+                  <dt>BEAM memory</dt><dd>{runtime_beam_memory_value(beam)}</dd>
+                </div>
+                <div id="settings-runtime-ports" class="settings-runtime-metric">
+                  <dt>BEAM ports</dt><dd>{runtime_ports_value(beam)}</dd>
+                </div>
+                <div
+                  id="settings-runtime-dag-attempts"
+                  class="settings-runtime-metric settings-runtime-metric-full"
+                >
+                  <dt><.icon name="hero-command-line" class="h-4 w-4" /> Research attempts</dt>
+                  <dd>{runtime_count(activity, :dag_attempts)} active DAG attempts</dd>
+                </div>
+              </dl>
             </div>
             <div class="mt-4 flex items-start gap-2 text-xs leading-5 text-gray-500">
               <.icon name="hero-information-circle" class="mt-0.5 h-4 w-4 shrink-0" />
-              Changes to process-level concurrency, shell adapters, or network policy require a runtime restart and remain configuration-file settings.
+              A dormant session or terminal can remain open while the application is idle. Only queued or executing work makes the runtime active.
             </div>
           </section>
 

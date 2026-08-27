@@ -30,6 +30,9 @@ load_config() {
   IEX_CODE_BACKUP_DIR=${IEX_CODE_BACKUP_DIR:-/var/backups/iex-code-web}
   IEX_CODE_APP_UID=${IEX_CODE_APP_UID:-10001}
   IEX_CODE_APP_GID=${IEX_CODE_APP_GID:-10001}
+  IEX_CODE_MEMORY_LIMIT_MIB=${IEX_CODE_MEMORY_LIMIT_MIB:-1024}
+  IEX_CODE_MEMORY_RESERVATION_MIB=${IEX_CODE_MEMORY_RESERVATION_MIB:-512}
+  IEX_CODE_NOFILE_LIMIT=${IEX_CODE_NOFILE_LIMIT:-65536}
 }
 
 detect_compose() {
@@ -61,12 +64,30 @@ compose() {
   IEX_CODE_PUBLIC_PORT="$IEX_CODE_PUBLIC_PORT" \
   IEX_CODE_APP_UID="$IEX_CODE_APP_UID" \
   IEX_CODE_APP_GID="$IEX_CODE_APP_GID" \
+  IEX_CODE_MEMORY_LIMIT_MIB="$IEX_CODE_MEMORY_LIMIT_MIB" \
+  IEX_CODE_MEMORY_RESERVATION_MIB="$IEX_CODE_MEMORY_RESERVATION_MIB" \
+  IEX_CODE_NOFILE_LIMIT="$IEX_CODE_NOFILE_LIMIT" \
     "${COMPOSE[@]}" --project-directory "$IEX_CODE_SOURCE_DIR" \
       -f "$IEX_CODE_SOURCE_DIR/compose.yaml" "${topology[@]}" "$@"
 }
 
 running_app() {
   [[ -n "$(compose ps -q app 2>/dev/null || true)" ]]
+}
+
+deployment_status() {
+  compose ps || return $?
+
+  if running_app; then
+    local runtime_output
+    if runtime_output=$(compose exec -T app /opt/iex-code/bin/iex_code rpc \
+        'IexCode.Observability.RuntimeStatus.print_cli()' 2>/dev/null); then
+      [[ -z $runtime_output ]] || printf '%s\n' "$runtime_output"
+    else
+      printf '%s\n' \
+        'iex-code-web: warning: runtime status unavailable; service status is shown above' >&2
+    fi
+  fi
 }
 
 backup() (
@@ -199,7 +220,7 @@ main() {
   case "$command" in
     start) compose up -d ;;
     stop) compose stop ;;
-    status) compose ps ;;
+    status) deployment_status ;;
     logs)
       if (($#)); then compose logs --tail=200 -f "$1"; else compose logs --tail=200 -f; fi
       ;;
@@ -217,6 +238,9 @@ main() {
       printf 'SOURCE_DIR=%s\nSTATE_DIR=%s\nWORKSPACE_DIR=%s\nBACKUP_DIR=%s\n' \
         "$IEX_CODE_SOURCE_DIR" "$IEX_CODE_STATE_DIR" "$IEX_CODE_WORKSPACE_DIR" \
         "$IEX_CODE_BACKUP_DIR"
+      printf 'MEMORY_LIMIT_MIB=%s\nMEMORY_RESERVATION_MIB=%s\nNOFILE_LIMIT=%s\n' \
+        "$IEX_CODE_MEMORY_LIMIT_MIB" "$IEX_CODE_MEMORY_RESERVATION_MIB" \
+        "$IEX_CODE_NOFILE_LIMIT"
       ;;
     uninstall)
       if [[ ${1:-} == --purge ]]; then
@@ -239,4 +263,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
