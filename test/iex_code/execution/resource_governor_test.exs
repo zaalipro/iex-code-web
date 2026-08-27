@@ -359,6 +359,8 @@ defmodule IexCode.Execution.ResourceGovernorTest do
         id: {:permit_supervisor, make_ref()}
       )
 
+    test_pid = self()
+
     fake_server =
       spawn(fn ->
         receive do
@@ -367,7 +369,9 @@ defmodule IexCode.Execution.ResourceGovernorTest do
         end
 
         receive do
-          {:"$gen_call", _from, {:request, _permit, _ticket, _class, _priority, _run, _timeout}} ->
+          {:"$gen_call", _from,
+           {:request, permit_pid, _ticket, _class, _priority, _run, _timeout}} ->
+            send(test_pid, {:ungranted_permit, permit_pid})
             exit({:unexpected_admission_failure, :boom})
         end
       end)
@@ -375,7 +379,9 @@ defmodule IexCode.Execution.ResourceGovernorTest do
     assert {:error, :unavailable} =
              ResourceGovernor.request(:build_test, server: fake_server, timeout: 0)
 
-    assert DynamicSupervisor.count_children(permit_supervisor).active == 0
+    assert_receive {:ungranted_permit, permit_pid}
+    permit_monitor = Process.monitor(permit_pid)
+    assert_receive {:DOWN, ^permit_monitor, :process, ^permit_pid, _reason}
   end
 
   test "reads cgroup current, max, pressure and events" do

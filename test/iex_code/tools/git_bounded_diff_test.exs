@@ -218,6 +218,16 @@ defmodule IexCode.Tools.GitBoundedDiffTest do
     import os, sys, time
     pid = int(sys.argv[1])
     for _ in range(100):
+        # A process-group kill can leave a descendant as a zombie until the
+        # runner's init process reaps it. It cannot execute or retain memory,
+        # so distinguish that state from a genuinely live orphan.
+        try:
+            with open(f"/proc/{pid}/stat", "r") as stat:
+                state = stat.read().split()[2]
+            if state in ("Z", "X"):
+                sys.exit(0)
+        except (FileNotFoundError, IndexError):
+            pass
         try:
             os.kill(pid, 0)
         except ProcessLookupError:

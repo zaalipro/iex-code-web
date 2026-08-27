@@ -65,7 +65,10 @@ defmodule IexCode.Tools.Git do
           env: [{~c"GIT_CEILING_DIRECTORIES", String.to_charlist(parent_dir)}]
         ])
 
-      os_pid = port |> Port.info(:os_pid) |> elem(1)
+      # Very small producers can exit before the caller inspects the Port.
+      # Keep the PID optional: the exit-status message still lets collection
+      # finish, while termination remains safe when there is no live group.
+      os_pid = port_os_pid(port)
 
       collect_status_output(
         port,
@@ -292,7 +295,7 @@ defmodule IexCode.Tools.Git do
               args: args
             ])
 
-          os_pid = port |> Port.info(:os_pid) |> elem(1)
+          os_pid = port_os_pid(port)
 
           collect_diff_output(
             port,
@@ -385,6 +388,13 @@ defmodule IexCode.Tools.Git do
       Port.close(port)
     rescue
       ArgumentError -> :ok
+    end
+  end
+
+  defp port_os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} when is_integer(pid) and pid > 0 -> pid
+      _other -> nil
     end
   end
 
