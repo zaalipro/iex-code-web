@@ -29,7 +29,7 @@ defmodule IexCode.Tools.Git do
 
     paths = status_paths(Keyword.get(opts, :paths, []))
 
-    case run_status_bounded(repo_dir, output_limit, paths) do
+    case run_status_bounded(repo_dir, output_limit, paths, opts) do
       {:ok, output, producer_truncated?} ->
         output = if producer_truncated?, do: complete_status_lines(output), else: output
         output = String.replace_invalid(output)
@@ -46,33 +46,34 @@ defmodule IexCode.Tools.Git do
     end
   end
 
-  defp run_status_bounded(repo_dir, output_limit, paths) do
+  defp run_status_bounded(repo_dir, output_limit, paths, opts) do
     full_path = Path.expand(repo_dir)
     parent_dir = Path.dirname(full_path)
     status_args = ["status", "--porcelain=v1", "-b", "-uall"]
     status_args = if paths == [], do: status_args, else: status_args ++ ["--"] ++ paths
 
-    with git when is_binary(git) <- System.find_executable("git") do
-      {executable, args, process_group?} = isolated_git(git, status_args)
-
+    with git when is_binary(git) <-
+           Keyword.get(opts, :_git_executable) || System.find_executable("git") do
       port =
-        Port.open({:spawn_executable, executable}, [
+        Port.open({:spawn_executable, git}, [
           :binary,
           :exit_status,
           :stderr_to_stdout,
           :hide,
           cd: full_path,
-          args: args,
+          args: status_args,
           env: [{~c"GIT_CEILING_DIRECTORIES", String.to_charlist(parent_dir)}]
         ])
 
+      os_pid = port |> Port.info(:os_pid) |> elem(1)
+
       collect_status_output(
         port,
+        os_pid,
         [],
         0,
         output_limit,
-        System.monotonic_time(:millisecond) + @git_timeout_ms,
-        process_group?
+        System.monotonic_time(:millisecond) + git_timeout(opts)
       )
     else
       nil -> {:error, :git_not_found}
@@ -81,11 +82,11 @@ defmodule IexCode.Tools.Git do
     error -> {:error, error}
   end
 
-  defp collect_status_output(port, chunks, bytes, limit, deadline, process_group?) do
+  defp collect_status_output(port, os_pid, chunks, bytes, limit, deadline) do
     remaining_time = deadline - System.monotonic_time(:millisecond)
 
     if remaining_time <= 0 do
-      terminate_git(port, process_group?)
+      terminate_git(port, os_pid)
       {:error, :timeout}
     else
       receive do
@@ -95,17 +96,17 @@ defmodule IexCode.Tools.Git do
           if byte_size(data) <= remaining_bytes do
             collect_status_output(
               port,
+              os_pid,
               [data | chunks],
               bytes + byte_size(data),
               limit,
-              deadline,
-              process_group?
+              deadline
             )
           else
             accepted =
               if remaining_bytes > 0, do: binary_part(data, 0, remaining_bytes), else: <<>>
 
-            terminate_git(port, process_group?)
+            terminate_git(port, os_pid)
             {:ok, IO.iodata_to_binary(Enum.reverse([accepted | chunks])), true}
           end
 
@@ -128,7 +129,7 @@ defmodule IexCode.Tools.Git do
           end
       after
         remaining_time ->
-          terminate_git(port, process_group?)
+          terminate_git(port, os_pid)
           {:error, :timeout}
       end
     end
@@ -276,29 +277,30 @@ defmodule IexCode.Tools.Git do
     paths = Keyword.get(opts, :paths, [])
     args = if paths == [], do: args, else: args ++ ["--"] ++ List.wrap(paths)
 
-    with git when is_binary(git) <- System.find_executable("git"),
+    with git when is_binary(git) <-
+           Keyword.get(opts, :_git_executable) || System.find_executable("git"),
          {:ok, io} <- File.open(output_path, [:write, :binary, :exclusive]) do
       try do
         with :ok <- File.chmod(output_path, 0o600) do
-          {executable, executable_args, process_group?} = isolated_git(git, args)
-
           port =
-            Port.open({:spawn_executable, executable}, [
+            Port.open({:spawn_executable, git}, [
               :binary,
               :exit_status,
               :stderr_to_stdout,
               :hide,
               cd: repo_dir,
-              args: executable_args
+              args: args
             ])
+
+          os_pid = port |> Port.info(:os_pid) |> elem(1)
 
           collect_diff_output(
             port,
+            os_pid,
             io,
             0,
             producer_limit,
-            System.monotonic_time(:millisecond) + 30_000,
-            process_group?
+            System.monotonic_time(:millisecond) + git_timeout(opts)
           )
         end
       after
@@ -310,11 +312,11 @@ defmodule IexCode.Tools.Git do
     end
   end
 
-  defp collect_diff_output(port, io, bytes, limit, deadline, process_group?) do
+  defp collect_diff_output(port, os_pid, io, bytes, limit, deadline) do
     remaining_time = deadline - System.monotonic_time(:millisecond)
 
     if remaining_time <= 0 do
-      terminate_git(port, process_group?)
+      terminate_git(port, os_pid)
       {:error, :timeout}
     else
       receive do
@@ -327,15 +329,15 @@ defmodule IexCode.Tools.Git do
                 :ok ->
                   collect_diff_output(
                     port,
+                    os_pid,
                     io,
                     bytes + byte_size(data),
                     limit,
-                    deadline,
-                    process_group?
+                    deadline
                   )
 
                 {:error, reason} ->
-                  terminate_git(port, process_group?)
+                  terminate_git(port, os_pid)
                   {:error, reason}
               end
 
@@ -345,7 +347,7 @@ defmodule IexCode.Tools.Git do
                   do: IO.binwrite(io, binary_part(data, 0, remaining_bytes)),
                   else: :ok
 
-              terminate_git(port, process_group?)
+              terminate_git(port, os_pid)
 
               case write_result do
                 :ok -> {:error, :output_limit_exceeded}
@@ -360,27 +362,24 @@ defmodule IexCode.Tools.Git do
           {:error, {:git_error, status}}
       after
         remaining_time ->
-          terminate_git(port, process_group?)
+          terminate_git(port, os_pid)
           {:error, :timeout}
       end
     end
   end
 
-  defp isolated_git(git, args) do
-    case System.find_executable("setsid") do
-      nil -> {git, args, false}
-      setsid -> {setsid, [git | args], true}
+  defp git_timeout(opts) do
+    case Keyword.get(opts, :_timeout_ms) do
+      timeout when is_integer(timeout) and timeout > 0 -> min(timeout, @git_timeout_ms)
+      _other -> @git_timeout_ms
     end
   end
 
-  defp terminate_git(port, process_group?) do
-    case Port.info(port, :os_pid) do
-      {:os_pid, pid} when is_integer(pid) and process_group? ->
-        _ = IexCode.Tools.PTYAdapter.terminate_process_group(pid, :sigkill)
-
-      _other ->
-        :ok
-    end
+  # OTP's Unix port launcher creates the spawned executable as a process-group
+  # and session leader. Directly spawning Git therefore keeps the Port OS PID
+  # equal to the private PGID without an extra `setsid` process that may fork.
+  defp terminate_git(port, os_pid) do
+    _ = IexCode.Tools.PTYAdapter.terminate_process_group(os_pid, :sigkill)
 
     try do
       Port.close(port)

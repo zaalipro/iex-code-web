@@ -103,4 +103,141 @@ defmodule IexCode.Tools.GitBoundedDiffTest do
     assert {:ok, :reverted} = HunkOps.revert_file(root, omitted_path)
     refute File.exists?(Path.join(root, omitted_path))
   end
+
+  test "direct status producer retains one tracked PID boundary through completion", %{root: root} do
+    {fake_git, producer_path, _child_path} = fake_git(root, :complete)
+
+    assert {:ok, status} = Git.status(root, _git_executable: fake_git)
+    assert "runner-visible.txt" in status.untracked
+
+    {pid, process_group, session} = read_process_boundary!(producer_path)
+    assert pid == process_group
+    assert pid == session
+  end
+
+  test "diff producer cap kills the tracked process group and its descendant", %{root: root} do
+    {fake_git, producer_path, child_path} = fake_git(root, :produce_forever)
+    cleanup_processes_on_exit([producer_path, child_path])
+
+    assert {:error, :output_limit_exceeded} =
+             Git.diff_bounded(root,
+               max_bytes: 1_024,
+               producer_limit_bytes: 2_048,
+               _git_executable: fake_git
+             )
+
+    assert_boundary_and_descendant_dead(producer_path, child_path)
+  end
+
+  test "short status timeout kills the tracked process group and its descendant", %{root: root} do
+    {fake_git, producer_path, child_path} = fake_git(root, :wait_forever)
+    cleanup_processes_on_exit([producer_path, child_path])
+
+    assert {:error, :timeout} =
+             Git.status(root, _git_executable: fake_git, _timeout_ms: 2_000)
+
+    assert_boundary_and_descendant_dead(producer_path, child_path)
+  end
+
+  defp fake_git(root, mode) do
+    suffix = System.unique_integer([:positive, :monotonic])
+    executable = Path.join(root, "fake-git-#{suffix}")
+    producer_path = executable <> ".producer"
+    child_path = executable <> ".child"
+
+    body =
+      case mode do
+        :complete ->
+          """
+          with open(producer_path, "w") as output:
+              output.write(f"{os.getpid()} {os.getpgrp()} {os.getsid(0)}")
+          time.sleep(0.05)
+          os.write(1, b"## main\\n?? runner-visible.txt\\n")
+          """
+
+        :produce_forever ->
+          producer_body("""
+          while True:
+              os.write(1, b"x" * 65536)
+          """)
+
+        :wait_forever ->
+          producer_body("""
+          while True:
+              time.sleep(60)
+          """)
+      end
+
+    File.write!(executable, """
+    #!/usr/bin/env python3
+    import os
+    import subprocess
+    import sys
+    import time
+
+    producer_path = #{inspect(producer_path)}
+    child_path = #{inspect(child_path)}
+    #{body}
+    """)
+
+    File.chmod!(executable, 0o700)
+    {executable, producer_path, child_path}
+  end
+
+  defp producer_body(loop) do
+    """
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with open(producer_path, "w") as output:
+        output.write(f"{os.getpid()} {os.getpgrp()} {os.getsid(0)}")
+    with open(child_path, "w") as output:
+        output.write(str(child.pid))
+    #{loop}
+    """
+  end
+
+  defp assert_boundary_and_descendant_dead(producer_path, child_path) do
+    {producer_pid, process_group, session} = read_process_boundary!(producer_path)
+    child_pid = child_path |> File.read!() |> String.to_integer()
+
+    assert producer_pid == process_group
+    assert producer_pid == session
+    assert child_pid != producer_pid
+    assert_process_dead(producer_pid)
+    assert_process_dead(child_pid)
+  end
+
+  defp read_process_boundary!(path) do
+    [pid, process_group, session] = path |> File.read!() |> String.split()
+    {String.to_integer(pid), String.to_integer(process_group), String.to_integer(session)}
+  end
+
+  defp assert_process_dead(pid) do
+    python = System.find_executable("python3") || System.find_executable("python")
+
+    script = """
+    import os, sys, time
+    pid = int(sys.argv[1])
+    for _ in range(100):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            sys.exit(0)
+        time.sleep(0.02)
+    sys.exit(1)
+    """
+
+    assert {_output, 0} =
+             System.cmd(python, ["-c", script, Integer.to_string(pid)], stderr_to_stdout: true)
+  end
+
+  defp cleanup_processes_on_exit(paths) do
+    on_exit(fn ->
+      Enum.each(paths, fn path ->
+        with {:ok, content} <- File.read(path),
+             {pid, _rest} <- Integer.parse(content) do
+          _ = System.cmd("kill", ["-KILL", Integer.to_string(pid)], stderr_to_stdout: true)
+        end
+      end)
+    end)
+  end
 end

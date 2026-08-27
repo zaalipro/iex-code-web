@@ -104,6 +104,23 @@ defmodule IexCode.Tools.WorkspacePathCapabilityTest do
     assert File.read!(inside <> ".bak") == "inside"
   end
 
+  @tag :tmp_dir
+  test "HunkOps does not inherit a parent repository for a non-git workspace", %{
+    tmp_dir: tmp_dir
+  } do
+    outer = Path.join(tmp_dir, "outer-repository")
+    root = Path.join(outer, "nested-workspace")
+    File.mkdir_p!(root)
+    {_output, 0} = System.cmd("git", ["init", "-b", "main"], cd: outer)
+
+    inside = Path.join(root, "inside.txt")
+    File.write!(inside, "inside")
+
+    assert {:ok, :reverted} = HunkOps.revert_file(root, inside)
+    refute File.exists?(inside)
+    assert File.read!(inside <> ".bak") == "inside"
+  end
+
   defp escaped_workspace(tmp_dir) do
     root = Path.join(tmp_dir, "workspace")
     outside = Path.join(tmp_dir, "outside")

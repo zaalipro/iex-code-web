@@ -114,12 +114,21 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp do_revert_file(project_root, file_path, full_path) do
-    # Check git status first
+    # A workspace is a Git capability only when its own root contains a real
+    # .git directory/file. Never inherit a parent checkout merely because a CI
+    # temp directory happens to live below it; that could restore or delete a
+    # file against the wrong repository.
+    if local_git_repository?(project_root) do
+      do_revert_git_file(project_root, file_path, full_path)
+    else
+      backup_non_git_file(full_path)
+    end
+  end
+
+  defp do_revert_git_file(project_root, file_path, full_path) do
     case Git.status(project_root, paths: [file_path], path_limit: 4, output_limit_bytes: 32_768) do
       {:ok, status} ->
-        is_untracked = file_path in status.untracked
-
-        if is_untracked do
+        if file_path in status.untracked do
           remove_file(full_path)
         else
           case Git.restore_file(project_root, file_path, staged: true, worktree: true) do
@@ -127,27 +136,37 @@ defmodule IexCode.Tools.Git.HunkOps do
               {:ok, :reverted}
 
             {:error, _} ->
-              # Fallback: run git checkout HEAD -- <file>
               case Git.run_git(project_root, ["checkout", "HEAD", "--", file_path]) do
                 {:ok, _} -> {:ok, :reverted}
-                err -> err
+                error -> error
               end
           end
         end
 
       {:error, :not_a_git_repo} ->
-        # Non-git workspace fallback: never delete user work — move it aside.
-        if File.exists?(full_path) do
-          case File.rename(full_path, full_path <> ".bak") do
-            :ok -> {:ok, :reverted}
-            {:error, reason} -> {:error, {:backup_failed, reason}}
-          end
-        else
-          {:ok, :reverted}
-        end
+        # A stale/broken .git marker is still not authority to delete a file.
+        backup_non_git_file(full_path)
 
-      err ->
-        err
+      error ->
+        error
+    end
+  end
+
+  defp local_git_repository?(project_root) do
+    case File.lstat(Path.join(project_root, ".git")) do
+      {:ok, %File.Stat{type: type}} when type in [:directory, :regular] -> true
+      _missing_or_unsafe -> false
+    end
+  end
+
+  defp backup_non_git_file(full_path) do
+    if File.exists?(full_path) do
+      case File.rename(full_path, full_path <> ".bak") do
+        :ok -> {:ok, :reverted}
+        {:error, reason} -> {:error, {:backup_failed, reason}}
+      end
+    else
+      {:ok, :reverted}
     end
   end
 
