@@ -5,7 +5,7 @@ defmodule IexCode.Engine.Agents.CoderAgent do
   """
   use GenServer, restart: :transient
   require Logger
-  alias IexCode.Engine.{AgentRegistry, OperationManager}
+  alias IexCode.Engine.{AgentCancellation, AgentRegistry, AgentStateRetention, OperationManager}
   alias IexCode.Execution.ModelRoute
   alias IexCode.{Sessions, Settings, Tools, LLM}
   alias IexCode.Tools.AutoFix
@@ -21,6 +21,7 @@ defmodule IexCode.Engine.Agents.CoderAgent do
       :session,
       :project_root,
       :control_token,
+      :cancel_token,
       :llm,
       status: :idle,
       current_op_id: nil,
@@ -93,12 +94,13 @@ defmodule IexCode.Engine.Agents.CoderAgent do
       session: session,
       project_root: project_root,
       control_token: opts[:control_token],
+      cancel_token: if(is_binary(opts[:run_id]), do: nil, else: AgentCancellation.new()),
       llm: Keyword.get(opts, :llm, LLM),
       status: :idle
     }
 
     unless is_binary(opts[:run_id]) do
-      set_cancelled?(session_id, false)
+      AgentCancellation.erase_legacy(__MODULE__, session_id)
       subscribe_steering(session_id)
     end
 
@@ -213,18 +215,25 @@ defmodule IexCode.Engine.Agents.CoderAgent do
 
     case code_res do
       {:ok, code_result} ->
+        {last_result, history} = AgentStateRetention.remember(state.history, code_result)
+
         new_state = %State{
           state
           | status: :idle,
-            last_result: code_result,
-            history: [code_result | state.history]
+            last_result: last_result,
+            history: history
         }
 
-        {:reply, {:ok, code_result}, new_state}
+        {:reply, {:ok, code_result}, new_state, :hibernate}
 
       {:error, reason} ->
-        new_state = %State{state | status: :idle, last_result: {:error, reason}}
-        {:reply, {:error, reason}, new_state}
+        new_state = %State{
+          state
+          | status: :idle,
+            last_result: AgentStateRetention.retain({:error, reason})
+        }
+
+        {:reply, {:error, reason}, new_state, :hibernate}
     end
   end
 
@@ -242,12 +251,12 @@ defmodule IexCode.Engine.Agents.CoderAgent do
         Tools.multi_patch(patches, project_root, opts)
       end)
 
-    {:reply, res, state}
+    {:reply, res, state, :hibernate}
   end
 
   @impl true
   def handle_call(:get_state, _from, %State{} = state) do
-    {:reply, state, state}
+    {:reply, state, state, :hibernate}
   end
 
   # Tool loop helpers
@@ -511,12 +520,8 @@ defmodule IexCode.Engine.Agents.CoderAgent do
     Phoenix.PubSub.subscribe(IexCode.PubSub, "session:#{session_id}:steer")
   end
 
-  defp set_cancelled?(session_id, value) do
-    :persistent_term.put({__MODULE__, :cancelled?, session_id}, value)
-  end
-
-  defp cancelled_fun(%State{control_token: nil, session_id: session_id}) do
-    fn -> :persistent_term.get({__MODULE__, :cancelled?, session_id}, false) end
+  defp cancelled_fun(%State{control_token: nil, cancel_token: token}) do
+    fn -> AgentCancellation.cancelled?(token) end
   end
 
   defp cancelled_fun(%State{control_token: token}) do
@@ -532,40 +537,40 @@ defmodule IexCode.Engine.Agents.CoderAgent do
   end
 
   @impl true
-  def handle_info({:cancel, session_id, _opts}, state) do
-    set_cancelled?(session_id, true)
-    {:noreply, state}
+  def handle_info({:cancel, session_id, _opts}, %{session_id: session_id} = state) do
+    AgentCancellation.cancel(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
-  def handle_info({:pause, session_id}, state) do
-    set_cancelled?(session_id, true)
-    {:noreply, state}
+  def handle_info({:pause, session_id}, %{session_id: session_id} = state) do
+    AgentCancellation.cancel(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
-  def handle_info({:resume, session_id}, state) do
-    set_cancelled?(session_id, false)
-    {:noreply, state}
+  def handle_info({:resume, session_id}, %{session_id: session_id} = state) do
+    AgentCancellation.resume(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({ref, _result}, state) when is_reference(ref) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({:operation_task_done, _op_id, _result}, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info(_msg, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 end

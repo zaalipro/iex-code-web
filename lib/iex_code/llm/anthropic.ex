@@ -81,7 +81,7 @@ defmodule IexCode.LLM.Anthropic do
             {:error, %{status: nil, body: reason_to_string(reason), kind: :network}}
         end
       else
-        case Req.post(url,
+        case IexCode.HTTP.post(url,
                json: body,
                headers: headers,
                receive_timeout: Keyword.get(opts, :receive_timeout, 25_000)

@@ -117,6 +117,7 @@ defmodule IexCode.Settings do
         case result do
           {:ok, struct} ->
             updated = ensure_default_endpoints(struct)
+            apply_resource_policy(updated)
             broadcast_update(updated)
             {:ok, updated}
 
@@ -225,6 +226,48 @@ defmodule IexCode.Settings do
     }
   end
 
+  @doc "Returns the validated live resource policy derived from persisted settings."
+  def resource_policy(%AppSettings{} = settings \\ get_settings()) do
+    %{
+      pressure_percent: settings.resource_pressure_percent || 70,
+      critical_percent: settings.resource_critical_percent || 85,
+      terminal_idle_timeout_ms: (settings.terminal_idle_timeout_minutes || 30) * 60_000,
+      session_idle_timeout_ms: (settings.session_idle_timeout_minutes || 30) * 60_000,
+      output_artifact_limit_bytes: (settings.output_artifact_limit_mib || 256) * 1_048_576,
+      output_spool_quota_bytes: (settings.output_spool_quota_mib || 2048) * 1_048_576,
+      output_retention_seconds: (settings.output_retention_days || 7) * 86_400
+    }
+  end
+
+  @doc false
+  def apply_resource_policy(%AppSettings{} = settings) do
+    policy = resource_policy(settings)
+
+    Application.put_env(:iex_code, :terminal_idle_timeout_ms, policy.terminal_idle_timeout_ms)
+    Application.put_env(:iex_code, :session_idle_timeout_ms, policy.session_idle_timeout_ms)
+
+    output_config = Application.get_env(:iex_code, :output_artifacts, [])
+
+    Application.put_env(
+      :iex_code,
+      :output_artifacts,
+      Keyword.merge(output_config,
+        artifact_limit_bytes: policy.output_artifact_limit_bytes,
+        global_quota_bytes: policy.output_spool_quota_bytes,
+        retention_seconds: policy.output_retention_seconds
+      )
+    )
+
+    _ = IexCode.Execution.ResourceGovernor.update_policy(policy)
+    _ = IexCode.Tools.TerminalSupervisor.update_idle_timeout(policy.terminal_idle_timeout_ms)
+    _ = IexCode.Engine.SessionServer.update_idle_timeout(policy.session_idle_timeout_ms)
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
   defp default_settings_attrs do
     %{
       anthropic_api_key: System.get_env("ANTHROPIC_API_KEY") || "",
@@ -258,7 +301,14 @@ defmodule IexCode.Settings do
       research_require_conflict_audit: true,
       research_max_cost_cents: nil,
       research_max_tokens: nil,
-      research_time_budget_minutes: nil
+      research_time_budget_minutes: nil,
+      resource_pressure_percent: 70,
+      resource_critical_percent: 85,
+      terminal_idle_timeout_minutes: 30,
+      session_idle_timeout_minutes: 30,
+      output_artifact_limit_mib: 256,
+      output_spool_quota_mib: 2048,
+      output_retention_days: 7
     }
   end
 
@@ -437,6 +487,13 @@ defmodule IexCode.Settings do
           if(is_boolean(settings.goal_auto_start), do: settings.goal_auto_start, else: true),
         agent_max_turns: settings.agent_max_turns || 8,
         swarm_max_retries: settings.swarm_max_retries || 3,
+        resource_pressure_percent: settings.resource_pressure_percent || 70,
+        resource_critical_percent: settings.resource_critical_percent || 85,
+        terminal_idle_timeout_minutes: settings.terminal_idle_timeout_minutes || 30,
+        session_idle_timeout_minutes: settings.session_idle_timeout_minutes || 30,
+        output_artifact_limit_mib: settings.output_artifact_limit_mib || 256,
+        output_spool_quota_mib: settings.output_spool_quota_mib || 2048,
+        output_retention_days: settings.output_retention_days || 7,
         default_tools:
           if(is_map(settings.default_tools),
             do: normalize_policy_tools(settings.default_tools, %{}),
@@ -493,7 +550,7 @@ defmodule IexCode.Settings do
 
   defp normalize_required_integers(params) do
     Enum.reduce(
-      ~w(swarm_agent_count max_tokens research_max_sources research_parallelism default_run_max_attempts agent_max_turns swarm_max_retries),
+      ~w(swarm_agent_count max_tokens research_max_sources research_parallelism default_run_max_attempts agent_max_turns swarm_max_retries resource_pressure_percent resource_critical_percent terminal_idle_timeout_minutes session_idle_timeout_minutes output_artifact_limit_mib output_spool_quota_mib output_retention_days),
       params,
       &normalize_integer(&2, &1, false)
     )

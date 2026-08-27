@@ -14,7 +14,7 @@ defmodule IexCode.Research.DagRuntime do
 
   alias IexCode.Research.{Fetcher, GroundedSearch, Launch, Registry, Report, Result, Search}
   alias IexCode.Research.GroundedSearch.GroundedAnswer
-  alias IexCode.Execution.Limits
+  alias IexCode.Execution.{Limits, ResourceGovernor}
   alias IexCode.Runs.DagPayload
   alias IexCode.Sessions
   alias IexCode.Settings
@@ -56,7 +56,7 @@ defmodule IexCode.Research.DagRuntime do
                invoke_search(
                  opts,
                  query,
-                 ranked_options(provider, provider_config, max_results, opts)
+                 ranked_options(provider, provider_config, max_results, context, opts)
                )
              end,
              fn raw -> ranked_response(raw, provider, query, max_results) end,
@@ -148,7 +148,7 @@ defmodule IexCode.Research.DagRuntime do
            bounded_integer(value(params, "max_cost_cents"), 0, 100_000, 0),
          {:ok, max_parallel_fetches} <-
            bounded_integer(value(params, "max_parallel_fetches"), 1, 16, 6),
-         {:ok, fetch_opts} <- fetch_options(params, opts),
+         {:ok, fetch_opts} <- fetch_options(params, context, opts),
          {:ok, fetched, fetch_usage} <-
            fetch_each(
              Enum.take(sources, max_sources),
@@ -204,18 +204,24 @@ defmodule IexCode.Research.DagRuntime do
          callback <-
            effect_callback(
              fn ->
+               llm_opts =
+                 [
+                   allowed_tools: [],
+                   cancelled?: Map.fetch!(context, :cancelled?),
+                   max_tokens: max_output_tokens,
+                   temperature: 0.1,
+                   resolved_route: synthesis_route,
+                   receive_timeout: timeout(value_from_opts(opts, :receive_timeout), 60_000)
+                 ]
+                 |> Keyword.merge(resource_opts(context, opts))
+
                invoke_llm(
                  opts,
                  messages,
                  system_prompt,
                  session,
                  fn _chunk -> :ok end,
-                 allowed_tools: [],
-                 cancelled?: Map.fetch!(context, :cancelled?),
-                 max_tokens: max_output_tokens,
-                 temperature: 0.1,
-                 resolved_route: synthesis_route,
-                 receive_timeout: timeout(value_from_opts(opts, :receive_timeout), 60_000)
+                 llm_opts
                )
              end,
              &synthesis_response/1,
@@ -608,7 +614,7 @@ defmodule IexCode.Research.DagRuntime do
 
   defp provider_value(_map, _provider), do: nil
 
-  defp ranked_options(provider, config, max_results, opts) do
+  defp ranked_options(provider, config, max_results, context, opts) do
     [
       providers: [provider],
       config: %{provider => config},
@@ -617,6 +623,7 @@ defmodule IexCode.Research.DagRuntime do
       timeout: timeout(value_from_opts(opts, :timeout), 15_000)
     ]
     |> maybe_put_option(:request, Keyword.get(opts, :request))
+    |> Keyword.merge(resource_opts(context, opts))
   end
 
   defp grounded_options(params, config, context, opts) do
@@ -642,13 +649,13 @@ defmodule IexCode.Research.DagRuntime do
           maybe_put_option(acc, key, value(config.raw, Atom.to_string(key)))
         end)
 
-      {:ok, configured}
+      {:ok, Keyword.merge(configured, resource_opts(context, opts))}
     end
   rescue
     KeyError -> {:error, :invalid_runtime_context}
   end
 
-  defp fetch_options(params, opts) do
+  defp fetch_options(params, context, opts) do
     with {:ok, max_body_bytes} <-
            bounded_integer(value(params, "max_body_bytes"), 1_000, @max_body_bytes, 750_000),
          {:ok, max_text_chars} <-
@@ -665,7 +672,8 @@ defmodule IexCode.Research.DagRuntime do
          max_text_chars: max_text_chars
        ]
        |> maybe_put_option(:request, Keyword.get(opts, :request))
-       |> maybe_put_option(:resolver, Keyword.get(opts, :resolver))}
+       |> maybe_put_option(:resolver, Keyword.get(opts, :resolver))
+       |> Keyword.merge(resource_opts(context, opts))}
     end
   end
 
@@ -1301,6 +1309,34 @@ defmodule IexCode.Research.DagRuntime do
       callback when is_function(callback, 2) -> callback.(query, search_opts)
       module when is_atom(module) -> module.search(query, search_opts)
     end
+  end
+
+  defp resource_opts(context, opts) do
+    run = Map.get(context, :run, %{})
+
+    context_opts =
+      [
+        resource_governor: Map.get(context, :resource_governor),
+        resource_priority: Map.get(context, :resource_priority),
+        resource_run_key: Map.get(context, :resource_run_key),
+        resource_timeout: Map.get(context, :resource_timeout)
+      ]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+    admission =
+      context_opts
+      |> Keyword.merge(opts)
+      |> ResourceGovernor.admission_opts(
+        priority: :background,
+        run_key: Map.get(run, :id) || Map.get(run, :session_id)
+      )
+
+    [
+      resource_governor: admission[:server],
+      resource_priority: admission[:priority],
+      resource_run_key: admission[:run_key],
+      resource_timeout: admission[:timeout]
+    ]
   end
 
   defp invoke_grounded(opts, provider, query, grounded_opts) do

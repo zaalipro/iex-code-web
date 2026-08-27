@@ -2,6 +2,7 @@ defmodule IexCode.Runs.DagRunnerTest do
   use IexCode.DataCase, async: false
 
   alias IexCode.{Projects, Repo, Runs, Sessions}
+  alias IexCode.Execution.ResourceGovernor
 
   alias IexCode.Runs.{
     DagManifest,
@@ -136,6 +137,65 @@ defmodule IexCode.Runs.DagRunnerTest do
     assert renewed.status == "running"
 
     send(started.pid, :release)
+    assert_receive {:dag_runner_result, ^runner, {:ok, %Run{status: "completed"}}}, 2_000
+  end
+
+  test "memory admission queues a DAG step without consuming its execution timeout", context do
+    memory = start_supervised!({Agent, fn -> 900 end})
+
+    governor =
+      start_supervised!(
+        {ResourceGovernor,
+         name: nil,
+         read_memory: fn ->
+           %{
+             memory_current_bytes: Agent.get(memory, & &1) * 1_048_576,
+             memory_limit_bytes: 1_000 * 1_048_576,
+             pressure: %{},
+             events: %{}
+           }
+         end,
+         headroom_bytes: 0,
+         poll_interval_ms: :infinity},
+        id: make_ref()
+      )
+
+    run = dag_run(context, [step("inventory", "project_inventory", %{})])
+
+    runner =
+      start_runner(run, context.root, blocking_executor(self()),
+        resource_governor: governor,
+        internal_step_timeout_ms: 25
+      )
+
+    assert_queued_dag_step(governor, run.id)
+    refute_receive {:step_started, _, _}, 50
+    assert Process.alive?(runner)
+
+    Agent.update(memory, fn _ -> 100 end)
+    assert %{state: :normal} = ResourceGovernor.snapshot(governor)
+    started = assert_started()
+    send(started.pid, :release)
+
+    assert_receive {:dag_runner_result, ^runner, {:ok, %Run{status: "completed"}}}, 2_000
+  end
+
+  test "admitted DAG context carries durable identity into nested provider tasks", context do
+    run = dag_run(context, [step("inventory", "project_inventory", %{})])
+    receiver = self()
+
+    executor = fn claim, execution_context ->
+      send(receiver, {:resource_context, execution_context})
+      {:ok, %{"key" => claim.step.key}}
+    end
+
+    runner = start_runner(run, context.root, executor, [])
+
+    assert_receive {:resource_context, execution_context}, 2_000
+    assert execution_context.resource_priority == :background
+    assert execution_context.resource_run_key == run.id
+    assert execution_context.resource_timeout == :infinity
+    assert execution_context.resource_governor == ResourceGovernor
     assert_receive {:dag_runner_result, ^runner, {:ok, %Run{status: "completed"}}}, 2_000
   end
 
@@ -355,6 +415,27 @@ defmodule IexCode.Runs.DagRunnerTest do
   defp assert_started do
     assert_receive {:step_started, key, pid}, 2_000
     %{key: key, pid: pid}
+  end
+
+  defp assert_queued_dag_step(governor, run_id, attempts \\ 1_000)
+
+  defp assert_queued_dag_step(_governor, _run_id, 0),
+    do: flunk("DAG step was not queued by the resource governor")
+
+  defp assert_queued_dag_step(governor, run_id, attempts) do
+    pending = governor |> :sys.get_state() |> Map.fetch!(:pending) |> Map.values()
+
+    if Enum.any?(
+         pending,
+         &(&1.class == :dag_step and &1.priority == :background and &1.run_key == run_id)
+       ) do
+      :ok
+    else
+      receive do
+      after
+        1 -> assert_queued_dag_step(governor, run_id, attempts - 1)
+      end
+    end
   end
 
   defp dag_run(context, manifest, opts \\ []) do

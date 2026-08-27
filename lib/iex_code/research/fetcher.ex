@@ -7,6 +7,7 @@ defmodule IexCode.Research.Fetcher do
   second, attacker-controlled DNS answer cannot redirect the actual connection.
   """
 
+  alias IexCode.Execution.ResourceGovernor
   alias IexCode.Research.URLGuard
 
   @default_timeout 10_000
@@ -30,7 +31,11 @@ defmodule IexCode.Research.Fetcher do
   @spec fetch(String.t(), keyword()) :: {:ok, result()} | {:error, term()}
   def fetch(url, opts \\ []) when is_binary(url) do
     with {:ok, config} <- config(opts) do
-      do_fetch(url, config, [])
+      ResourceGovernor.with_permit(
+        :research_fetch,
+        ResourceGovernor.admission_opts(opts, priority: :background),
+        fn -> do_fetch(url, config, []) end
+      )
     end
   end
 
@@ -257,7 +262,7 @@ defmodule IexCode.Research.Fetcher do
   defp config(opts) do
     config = %{
       resolver: Keyword.get(opts, :resolver, &default_resolver/1),
-      request: Keyword.get(opts, :request, &Req.get/2),
+      request: Keyword.get(opts, :request, &default_request/2),
       timeout: Keyword.get(opts, :timeout, @default_timeout),
       body_limit: Keyword.get(opts, :max_body_bytes, @default_body_limit),
       text_limit: Keyword.get(opts, :max_text_chars, @default_text_limit),
@@ -287,5 +292,12 @@ defmodule IexCode.Research.Fetcher do
       end)
 
     if results == [], do: {:error, :nxdomain}, else: {:ok, Enum.uniq(results)}
+  end
+
+  defp default_request(url, opts) do
+    opts
+    |> Keyword.put(:method, :get)
+    |> Keyword.put(:url, url)
+    |> IexCode.HTTP.pinned_request()
   end
 end

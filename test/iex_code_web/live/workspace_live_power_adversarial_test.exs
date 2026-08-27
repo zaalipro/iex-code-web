@@ -41,50 +41,6 @@ defmodule IexCodeWeb.WorkspaceLivePowerAdversarialTest do
     {:ok, %{project: project, session: session, workspace_path: path}}
   end
 
-  describe "LiveView AST Query Explorer Stress & Jump-to-Editor" do
-    test "handles rapid querying, category filters, and dispatches jump_to_editor_line", %{
-      conn: conn,
-      session: session
-    } do
-      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-
-      # Switch to AST Explorer
-      render_click(view, "switch_tab", %{"tab" => "ast"})
-      assert render(view) =~ "AST Query Explorer"
-
-      # 1. Search for function "multiply"
-      render_change(view, "search_ast_symbols", %{"query" => "multiply"})
-      html = render(view)
-      assert html =~ "multiply"
-
-      # 2. Cycle all type filters
-      for type <- ["all", "module", "function", "macro", "spec", "type", "callback", "doc"] do
-        render_click(view, "set_ast_type_filter", %{"type" => type})
-        assert render(view)
-      end
-
-      # 3. Cycle visibility filters
-      for vis <- ["all", "public", "private"] do
-        render_click(view, "set_ast_visibility", %{"visibility" => vis})
-        assert render(view)
-      end
-
-      # 4. Search non-existent query (should return 0 results gracefully without crashing)
-      render_change(view, "search_ast_symbols", %{"query" => "non_existent_symbol_xyz"})
-
-      assert render(view) =~ "0 symbols found" or render(view) =~ "No symbols found" or
-               render(view) =~ "non_existent_symbol_xyz"
-
-      # 5. Jump to symbol at line 6
-      render_click(view, "jump_to_symbol", %{"path" => "lib/calculator.ex", "line" => "6"})
-
-      # Verify view switched to files tab and loaded calculator.ex
-      html_files = render(view)
-      assert html_files =~ "lib/calculator.ex"
-      assert html_files =~ "def multiply(a, b)"
-    end
-  end
-
   describe "LiveView Git Hub Full Lifecycle & Staging Actions" do
     test "executes branch creation, switching, remote triggers, and multi-tier staging", %{
       conn: conn,

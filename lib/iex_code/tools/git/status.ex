@@ -29,7 +29,12 @@ defmodule IexCode.Tools.Git.StatusResult do
           unstaged: [unstaged_entry()],
           untracked: [String.t()],
           conflicted: [conflict_entry()],
-          clean?: boolean()
+          clean?: boolean(),
+          truncated?: boolean(),
+          retained_paths: non_neg_integer(),
+          path_limit: pos_integer(),
+          producer_bytes: non_neg_integer(),
+          producer_limit_bytes: pos_integer()
         }
   defstruct branch: "main",
             upstream: nil,
@@ -41,7 +46,12 @@ defmodule IexCode.Tools.Git.StatusResult do
             unstaged: [],
             untracked: [],
             conflicted: [],
-            clean?: true
+            clean?: true,
+            truncated?: false,
+            retained_paths: 0,
+            path_limit: 2_000,
+            producer_bytes: 0,
+            producer_limit_bytes: 2 * 1_024 * 1_024
 end
 
 defmodule IexCode.Tools.Git.CommitResult do
@@ -84,8 +94,13 @@ defmodule IexCode.Tools.Git.Status do
   @doc """
   Parses `git status --porcelain=v1 -b -uall` output.
   """
-  @spec parse(String.t()) :: StatusResult.t()
-  def parse(output) when is_binary(output) do
+  @spec parse(String.t(), keyword()) :: StatusResult.t()
+  def parse(output, opts \\ []) when is_binary(output) and is_list(opts) do
+    path_limit = normalize_path_limit(Keyword.get(opts, :path_limit), 2_000)
+
+    producer_limit =
+      positive_limit(Keyword.get(opts, :producer_limit_bytes), 2 * 1_024 * 1_024)
+
     lines =
       output
       |> String.split(~r/\r?\n/)
@@ -102,18 +117,33 @@ defmodule IexCode.Tools.Git.Status do
       unstaged: [],
       untracked: [],
       conflicted: [],
-      clean?: true
+      clean?: true,
+      path_limit: path_limit,
+      producer_bytes: byte_size(output),
+      producer_limit_bytes: producer_limit
     }
 
-    result = Enum.reduce(lines, initial_acc, &process_line/2)
+    {result, retained_paths, parser_truncated?} =
+      Enum.reduce_while(lines, {initial_acc, 0, false}, fn line, {acc, retained, _truncated?} ->
+        if status_entry_line?(line) and retained >= path_limit do
+          {:halt, {acc, retained, true}}
+        else
+          next = process_line(line, acc)
+          retained = if status_entry_line?(line), do: retained + 1, else: retained
+          {:cont, {next, retained, false}}
+        end
+      end)
+
+    result = reverse_entries(result)
+    truncated? = parser_truncated? or Keyword.get(opts, :producer_truncated?, false) == true
 
     clean? =
-      result.staged == [] and
+      not truncated? and result.staged == [] and
         result.unstaged == [] and
         result.untracked == [] and
         result.conflicted == []
 
-    %{result | clean?: clean?}
+    %{result | clean?: clean?, truncated?: truncated?, retained_paths: retained_paths}
   end
 
   defp process_line("## " <> branch_line, acc) do
@@ -122,7 +152,7 @@ defmodule IexCode.Tools.Git.Status do
 
   defp process_line("??" <> path, acc) do
     clean_path = path |> String.trim() |> unquote_c_path()
-    %{acc | untracked: acc.untracked ++ [clean_path]}
+    %{acc | untracked: [clean_path | acc.untracked]}
   end
 
   defp process_line(<<x::binary-size(1), y::binary-size(1), " ", path_rest::binary>>, acc) do
@@ -139,7 +169,7 @@ defmodule IexCode.Tools.Git.Status do
          {"U", "A"}
        ] do
       conflict_entry = %{path: unquote_c_path(path_trim), status: :conflict, code: x <> y}
-      %{acc | conflicted: acc.conflicted ++ [conflict_entry]}
+      %{acc | conflicted: [conflict_entry | acc.conflicted]}
     else
       # Split rename/copy pairs ("old -> new") so a worktree modification on a
       # renamed file reports the new path instead of the raw pair.
@@ -147,15 +177,35 @@ defmodule IexCode.Tools.Git.Status do
 
       # Check staged change (index X)
       staged_entry = parse_staged_char(x, new_path, old_path)
-      acc1 = if staged_entry, do: %{acc | staged: acc.staged ++ [staged_entry]}, else: acc
+      acc1 = if staged_entry, do: %{acc | staged: [staged_entry | acc.staged]}, else: acc
 
       # Check unstaged change (worktree Y)
       unstaged_entry = parse_unstaged_char(y, new_path)
-      if unstaged_entry, do: %{acc1 | unstaged: acc1.unstaged ++ [unstaged_entry]}, else: acc1
+      if unstaged_entry, do: %{acc1 | unstaged: [unstaged_entry | acc1.unstaged]}, else: acc1
     end
   end
 
   defp process_line(_other, acc), do: acc
+
+  defp status_entry_line?("## " <> _branch), do: false
+  defp status_entry_line?(_line), do: true
+
+  defp reverse_entries(result) do
+    %{
+      result
+      | staged: Enum.reverse(result.staged),
+        unstaged: Enum.reverse(result.unstaged),
+        untracked: Enum.reverse(result.untracked),
+        conflicted: Enum.reverse(result.conflicted)
+    }
+  end
+
+  defp normalize_path_limit(value, _default) when is_integer(value) and value > 0,
+    do: min(value, 5_000)
+
+  defp normalize_path_limit(_value, default), do: default
+  defp positive_limit(value, _default) when is_integer(value) and value > 0, do: value
+  defp positive_limit(_value, default), do: default
 
   # --- Branch Line Parsing ---
 

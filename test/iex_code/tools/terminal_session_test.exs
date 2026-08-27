@@ -2,7 +2,7 @@ defmodule IexCode.Tools.TerminalSessionTest do
   use ExUnit.Case, async: false
   require Logger
 
-  alias IexCode.Tools.TerminalSession
+  alias IexCode.Tools.{TerminalSession, TerminalSupervisor}
   alias Phoenix.PubSub
 
   @pubsub_server IexCode.PubSub
@@ -85,14 +85,26 @@ defmodule IexCode.Tools.TerminalSessionTest do
       _ = :sys.get_state(pid)
 
       # Inject 4-byte emoji 🚀 (<<240, 159, 154, 128>>) split across two chunks
-      send(pid, {nil, {:data, <<240, 159>>}})
-      _ = :sys.get_state(pid)
-
-      send(pid, {nil, {:data, <<154, 128>>}})
-      _ = :sys.get_state(pid)
+      assert :ok = TerminalSession.inject_test_output(session_id, <<240, 159>>)
+      assert :ok = TerminalSession.inject_test_output(session_id, <<154, 128>>)
 
       assert_receive {:terminal_output, %{data: data}}, 3_000
       assert data =~ "🚀"
+    end
+
+    test "ignores forged port-shaped output from arbitrary local processes", %{
+      session_id: session_id
+    } do
+      {:ok, pid} =
+        start_supervised({TerminalSession, [session_id: session_id, project_root: File.cwd!()]})
+
+      _ = :sys.get_state(pid)
+      forged = "FORGED_TERMINAL_MARKER_#{System.unique_integer([:positive])}"
+      send(pid, {make_ref(), {:data, forged}})
+      _ = :sys.get_state(pid)
+
+      refute TerminalSession.get_history(session_id) =~ forged
+      refute_receive {:terminal_output, %{data: ^forged}}, 50
     end
 
     test "supports fallback mode execution", %{session_id: session_id} do
@@ -330,7 +342,7 @@ defmodule IexCode.Tools.TerminalSessionTest do
       # Inject 1000 bytes in 200-byte chunks
       for idx <- 1..5 do
         chunk = "CHUNK_#{idx}_" <> String.duplicate("A", 185) <> "\n"
-        send(pid, {nil, {:data, chunk}})
+        assert :ok = TerminalSession.inject_test_output(session_id, chunk)
       end
 
       _ = :sys.get_state(pid)
@@ -550,6 +562,55 @@ defmodule IexCode.Tools.TerminalSessionTest do
                      5_000
     end
 
+    test "rejects lifecycle work scoped to a replaced adapter generation", %{
+      session_id: session_id
+    } do
+      {:ok, pid} =
+        start_supervised({TerminalSession, [session_id: session_id, project_root: File.cwd!()]})
+
+      assert {:ok, %{adapter_generation: old_generation}} =
+               TerminalSession.get_state(session_id)
+
+      assert {:ok, ^pid} = TerminalSession.restart(session_id)
+
+      assert {:ok, %{adapter_generation: new_generation}} =
+               TerminalSession.get_state(session_id)
+
+      assert new_generation > old_generation
+
+      assert {:error, :stale_terminal_generation} =
+               TerminalSession.send_input(session_id, "echo stale\n",
+                 force: true,
+                 adapter_generation: old_generation
+               )
+
+      assert {:error, :stale_terminal_generation} =
+               TerminalSession.send_signal(session_id, :sigkill,
+                 adapter_generation: old_generation
+               )
+
+      assert {:error, :stale_terminal_generation} =
+               TerminalSession.set_occupant(session_id, {:agent, "stale-agent", nil},
+                 adapter_generation: old_generation
+               )
+
+      token = "GENERATION_SURVIVED_#{System.unique_integer([:positive])}"
+
+      assert :ok =
+               TerminalSession.send_input(session_id, "echo #{token}\n",
+                 adapter_generation: new_generation
+               )
+
+      assert {:ok, output} =
+               receive_matching_generation_output(
+                 session_id,
+                 new_generation,
+                 token
+               )
+
+      assert output =~ token
+    end
+
     test "handles shell exit command cleanly", %{session_id: session_id} do
       {:ok, pid} =
         start_supervised({TerminalSession, [session_id: session_id, project_root: File.cwd!()]})
@@ -693,6 +754,105 @@ defmodule IexCode.Tools.TerminalSessionTest do
     end
   end
 
+  describe "idle lifecycle" do
+    test "reaps an unattached and inactive terminal after the configured TTL", %{
+      session_id: session_id
+    } do
+      {:ok, pid} =
+        start_supervised(
+          {TerminalSession,
+           [session_id: session_id, project_root: File.cwd!(), idle_timeout_ms: 25]}
+        )
+
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+      assert TerminalSession.whereis(session_id) == nil
+    end
+
+    test "a viewer prevents reaping until it detaches", %{session_id: session_id} do
+      {:ok, pid} =
+        start_supervised(
+          {TerminalSession,
+           [session_id: session_id, project_root: File.cwd!(), idle_timeout_ms: 30]}
+        )
+
+      assert :ok = TerminalSession.attach_viewer(session_id, self())
+      ref = Process.monitor(pid)
+      refute_receive {:DOWN, ^ref, :process, ^pid, _reason}, 100
+
+      assert :ok = TerminalSession.detach_viewer(session_id, self())
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+    end
+
+    test "agent ownership prevents reaping until ownership is released", %{
+      session_id: session_id
+    } do
+      {:ok, pid} =
+        start_supervised(
+          {TerminalSession,
+           [session_id: session_id, project_root: File.cwd!(), idle_timeout_ms: 30]}
+        )
+
+      assert :ok = TerminalSession.set_occupant(session_id, {:agent, "test-agent", nil})
+      ref = Process.monitor(pid)
+      refute_receive {:DOWN, ^ref, :process, ^pid, _reason}, 100
+
+      assert :ok = TerminalSession.set_occupant(session_id, :user)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+    end
+
+    test "activity cancellation releases the pending idle timer", %{session_id: session_id} do
+      {:ok, pid} =
+        start_supervised(
+          {TerminalSession,
+           [session_id: session_id, project_root: File.cwd!(), idle_timeout_ms: 60_000]}
+        )
+
+      %{idle_timer: {_logical_ref, timer_handle}} = :sys.get_state(pid)
+      assert is_integer(Process.read_timer(timer_handle))
+
+      assert :ok = TerminalSession.attach_viewer(session_id, self())
+      assert Process.read_timer(timer_handle) == false
+      assert %{idle_timer: nil} = :sys.get_state(pid)
+    end
+
+    test "bounded redacted command history survives an idle reap and lazy restart", %{
+      session_id: session_id
+    } do
+      {:ok, first_pid} =
+        TerminalSupervisor.start_session(session_id,
+          project_root: File.cwd!(),
+          idle_timeout_ms: 1_000
+        )
+
+      secret = "idle-history-secret"
+      command = "echo ok --token=#{secret}"
+      assert {:ok, command_id} = TerminalSession.run_command(session_id, command)
+
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command_id: ^command_id}},
+                     5_000
+
+      assert :ok = TerminalSession.detach_viewer(session_id, self())
+      :sys.replace_state(first_pid, &%{&1 | idle_timeout_ms: 25, idle_timer: nil})
+      send(first_pid, {:terminal_idle_timeout, nil})
+      first_ref = Process.monitor(first_pid)
+      assert_receive {:DOWN, ^first_ref, :process, ^first_pid, :normal}, 2_000
+
+      {:ok, second_pid} =
+        TerminalSupervisor.start_session(session_id,
+          project_root: File.cwd!(),
+          idle_timeout_ms: 1_000
+        )
+
+      assert second_pid != first_pid
+      assert {:ok, state} = TerminalSession.get_state(session_id)
+      assert [%{command: cached_command} | _] = state.command_history
+      assert cached_command =~ "echo ok"
+      refute cached_command =~ secret
+    end
+  end
+
   # Helper to accumulate chunks until token is found
   defp cancel_test_timer(nil), do: :ok
 
@@ -710,6 +870,39 @@ defmodule IexCode.Tools.TerminalSessionTest do
           {:ok, new_acc}
         else
           receive_matching_output(session_id, token, new_acc, timeout)
+        end
+    after
+      timeout ->
+        {:error, {:timeout, acc}}
+    end
+  end
+
+  defp receive_matching_generation_output(
+         session_id,
+         adapter_generation,
+         token,
+         acc \\ "",
+         timeout \\ 8_000
+       ) do
+    receive do
+      {:terminal_output,
+       %{
+         session_id: ^session_id,
+         adapter_generation: ^adapter_generation,
+         data: data
+       }} ->
+        new_acc = acc <> data
+
+        if String.contains?(new_acc, token) do
+          {:ok, new_acc}
+        else
+          receive_matching_generation_output(
+            session_id,
+            adapter_generation,
+            token,
+            new_acc,
+            timeout
+          )
         end
     after
       timeout ->

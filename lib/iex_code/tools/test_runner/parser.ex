@@ -80,7 +80,10 @@ defmodule IexCode.Tools.TestRunner.Result do
           failures: [Failure.t()],
           compilation_errors: [CompilationError.t()],
           raw_output: String.t(),
-          exit_code: integer()
+          exit_code: integer(),
+          artifact_id: Ecto.UUID.t() | nil,
+          output_bytes: non_neg_integer(),
+          output_truncated?: boolean()
         }
   defstruct status: :passed,
             total: 0,
@@ -94,7 +97,10 @@ defmodule IexCode.Tools.TestRunner.Result do
             failures: [],
             compilation_errors: [],
             raw_output: "",
-            exit_code: 0
+            exit_code: 0,
+            artifact_id: nil,
+            output_bytes: 0,
+            output_truncated?: false
 end
 
 defmodule IexCode.Tools.TestRunner.Parser do

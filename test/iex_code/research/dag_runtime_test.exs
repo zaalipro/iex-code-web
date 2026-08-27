@@ -64,6 +64,36 @@ defmodule IexCode.Research.DagRuntimeTest do
     assert Jason.encode!(result)
   end
 
+  test "durable resource identity is propagated to provider execution options" do
+    parent = self()
+
+    runtime_context =
+      context(parent)
+      |> Map.merge(%{
+        resource_governor: :durable_governor,
+        resource_priority: :background,
+        resource_run_key: "research-run-17",
+        resource_timeout: :infinity
+      })
+
+    assert {:ok, _result} =
+             DagRuntime.ranked_search(
+               %{"provider" => "brave", "query" => "resource identity"},
+               runtime_context,
+               settings_resolver: ranked_settings(),
+               search_module: fn _query, opts ->
+                 send(parent, {:resource_options, opts})
+                 {:ok, %{results: [], errors: %{}, providers: ["brave"]}}
+               end
+             )
+
+    assert_receive {:resource_options, opts}
+    assert opts[:resource_governor] == :durable_governor
+    assert opts[:resource_priority] == :background
+    assert opts[:resource_run_key] == "research-run-17"
+    assert opts[:resource_timeout] == :infinity
+  end
+
   test "ranked search rejects unknown and disabled providers before an effect" do
     never = fn _query, _opts -> flunk("provider must not be called") end
 

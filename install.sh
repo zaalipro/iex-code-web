@@ -10,9 +10,11 @@ readonly APP_ENV_FILE=$CONFIG_DIR/app.env
 readonly INSTALL_CONFIG=$CONFIG_DIR/install.conf
 readonly STATE_DIR=/var/lib/iex-code-web
 WORKSPACE_DIR=/srv/iex-code-workspaces
-MEMORY_LIMIT_MIB=1024
+RESOURCE_PROFILE=balanced
+MEMORY_LIMIT_MIB=2048
 MEMORY_RESERVATION_MIB=512
 NOFILE_LIMIT=65536
+PIDS_LIMIT=1024
 readonly BACKUP_DIR=/var/backups/iex-code-web
 readonly APP_UID=10001
 readonly APP_GID=10001
@@ -39,9 +41,12 @@ PORT_SET=false
 REPO_SET=false
 REF_SET=false
 WORKSPACE_SET=false
+RESOURCE_PROFILE_SET=false
 MEMORY_LIMIT_SET=false
 MEMORY_RESERVATION_SET=false
 NOFILE_SET=false
+PIDS_SET=false
+EXISTING_CONFIG=false
 
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
@@ -62,10 +67,13 @@ Options:
   --port PORT           Public HTTPS port (default: 4000)
   --bind IP             Address on which Docker publishes the port (default: 0.0.0.0)
   --workspace-root DIR  Host directory mounted as /workspaces
-  --memory-limit-mib N  App hard memory limit in MiB (default: 1024; 256..65536)
+  --resource-profile P  Resource preset: compact, balanced, throughput, or custom
+                        (default: balanced)
+  --memory-limit-mib N  App hard memory limit in MiB (default: 2048; 256..65536)
   --memory-reservation-mib N
                         App soft memory reservation in MiB (default: 512; 128..limit)
   --nofile-limit N      App file descriptor and BEAM port limit (default: 65536)
+  --pids-limit N        App container process limit (default: 1024; 128..65536)
   --env-file FILE       Import allowlisted model/search settings once via protected JSON
   --repo URL            Git repository (default: official repository)
   --source-ref REF      Git branch/tag/commit (default: main)
@@ -89,9 +97,11 @@ parse_args() {
       --bind) (($# >= 2)) || die "--bind requires a value"; PUBLIC_BIND=$2; BIND_SET=true; shift 2 ;;
       --port) (($# >= 2)) || die "--port requires a value"; PUBLIC_PORT=$2; PORT_SET=true; shift 2 ;;
       --workspace-root) (($# >= 2)) || die "--workspace-root requires a value"; WORKSPACE_ROOT_OVERRIDE=$2; WORKSPACE_SET=true; shift 2 ;;
+      --resource-profile) (($# >= 2)) || die "--resource-profile requires a value"; RESOURCE_PROFILE=$2; RESOURCE_PROFILE_SET=true; shift 2 ;;
       --memory-limit-mib) (($# >= 2)) || die "--memory-limit-mib requires a value"; MEMORY_LIMIT_MIB=$2; MEMORY_LIMIT_SET=true; shift 2 ;;
       --memory-reservation-mib) (($# >= 2)) || die "--memory-reservation-mib requires a value"; MEMORY_RESERVATION_MIB=$2; MEMORY_RESERVATION_SET=true; shift 2 ;;
       --nofile-limit) (($# >= 2)) || die "--nofile-limit requires a value"; NOFILE_LIMIT=$2; NOFILE_SET=true; shift 2 ;;
+      --pids-limit) (($# >= 2)) || die "--pids-limit requires a value"; PIDS_LIMIT=$2; PIDS_SET=true; shift 2 ;;
       --env-file) (($# >= 2)) || die "--env-file requires a value"; MODEL_ENV_FILE=$2; shift 2 ;;
       --repo) (($# >= 2)) || die "--repo requires a value"; REPO=$2; REPO_SET=true; shift 2 ;;
       --ref|--source-ref) (($# >= 2)) || die "$1 requires a value"; REF=$2; REF_SET=true; shift 2 ;;
@@ -118,12 +128,24 @@ validate_args() {
     die "--repo must be a safe HTTPS or git@ SSH URL"
   [[ $WORKSPACE_DIR == /* && $WORKSPACE_DIR != *$'\n'* ]] || \
     die "--workspace-root must be an absolute path without newlines"
+  [[ $RESOURCE_PROFILE =~ ^(compact|balanced|throughput|custom)$ ]] || \
+    die "--resource-profile must be compact, balanced, throughput, or custom"
+  if [[ $RESOURCE_PROFILE_SET == true && $RESOURCE_PROFILE != custom ]] && \
+      resource_override_set; then
+    die "preset --resource-profile cannot be combined with custom resource limits"
+  fi
+  if [[ $RESOURCE_PROFILE_SET == true && $RESOURCE_PROFILE == custom && \
+        $EXISTING_CONFIG == false ]] && ! resource_override_set; then
+    die "--resource-profile custom requires at least one explicit resource limit"
+  fi
   valid_bounded_integer "$MEMORY_LIMIT_MIB" 256 65536 || \
     die "--memory-limit-mib must be an integer between 256 and 65536"
   valid_bounded_integer "$MEMORY_RESERVATION_MIB" 128 "$MEMORY_LIMIT_MIB" || \
     die "--memory-reservation-mib must be an integer between 128 and --memory-limit-mib"
   valid_bounded_integer "$NOFILE_LIMIT" 4096 1048576 || \
     die "--nofile-limit must be an integer between 4096 and 1048576"
+  valid_bounded_integer "$PIDS_LIMIT" 128 65536 || \
+    die "--pids-limit must be an integer between 128 and 65536"
   [[ $REPO != *$'\n'* ]] || die "repository URL must not contain newlines"
   [[ -z "$MODEL_ENV_FILE" || -r "$MODEL_ENV_FILE" ]] || die "cannot read --env-file"
   if [[ -n "$MODEL_ENV_FILE" ]]; then
@@ -132,6 +154,11 @@ validate_args() {
     mode=$(stat -c %a "$MODEL_ENV_FILE")
     ((10#$mode % 100 == 0)) || die "--env-file must not be accessible by group or other users"
   fi
+}
+
+resource_override_set() {
+  [[ $MEMORY_LIMIT_SET == true || $MEMORY_RESERVATION_SET == true || \
+     $NOFILE_SET == true || $PIDS_SET == true ]]
 }
 
 valid_bounded_integer() {
@@ -199,6 +226,7 @@ acquire_lock() {
 
 load_existing_config() {
   if [[ -r "$INSTALL_CONFIG" ]]; then
+    EXISTING_CONFIG=true
     # Generated by this installer using validated scalar values.
     # shellcheck disable=SC1090
     source "$INSTALL_CONFIG"
@@ -210,9 +238,58 @@ load_existing_config() {
     [[ $REPO_SET == true ]] || REPO=${IEX_CODE_REPO:-$REPO}
     [[ $REF_SET == true ]] || REF=${IEX_CODE_REF:-$REF}
     [[ $WORKSPACE_SET == true ]] || WORKSPACE_DIR=${IEX_CODE_WORKSPACE_DIR:-$WORKSPACE_DIR}
-    restore_resource_config
   fi
   [[ -z "$WORKSPACE_ROOT_OVERRIDE" ]] || WORKSPACE_DIR=$WORKSPACE_ROOT_OVERRIDE
+  resolve_resource_config
+}
+
+resolve_resource_config() {
+  if [[ $RESOURCE_PROFILE_SET == true ]]; then
+    if [[ $RESOURCE_PROFILE == custom ]]; then
+      if [[ $EXISTING_CONFIG == true ]]; then restore_resource_config; fi
+    else
+      apply_resource_profile "$RESOURCE_PROFILE"
+    fi
+  elif [[ $EXISTING_CONFIG == true && -n ${IEX_CODE_RESOURCE_PROFILE:-} ]]; then
+    RESOURCE_PROFILE=$IEX_CODE_RESOURCE_PROFILE
+    restore_resource_config
+    if [[ $RESOURCE_PROFILE != custom && $(infer_resource_profile) != "$RESOURCE_PROFILE" ]]; then
+      RESOURCE_PROFILE=custom
+    fi
+  elif [[ $EXISTING_CONFIG == true ]]; then
+    restore_resource_config
+    RESOURCE_PROFILE=$(infer_resource_profile)
+  fi
+
+  if resource_override_set && \
+      [[ $RESOURCE_PROFILE_SET == false || $RESOURCE_PROFILE == custom ]]; then
+    RESOURCE_PROFILE=custom
+  fi
+}
+
+apply_resource_profile() {
+  case "$1" in
+    compact) MEMORY_LIMIT_MIB=1024 ;;
+    balanced) MEMORY_LIMIT_MIB=2048 ;;
+    throughput) MEMORY_LIMIT_MIB=2560 ;;
+    custom) return 0 ;;
+    *) die "--resource-profile must be compact, balanced, throughput, or custom" ;;
+  esac
+  MEMORY_RESERVATION_MIB=512
+  NOFILE_LIMIT=65536
+  PIDS_LIMIT=1024
+}
+
+infer_resource_profile() {
+  if [[ $MEMORY_RESERVATION_MIB == 512 && $NOFILE_LIMIT == 65536 && \
+        $PIDS_LIMIT == 1024 ]]; then
+    case "$MEMORY_LIMIT_MIB" in
+      1024) printf 'compact\n'; return ;;
+      2048) printf 'balanced\n'; return ;;
+      2560) printf 'throughput\n'; return ;;
+    esac
+  fi
+  printf 'custom\n'
 }
 
 restore_resource_config() {
@@ -221,6 +298,7 @@ restore_resource_config() {
   [[ $MEMORY_RESERVATION_SET == true ]] || \
     MEMORY_RESERVATION_MIB=${IEX_CODE_MEMORY_RESERVATION_MIB:-$MEMORY_RESERVATION_MIB}
   [[ $NOFILE_SET == true ]] || NOFILE_LIMIT=${IEX_CODE_NOFILE_LIMIT:-$NOFILE_LIMIT}
+  [[ $PIDS_SET == true ]] || PIDS_LIMIT=${IEX_CODE_PIDS_LIMIT:-$PIDS_LIMIT}
 }
 
 detect_public_ip() {
@@ -266,9 +344,11 @@ compose() {
   IEX_CODE_PUBLIC_PORT="$PUBLIC_PORT" \
   IEX_CODE_APP_UID="$APP_UID" \
   IEX_CODE_APP_GID="$APP_GID" \
+  IEX_CODE_RESOURCE_PROFILE="$RESOURCE_PROFILE" \
   IEX_CODE_MEMORY_LIMIT_MIB="$MEMORY_LIMIT_MIB" \
   IEX_CODE_MEMORY_RESERVATION_MIB="$MEMORY_RESERVATION_MIB" \
   IEX_CODE_NOFILE_LIMIT="$NOFILE_LIMIT" \
+  IEX_CODE_PIDS_LIMIT="$PIDS_LIMIT" \
     "${COMPOSE[@]}" --project-directory "$SOURCE_DIR" \
       -f "$SOURCE_DIR/compose.yaml" "${topology[@]}" "$@"
 }
@@ -418,9 +498,11 @@ write_environment() {
     printf 'IEX_CODE_PUBLIC_PORT=%q\n' "$PUBLIC_PORT"
     printf 'IEX_CODE_APP_UID=%q\n' "$APP_UID"
     printf 'IEX_CODE_APP_GID=%q\n' "$APP_GID"
+    printf 'IEX_CODE_RESOURCE_PROFILE=%q\n' "$RESOURCE_PROFILE"
     printf 'IEX_CODE_MEMORY_LIMIT_MIB=%q\n' "$MEMORY_LIMIT_MIB"
     printf 'IEX_CODE_MEMORY_RESERVATION_MIB=%q\n' "$MEMORY_RESERVATION_MIB"
     printf 'IEX_CODE_NOFILE_LIMIT=%q\n' "$NOFILE_LIMIT"
+    printf 'IEX_CODE_PIDS_LIMIT=%q\n' "$PIDS_LIMIT"
     printf 'IEX_CODE_REPO=%q\n' "$REPO"
     printf 'IEX_CODE_REF=%q\n' "$REF"
   } >"$temp"

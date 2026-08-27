@@ -57,11 +57,105 @@ defmodule IexCode.Sessions do
     end)
   end
 
-  def list_messages(session_id) do
+  def list_messages(session_id), do: list_messages(session_id, [])
+
+  @doc """
+  Lists messages in chronological order.
+
+  Passing `:limit` keeps interactive consumers from retaining an entire long-running
+  conversation. `:before` accepts the first message from the previous page and
+  returns the immediately preceding page. The unbounded arity is retained for
+  engine callers that intentionally need the complete durable transcript.
+  """
+  def list_messages(session_id, opts) when is_list(opts) do
+    limit = normalize_page_limit(Keyword.get(opts, :limit))
+    content_limit = normalize_content_limit(Keyword.get(opts, :content_limit))
+    before = Keyword.get(opts, :before)
+    after_cursor = Keyword.get(opts, :after)
+
+    query =
+      Message
+      |> where([m], m.session_id == ^session_id)
+      |> before_message(before)
+      |> after_message(after_cursor)
+      |> limit_message_content(content_limit)
+
+    cond do
+      limit && after_cursor ->
+        query
+        |> order_by([m], asc: m.inserted_at, asc: m.id)
+        |> limit(^limit)
+        |> Repo.all()
+
+      limit ->
+        query
+        |> order_by([m], desc: m.inserted_at, desc: m.id)
+        |> limit(^limit)
+        |> Repo.all()
+        |> Enum.reverse()
+
+      true ->
+        query
+        |> order_by([m], asc: m.inserted_at, asc: m.id)
+        |> Repo.all()
+    end
+  end
+
+  defp before_message(query, %{inserted_at: inserted_at, id: id})
+       when not is_nil(inserted_at) and is_binary(id) do
+    where(
+      query,
+      [m],
+      m.inserted_at < ^inserted_at or (m.inserted_at == ^inserted_at and m.id < ^id)
+    )
+  end
+
+  defp before_message(query, _before), do: query
+
+  defp after_message(query, %{inserted_at: inserted_at, id: id})
+       when not is_nil(inserted_at) and is_binary(id) do
+    where(
+      query,
+      [m],
+      m.inserted_at > ^inserted_at or (m.inserted_at == ^inserted_at and m.id > ^id)
+    )
+  end
+
+  defp after_message(query, _after), do: query
+
+  defp normalize_page_limit(nil), do: nil
+  defp normalize_page_limit(limit) when is_integer(limit), do: limit |> max(1) |> min(1_000)
+  defp normalize_page_limit(_invalid), do: nil
+  defp normalize_content_limit(nil), do: nil
+
+  defp normalize_content_limit(limit) when is_integer(limit),
+    do: limit |> max(1) |> min(1_000_000)
+
+  defp normalize_content_limit(_invalid), do: nil
+
+  defp limit_message_content(query, nil), do: query
+
+  defp limit_message_content(query, limit) do
+    select_merge(query, [m], %{content: fragment("substr(?, 1, ?)", m.content, ^limit)})
+  end
+
+  def get_message_by_idempotency_key(key) when is_binary(key) and key != "",
+    do: Repo.get_by(Message, idempotency_key: key)
+
+  def get_message_by_idempotency_key(_key), do: nil
+
+  def get_message(session_id, id) when is_binary(session_id) and is_binary(id),
+    do: Repo.get_by(Message, id: id, session_id: session_id)
+
+  def get_message(_session_id, _id), do: nil
+
+  @doc false
+  def latest_goal_checkpoint(session_id) do
     Message
-    |> where([m], m.session_id == ^session_id)
-    |> order_by([m], asc: m.inserted_at, asc: m.id)
-    |> Repo.all()
+    |> where([m], m.session_id == ^session_id and m.agent_name == "User (Goal)")
+    |> order_by([m], desc: m.inserted_at, desc: m.id)
+    |> limit(1)
+    |> Repo.one()
   end
 
   def create_message(attrs \\ %{}) do
@@ -216,11 +310,24 @@ defmodule IexCode.Sessions do
   defp durable_user_content(run, "goal"), do: "Goal: #{run.objective}"
   defp durable_user_content(run, _intent), do: run.objective
 
-  def list_operations(session_id) do
-    Operation
-    |> where([o], o.session_id == ^session_id)
-    |> order_by([o], asc: o.inserted_at)
-    |> Repo.all()
+  def list_operations(session_id), do: list_operations(session_id, [])
+
+  def list_operations(session_id, opts) when is_list(opts) do
+    limit = normalize_page_limit(Keyword.get(opts, :limit))
+
+    query = where(Operation, [o], o.session_id == ^session_id)
+
+    if limit do
+      query
+      |> order_by([o], desc: o.inserted_at, desc: o.id)
+      |> limit(^limit)
+      |> Repo.all()
+      |> Enum.reverse()
+    else
+      query
+      |> order_by([o], asc: o.inserted_at)
+      |> Repo.all()
+    end
   end
 
   def get_operation!(id), do: Repo.get!(Operation, id)
@@ -230,7 +337,7 @@ defmodule IexCode.Sessions do
   def create_operation(attrs \\ %{}) do
     Repo.retry_on_busy(fn ->
       %Operation{}
-      |> Operation.changeset(sanitize_attrs(attrs))
+      |> Operation.changeset(project_operation_attrs(attrs))
       |> Repo.insert()
     end)
   rescue
@@ -253,7 +360,7 @@ defmodule IexCode.Sessions do
 
       %Operation{} = op ->
         op
-        |> Operation.changeset(sanitize_attrs(attrs))
+        |> Operation.changeset(project_operation_attrs(attrs))
         |> Repo.update()
     end
   rescue
@@ -297,6 +404,31 @@ defmodule IexCode.Sessions do
   end
 
   defp sanitize_attrs(attrs), do: attrs
+
+  defp project_operation_attrs(attrs) when is_map(attrs) do
+    attrs
+    |> sanitize_attrs()
+    |> project_operation_field(:params, &IexCode.Engine.OperationProjection.params/1)
+    |> project_operation_field(:result, &IexCode.Engine.OperationProjection.text/1)
+    |> project_operation_field(:error_message, &IexCode.Engine.OperationProjection.text/1)
+  end
+
+  defp project_operation_attrs(attrs), do: attrs
+
+  defp project_operation_field(attrs, key, projector) do
+    string_key = Atom.to_string(key)
+
+    cond do
+      Map.has_key?(attrs, key) and not is_nil(Map.get(attrs, key)) ->
+        Map.update!(attrs, key, projector)
+
+      Map.has_key?(attrs, string_key) and not is_nil(Map.get(attrs, string_key)) ->
+        Map.update!(attrs, string_key, projector)
+
+      true ->
+        attrs
+    end
+  end
 
   def clear_session_operations(session_id) do
     Operation

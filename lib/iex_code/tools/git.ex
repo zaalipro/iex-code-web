@@ -7,17 +7,160 @@ defmodule IexCode.Tools.Git do
 
   alias IexCode.Tools.Git.{Status, StatusResult, CommitResult, LogEntry, CommitGenerator}
 
+  @git_timeout_ms 30_000
+  @lock_retries 4
+  @lock_retry_ms 150
+
   @doc """
   Returns the structured Git status of the repository at `repo_dir`.
   """
-  @spec status(Path.t()) :: {:ok, StatusResult.t()} | {:error, term()}
-  def status(repo_dir \\ ".") do
-    case run_git(repo_dir, ["status", "--porcelain=v1", "-b", "-uall"]) do
-      {:ok, output} ->
-        {:ok, Status.parse(output)}
+  @default_status_path_limit 2_000
+  @default_status_output_limit 2 * 1_024 * 1_024
+
+  @spec status(Path.t(), keyword()) :: {:ok, StatusResult.t()} | {:error, term()}
+  def status(repo_dir \\ ".", opts \\ []) do
+    path_limit = bounded_status_limit(Keyword.get(opts, :path_limit), @default_status_path_limit)
+
+    output_limit =
+      bounded_status_output_limit(
+        Keyword.get(opts, :output_limit_bytes),
+        @default_status_output_limit
+      )
+
+    paths = status_paths(Keyword.get(opts, :paths, []))
+
+    case run_status_bounded(repo_dir, output_limit, paths) do
+      {:ok, output, producer_truncated?} ->
+        output = if producer_truncated?, do: complete_status_lines(output), else: output
+        output = String.replace_invalid(output)
+
+        {:ok,
+         Status.parse(output,
+           path_limit: path_limit,
+           producer_limit_bytes: output_limit,
+           producer_truncated?: producer_truncated?
+         )}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp run_status_bounded(repo_dir, output_limit, paths) do
+    full_path = Path.expand(repo_dir)
+    parent_dir = Path.dirname(full_path)
+    status_args = ["status", "--porcelain=v1", "-b", "-uall"]
+    status_args = if paths == [], do: status_args, else: status_args ++ ["--"] ++ paths
+
+    with git when is_binary(git) <- System.find_executable("git") do
+      {executable, args, process_group?} = isolated_git(git, status_args)
+
+      port =
+        Port.open({:spawn_executable, executable}, [
+          :binary,
+          :exit_status,
+          :stderr_to_stdout,
+          :hide,
+          cd: full_path,
+          args: args,
+          env: [{~c"GIT_CEILING_DIRECTORIES", String.to_charlist(parent_dir)}]
+        ])
+
+      collect_status_output(
+        port,
+        [],
+        0,
+        output_limit,
+        System.monotonic_time(:millisecond) + @git_timeout_ms,
+        process_group?
+      )
+    else
+      nil -> {:error, :git_not_found}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp collect_status_output(port, chunks, bytes, limit, deadline, process_group?) do
+    remaining_time = deadline - System.monotonic_time(:millisecond)
+
+    if remaining_time <= 0 do
+      terminate_git(port, process_group?)
+      {:error, :timeout}
+    else
+      receive do
+        {^port, {:data, data}} ->
+          remaining_bytes = limit - bytes
+
+          if byte_size(data) <= remaining_bytes do
+            collect_status_output(
+              port,
+              [data | chunks],
+              bytes + byte_size(data),
+              limit,
+              deadline,
+              process_group?
+            )
+          else
+            accepted =
+              if remaining_bytes > 0, do: binary_part(data, 0, remaining_bytes), else: <<>>
+
+            terminate_git(port, process_group?)
+            {:ok, IO.iodata_to_binary(Enum.reverse([accepted | chunks])), true}
+          end
+
+        {^port, {:exit_status, 0}} ->
+          {:ok, IO.iodata_to_binary(Enum.reverse(chunks)), false}
+
+        {^port, {:exit_status, status}} ->
+          output =
+            chunks
+            |> Enum.reverse()
+            |> IO.iodata_to_binary()
+            |> String.replace_invalid()
+            |> String.trim()
+
+          if String.contains?(output, "not a git repository") do
+            {:error, :not_a_git_repo}
+          else
+            {:error,
+             {:git_error, status, if(output == "", do: "git status failed", else: output)}}
+          end
+      after
+        remaining_time ->
+          terminate_git(port, process_group?)
+          {:error, :timeout}
+      end
+    end
+  end
+
+  defp bounded_status_limit(value, _default) when is_integer(value) and value > 0,
+    do: min(value, 5_000)
+
+  defp bounded_status_limit(_value, default), do: default
+
+  defp bounded_status_output_limit(value, _default) when is_integer(value) and value > 0,
+    do: min(value, 8 * 1_024 * 1_024)
+
+  defp bounded_status_output_limit(_value, default), do: default
+
+  defp status_paths(path) when is_binary(path) and path != "", do: [path]
+
+  defp status_paths(paths) when is_list(paths) do
+    paths
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.take(100)
+  end
+
+  defp status_paths(_paths), do: []
+
+  # A producer cap may split a quoted porcelain path. Parse only records that
+  # Git completed with a newline; the truncation flag tells callers that more
+  # status entries exist.
+  defp complete_status_lines(output) do
+    case :binary.matches(output, "\n") do
+      [] -> ""
+      matches -> binary_part(output, 0, elem(List.last(matches), 0) + 1)
     end
   end
 
@@ -71,6 +214,198 @@ defmodule IexCode.Tools.Git do
       end
 
     run_git(repo_dir, args)
+  end
+
+  @doc """
+  Reads at most `:max_bytes` of a diff while Git writes the full producer output
+  directly to a temporary file. This is intended for interactive previews where
+  retaining a repository-sized binary in a LiveView would be unsafe.
+  """
+  @spec diff_bounded(Path.t(), keyword()) ::
+          {:ok, %{content: binary(), bytes: non_neg_integer(), truncated?: boolean()}}
+          | {:error, term()}
+  def diff_bounded(repo_dir \\ ".", opts \\ []) do
+    max_bytes = opts |> Keyword.get(:max_bytes, 2 * 1_024 * 1_024) |> max(1)
+
+    producer_limit =
+      opts |> Keyword.get(:producer_limit_bytes, 256 * 1_048_576) |> normalize_diff_limit()
+
+    spool_root = disk_spool_root()
+    :ok = File.mkdir_p(spool_root)
+    :ok = File.chmod(spool_root, 0o700)
+
+    output_path =
+      Path.join(
+        spool_root,
+        "iex-code-diff-#{System.unique_integer([:positive, :monotonic])}.patch"
+      )
+
+    diff_opts = Keyword.drop(opts, [:max_bytes, :producer_limit_bytes])
+
+    try do
+      with {:ok, size} <- diff_to_file(repo_dir, output_path, diff_opts, producer_limit),
+           {:ok, io} <- File.open(output_path, [:read, :binary]) do
+        try do
+          content = IO.binread(io, min(size, max_bytes))
+
+          {:ok,
+           %{
+             content: if(is_binary(content), do: content, else: ""),
+             bytes: size,
+             truncated?: size > max_bytes
+           }}
+        after
+          File.close(io)
+        end
+      end
+    after
+      File.rm(output_path)
+    end
+  end
+
+  defp diff_to_file(repo_dir, output_path, opts, producer_limit) do
+    args = ["--no-pager", "diff", "--no-ext-diff"]
+    args = if Keyword.get(opts, :staged, false), do: args ++ ["--cached"], else: args
+
+    args =
+      case Keyword.get(opts, :unified) do
+        n when is_integer(n) -> args ++ ["-U#{n}"]
+        _ -> args
+      end
+
+    paths = Keyword.get(opts, :paths, [])
+    args = if paths == [], do: args, else: args ++ ["--"] ++ List.wrap(paths)
+
+    with git when is_binary(git) <- System.find_executable("git"),
+         {:ok, io} <- File.open(output_path, [:write, :binary, :exclusive]) do
+      try do
+        with :ok <- File.chmod(output_path, 0o600) do
+          {executable, executable_args, process_group?} = isolated_git(git, args)
+
+          port =
+            Port.open({:spawn_executable, executable}, [
+              :binary,
+              :exit_status,
+              :stderr_to_stdout,
+              :hide,
+              cd: repo_dir,
+              args: executable_args
+            ])
+
+          collect_diff_output(
+            port,
+            io,
+            0,
+            producer_limit,
+            System.monotonic_time(:millisecond) + 30_000,
+            process_group?
+          )
+        end
+      after
+        File.close(io)
+      end
+    else
+      nil -> {:error, :git_not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp collect_diff_output(port, io, bytes, limit, deadline, process_group?) do
+    remaining_time = deadline - System.monotonic_time(:millisecond)
+
+    if remaining_time <= 0 do
+      terminate_git(port, process_group?)
+      {:error, :timeout}
+    else
+      receive do
+        {^port, {:data, data}} ->
+          remaining_bytes = limit - bytes
+
+          cond do
+            byte_size(data) <= remaining_bytes ->
+              case IO.binwrite(io, data) do
+                :ok ->
+                  collect_diff_output(
+                    port,
+                    io,
+                    bytes + byte_size(data),
+                    limit,
+                    deadline,
+                    process_group?
+                  )
+
+                {:error, reason} ->
+                  terminate_git(port, process_group?)
+                  {:error, reason}
+              end
+
+            true ->
+              write_result =
+                if remaining_bytes > 0,
+                  do: IO.binwrite(io, binary_part(data, 0, remaining_bytes)),
+                  else: :ok
+
+              terminate_git(port, process_group?)
+
+              case write_result do
+                :ok -> {:error, :output_limit_exceeded}
+                {:error, reason} -> {:error, reason}
+              end
+          end
+
+        {^port, {:exit_status, 0}} ->
+          {:ok, bytes}
+
+        {^port, {:exit_status, status}} ->
+          {:error, {:git_error, status}}
+      after
+        remaining_time ->
+          terminate_git(port, process_group?)
+          {:error, :timeout}
+      end
+    end
+  end
+
+  defp isolated_git(git, args) do
+    case System.find_executable("setsid") do
+      nil -> {git, args, false}
+      setsid -> {setsid, [git | args], true}
+    end
+  end
+
+  defp terminate_git(port, process_group?) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} when is_integer(pid) and process_group? ->
+        _ = IexCode.Tools.PTYAdapter.terminate_process_group(pid, :sigkill)
+
+      _other ->
+        :ok
+    end
+
+    try do
+      Port.close(port)
+    rescue
+      ArgumentError -> :ok
+    end
+  end
+
+  defp normalize_diff_limit(value) when is_integer(value) and value > 0,
+    do: min(value, 256 * 1_048_576)
+
+  defp normalize_diff_limit(_value), do: 256 * 1_048_576
+
+  # Production `/tmp` is an intentionally small tmpfs, so repository-sized
+  # diffs must not be spooled there and charged to the container's RAM. Keep
+  # transient native output beside the persistent SQLite state by default.
+  defp disk_spool_root do
+    Application.get_env(:iex_code, :disk_spool_root) ||
+      case IexCode.Repo.config()[:database] do
+        database when is_binary(database) and database not in ["", ":memory:"] ->
+          Path.join(Path.dirname(database), "tmp")
+
+        _other ->
+          Path.join(File.cwd!(), "tmp")
+      end
   end
 
   @doc """
@@ -359,22 +694,19 @@ defmodule IexCode.Tools.Git do
   defp verify_staged_changes(_repo_dir, _status_res, true), do: :ok
 
   defp verify_staged_changes(repo_dir, status_res, false) do
-    if status_res.staged == [] do
-      {:error, :nothing_staged}
-    else
-      case run_git(repo_dir, ["diff", "--cached", "--quiet"]) do
-        # Exit code 1 means the index differs from HEAD (there is content)
-        {:error, {:git_error, 1, _}} ->
-          :ok
+    case run_git(repo_dir, ["diff", "--cached", "--quiet", "--no-ext-diff"]) do
+      # Exit code 1 means the index differs from HEAD (there is content).
+      {:error, {:git_error, 1, _}} ->
+        :ok
 
-        # Exit code 0 means the index matches HEAD (nothing to commit)
-        {:ok, _} ->
-          {:error, :nothing_staged}
+      # Exit code 0 means the index matches HEAD (nothing to commit).
+      {:ok, _} ->
+        {:error, :nothing_staged}
 
-        # Could not determine (e.g. unborn HEAD); defer to the earlier check
-        {:error, _} ->
-          :ok
-      end
+      # Could not determine (notably an unborn HEAD); the bounded status prefix
+      # remains a safe fallback without requiring an unbounded name listing.
+      {:error, _} ->
+        if status_res.staged == [], do: {:error, :nothing_staged}, else: :ok
     end
   end
 
@@ -623,10 +955,6 @@ defmodule IexCode.Tools.Git do
   end
 
   # --- Internal Git Invocation ---
-
-  @git_timeout_ms 30_000
-  @lock_retries 4
-  @lock_retry_ms 150
 
   @doc """
   Runs a git command in `repo_dir`, returning `{:ok, stdout}` on success.

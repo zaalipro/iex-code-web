@@ -9,6 +9,7 @@ defmodule IexCode.Observability.RuntimeStatus do
   alias IexCode.Engine.{AgentSupervisor, FleetSupervisor, SessionSupervisor}
   alias IexCode.Observability.MetricsStore
   alias IexCode.Runs.RunDispatcher
+  alias IexCode.Execution.ResourceGovernor
   alias IexCode.Tools.TerminalSupervisor
 
   @default_cgroup_root "/sys/fs/cgroup"
@@ -20,7 +21,12 @@ defmodule IexCode.Observability.RuntimeStatus do
           state: :idle | :active | :unavailable,
           container: %{
             memory_current_bytes: non_neg_integer() | nil,
-            memory_limit_bytes: non_neg_integer() | :unlimited | nil
+            memory_peak_bytes: non_neg_integer() | nil,
+            memory_limit_bytes: non_neg_integer() | :unlimited | nil,
+            oom_events: non_neg_integer() | nil,
+            oom_kill_events: non_neg_integer() | nil,
+            pids_current: non_neg_integer() | nil,
+            pids_limit: non_neg_integer() | :unlimited | nil
           },
           beam: %{
             memory_total_bytes: non_neg_integer() | nil,
@@ -38,6 +44,20 @@ defmodule IexCode.Observability.RuntimeStatus do
             sessions: non_neg_integer() | nil,
             terminals: non_neg_integer() | nil,
             dag_attempts: non_neg_integer() | nil
+          },
+          governor: %{
+            state: :normal | :pressure | :critical | :unavailable,
+            reserved_bytes: non_neg_integer() | nil,
+            active_tickets: non_neg_integer() | nil,
+            queued_interactive: non_neg_integer() | nil,
+            queued_background: non_neg_integer() | nil
+          },
+          deployment: %{
+            profile: String.t(),
+            memory_limit_mib: non_neg_integer() | nil,
+            memory_reservation_mib: non_neg_integer() | nil,
+            pids_limit: non_neg_integer() | nil,
+            nofile_limit: non_neg_integer() | nil
           }
         }
 
@@ -47,7 +67,7 @@ defmodule IexCode.Observability.RuntimeStatus do
   Runtime dependencies are independently protected so a missing cgroup file or
   a restarting OTP process produces an unavailable measurement instead of
   crashing a status command or LiveView. Tests may inject zero-arity
-  `:dispatcher_stats`, `:metrics_snapshot`, `:beam_memory`, and one-arity
+  `:dispatcher_stats`, `:metrics_snapshot`, `:beam_memory`, `:governor_snapshot`, and one-arity
   `:supervisor_count` and `:beam_system_info` functions. `:cgroup_root`,
   `:read_file`, and the bounded `:snapshot_timeout_ms` may also be overridden
   for deterministic fixtures.
@@ -80,14 +100,24 @@ defmodule IexCode.Observability.RuntimeStatus do
       container: container_snapshot(opts),
       beam: beam_snapshot(opts),
       dispatcher: dispatcher,
-      activity: activity
+      activity: activity,
+      governor: governor_snapshot(opts),
+      deployment: deployment_snapshot()
     }
   end
 
   defp unavailable_snapshot do
     %{
       state: :unavailable,
-      container: %{memory_current_bytes: nil, memory_limit_bytes: nil},
+      container: %{
+        memory_current_bytes: nil,
+        memory_peak_bytes: nil,
+        memory_limit_bytes: nil,
+        oom_events: nil,
+        oom_kill_events: nil,
+        pids_current: nil,
+        pids_limit: nil
+      },
       beam: %{memory_total_bytes: nil, port_count: nil, port_limit: nil},
       dispatcher: %{active: nil, queued: nil, capacity: nil},
       activity: %{
@@ -96,7 +126,9 @@ defmodule IexCode.Observability.RuntimeStatus do
         sessions: nil,
         terminals: nil,
         dag_attempts: nil
-      }
+      },
+      governor: unavailable_governor(),
+      deployment: deployment_snapshot()
     }
   end
 
@@ -105,7 +137,12 @@ defmodule IexCode.Observability.RuntimeStatus do
   def format_cli(snapshot) when is_map(snapshot) do
     state = snapshot |> nested([:state]) |> format_state()
     memory_current = snapshot |> nested([:container, :memory_current_bytes]) |> format_bytes()
+    memory_peak = snapshot |> nested([:container, :memory_peak_bytes]) |> format_bytes()
     memory_limit = snapshot |> nested([:container, :memory_limit_bytes]) |> format_bytes()
+    oom_events = snapshot |> nested([:container, :oom_events]) |> format_count()
+    oom_kills = snapshot |> nested([:container, :oom_kill_events]) |> format_count()
+    pids_current = snapshot |> nested([:container, :pids_current]) |> format_count()
+    pids_limit = snapshot |> nested([:container, :pids_limit]) |> format_limit_count()
     beam_memory = snapshot |> nested([:beam, :memory_total_bytes]) |> format_bytes()
     port_count = snapshot |> nested([:beam, :port_count]) |> format_count()
     port_limit = snapshot |> nested([:beam, :port_limit]) |> format_count()
@@ -117,10 +154,17 @@ defmodule IexCode.Observability.RuntimeStatus do
     sessions = snapshot |> nested([:activity, :sessions]) |> format_count()
     terminals = snapshot |> nested([:activity, :terminals]) |> format_count()
     attempts = snapshot |> nested([:activity, :dag_attempts]) |> format_count()
+    pressure = snapshot |> nested([:governor, :state]) |> format_pressure()
+    tickets = snapshot |> nested([:governor, :active_tickets]) |> format_count()
+    queued_interactive = snapshot |> nested([:governor, :queued_interactive]) |> format_count()
+    queued_background = snapshot |> nested([:governor, :queued_background]) |> format_count()
 
     [
       "IexCode runtime: #{state}",
       "Container memory: #{memory_current} / #{memory_limit}",
+      "Container peak memory: #{memory_peak}",
+      "Container OOM events: #{oom_events}, kills: #{oom_kills}",
+      "Container PIDs: #{pids_current} / #{pids_limit}",
       "BEAM memory: #{beam_memory}",
       "BEAM ports: #{port_count} / #{port_limit}",
       "Runs: #{active} active, #{queued} queued, #{capacity} capacity",
@@ -128,7 +172,8 @@ defmodule IexCode.Observability.RuntimeStatus do
       "Fleets: #{fleets} active",
       "DAG attempts: #{attempts} active",
       "Sessions: #{sessions}",
-      "Terminals: #{terminals}"
+      "Terminals: #{terminals}",
+      "Governor: #{pressure}, #{tickets} active tickets, #{queued_interactive} interactive queued, #{queued_background} background queued"
     ]
   end
 
@@ -210,8 +255,90 @@ defmodule IexCode.Observability.RuntimeStatus do
 
     %{
       memory_current_bytes: read_cgroup_number(root, "memory.current", read_file, false),
-      memory_limit_bytes: read_cgroup_number(root, "memory.max", read_file, true)
+      memory_peak_bytes: read_cgroup_number(root, "memory.peak", read_file, false),
+      memory_limit_bytes: read_cgroup_number(root, "memory.max", read_file, true),
+      oom_events: read_cgroup_event(root, "oom", read_file),
+      oom_kill_events: read_cgroup_event(root, "oom_kill", read_file),
+      pids_current: read_cgroup_number(root, "pids.current", read_file, false),
+      pids_limit: read_cgroup_number(root, "pids.max", read_file, true)
     }
+  end
+
+  defp read_cgroup_event(root, key, read_file) do
+    result = safe_measure(fn -> read_file.(Path.join(root, "memory.events")) end)
+
+    with {:ok, contents} when is_binary(contents) <- result,
+         line when is_binary(line) <-
+           Enum.find(String.split(contents, "\n"), &String.starts_with?(&1, key <> " ")),
+         [_, value] <- String.split(line, ~r/\s+/, parts: 2),
+         {number, ""} when number >= 0 <- Integer.parse(value) do
+      number
+    else
+      _ -> nil
+    end
+  end
+
+  defp governor_snapshot(opts) do
+    result =
+      safe_measure(fn ->
+        case Keyword.get(opts, :governor_snapshot) do
+          fun when is_function(fun, 0) -> fun.()
+          _ -> ResourceGovernor.snapshot(Keyword.get(opts, :resource_governor, ResourceGovernor))
+        end
+      end)
+
+    if is_map(result) do
+      %{
+        state: Map.get(result, :state, :unavailable),
+        reserved_bytes: normalize_nonnegative(Map.get(result, :reserved_bytes)),
+        active_tickets:
+          result |> Map.get(:active_by_class, %{}) |> Map.values() |> sum_if_available(),
+        queued_interactive: normalize_nonnegative(Map.get(result, :queued_interactive)),
+        queued_background: normalize_nonnegative(Map.get(result, :queued_background))
+      }
+    else
+      unavailable_governor()
+    end
+  end
+
+  defp unavailable_governor do
+    %{
+      state: :unavailable,
+      reserved_bytes: nil,
+      active_tickets: nil,
+      queued_interactive: nil,
+      queued_background: nil
+    }
+  end
+
+  defp deployment_snapshot do
+    %{
+      profile: resource_profile(),
+      memory_limit_mib: env_integer("IEX_CODE_MEMORY_LIMIT_MIB"),
+      memory_reservation_mib: env_integer("IEX_CODE_MEMORY_RESERVATION_MIB"),
+      pids_limit: env_integer("IEX_CODE_PIDS_LIMIT"),
+      nofile_limit: env_integer("IEX_CODE_NOFILE_LIMIT")
+    }
+  end
+
+  defp resource_profile do
+    case System.get_env("IEX_CODE_RESOURCE_PROFILE") do
+      value when value in ["compact", "balanced", "throughput", "custom"] -> value
+      _ -> "balanced"
+    end
+  end
+
+  defp env_integer(name) do
+    case System.get_env(name) do
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {integer, ""} when integer >= 0 -> integer
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp read_cgroup_number(root, filename, read_file, allow_unlimited?)
@@ -364,8 +491,16 @@ defmodule IexCode.Observability.RuntimeStatus do
   defp format_state(state) when state in [:idle, :active, :unavailable], do: Atom.to_string(state)
   defp format_state(_state), do: "unavailable"
 
+  defp format_pressure(state) when state in [:normal, :pressure, :critical, :unavailable],
+    do: Atom.to_string(state)
+
+  defp format_pressure(_state), do: "unavailable"
+
   defp format_count(value) when is_integer(value) and value >= 0, do: Integer.to_string(value)
   defp format_count(_value), do: "unavailable"
+
+  defp format_limit_count(:unlimited), do: "unlimited"
+  defp format_limit_count(value), do: format_count(value)
 
   defp format_bytes(:unlimited), do: "unlimited"
 

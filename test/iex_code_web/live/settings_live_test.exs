@@ -7,6 +7,9 @@ defmodule IexCodeWeb.SettingsLiveTest do
   setup do
     previous_reader = Application.get_env(:iex_code, :runtime_status_reader)
     previous_snapshot = Application.get_env(:iex_code, :runtime_status_reader_stub)
+    previous_terminal_timeout = Application.get_env(:iex_code, :terminal_idle_timeout_ms)
+    previous_session_timeout = Application.get_env(:iex_code, :session_idle_timeout_ms)
+    previous_output_config = Application.get_env(:iex_code, :output_artifacts)
 
     Application.put_env(:iex_code, :runtime_status_reader, IexCode.RuntimeStatusReaderStub)
     Application.put_env(:iex_code, :runtime_status_reader_stub, runtime_snapshot(:idle))
@@ -14,6 +17,9 @@ defmodule IexCodeWeb.SettingsLiveTest do
     on_exit(fn ->
       restore_env(:runtime_status_reader, previous_reader)
       restore_env(:runtime_status_reader_stub, previous_snapshot)
+      restore_env(:terminal_idle_timeout_ms, previous_terminal_timeout)
+      restore_env(:session_idle_timeout_ms, previous_session_timeout)
+      restore_env(:output_artifacts, previous_output_config)
     end)
 
     :ok
@@ -27,7 +33,8 @@ defmodule IexCodeWeb.SettingsLiveTest do
     assert has_element?(view, "#settings-return-workspace[href='/']")
     assert has_element?(view, "#settings-logout-form[action='/logout'][method='post']")
 
-    for section <- ~w(models execution goals swarm research providers editor usage runtime) do
+    for section <-
+          ~w(models execution goals swarm research providers editor usage resources runtime) do
       assert has_element?(view, "section##{section}")
       assert has_element?(view, "#settings-nav-#{section}[href='##{section}']")
     end
@@ -101,6 +108,67 @@ defmodule IexCodeWeb.SettingsLiveTest do
            )
   end
 
+  test "resource policy is editable with guarded advanced controls and read-only deployment facts",
+       %{
+         conn: conn
+       } do
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(view, "#resources")
+    assert has_element?(view, "#settings-resource-pressure[value='70']")
+    assert has_element?(view, "#settings-resource-critical[value='85']")
+    assert has_element?(view, "#settings-terminal-idle-timeout[value='30']")
+    assert has_element?(view, "#settings-resource-advanced")
+    assert has_element?(view, "#settings-output-artifact-limit[value='256']")
+    assert has_element?(view, "#settings-output-spool-quota[value='2048']")
+    assert has_element?(view, "#settings-output-retention[value='7']")
+    assert has_element?(view, "#settings-deployment-limits", "Restart required")
+    refute has_element?(view, "#settings-deployment-limits input")
+
+    view
+    |> form("#settings-form", %{
+      "settings" => %{
+        "resource_pressure_percent" => "72",
+        "resource_critical_percent" => "88",
+        "terminal_idle_timeout_minutes" => "25",
+        "session_idle_timeout_minutes" => "40",
+        "output_artifact_limit_mib" => "128",
+        "output_spool_quota_mib" => "1536",
+        "output_retention_days" => "10"
+      }
+    })
+    |> render_submit()
+
+    saved = Settings.get_settings()
+    assert saved.resource_pressure_percent == 72
+    assert saved.resource_critical_percent == 88
+    assert saved.terminal_idle_timeout_minutes == 25
+    assert saved.session_idle_timeout_minutes == 40
+    assert saved.output_artifact_limit_mib == 128
+    assert saved.output_spool_quota_mib == 1536
+    assert saved.output_retention_days == 10
+    assert Application.get_env(:iex_code, :terminal_idle_timeout_ms) == 25 * 60_000
+  end
+
+  test "resource policy rejects crossed thresholds and an undersized spool quota", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    view
+    |> form("#settings-form", %{
+      "settings" => %{
+        "resource_pressure_percent" => "90",
+        "resource_critical_percent" => "85",
+        "output_artifact_limit_mib" => "512",
+        "output_spool_quota_mib" => "256"
+      }
+    })
+    |> render_submit()
+
+    assert has_element?(view, "#settings-error-summary")
+    assert has_element?(view, "#settings-resource-critical[aria-invalid='true']")
+    assert has_element?(view, "#settings-output-spool-quota[aria-invalid='true']")
+  end
+
   test "runtime panel renders activity, memory, and BEAM facts", %{conn: conn} do
     Application.put_env(:iex_code, :runtime_status_reader_stub, runtime_snapshot(:active))
     {:ok, view, _html} = live(conn, ~p"/settings")
@@ -115,6 +183,17 @@ defmodule IexCodeWeb.SettingsLiveTest do
     assert has_element?(view, "#settings-runtime-memory-container", "512 MiB / 1.0 GiB")
     assert has_element?(view, "#settings-runtime-beam-memory", "128 MiB")
     assert has_element?(view, "#settings-runtime-ports", "7 / 65536")
+    assert has_element?(view, "#settings-runtime-memory-peak", "768 MiB")
+    assert has_element?(view, "#settings-runtime-pids", "42 / 1024")
+    assert has_element?(view, "#settings-runtime-oom", "3 events · 1 kills")
+    assert has_element?(view, "#settings-runtime-pressure", "pressure")
+
+    assert has_element?(
+             view,
+             "#settings-runtime-governor",
+             "3 active · 1 interactive · 4 background queued"
+           )
+
     assert has_element?(view, "#settings-runtime-dag-attempts", "5 active DAG attempts")
     refute has_element?(view, "#runtime input")
     refute has_element?(view, "#runtime select")
@@ -661,7 +740,15 @@ defmodule IexCodeWeb.SettingsLiveTest do
 
     %{
       state: state,
-      container: %{memory_current_bytes: 512 * 1_048_576, memory_limit_bytes: 1_073_741_824},
+      container: %{
+        memory_current_bytes: 512 * 1_048_576,
+        memory_peak_bytes: 768 * 1_048_576,
+        memory_limit_bytes: 1_073_741_824,
+        oom_events: 3,
+        oom_kill_events: 1,
+        pids_current: 42,
+        pids_limit: 1_024
+      },
       beam: %{memory_total_bytes: 128 * 1_048_576, port_count: 7, port_limit: 65_536},
       dispatcher: %{active: work_counts.active, queued: work_counts.queued, capacity: 8},
       activity: %{
@@ -670,6 +757,20 @@ defmodule IexCodeWeb.SettingsLiveTest do
         sessions: 6,
         terminals: 2,
         dag_attempts: work_counts.dag_attempts
+      },
+      governor: %{
+        state: :pressure,
+        reserved_bytes: 128 * 1_048_576,
+        active_tickets: 3,
+        queued_interactive: 1,
+        queued_background: 4
+      },
+      deployment: %{
+        profile: "throughput",
+        memory_limit_mib: 2_560,
+        memory_reservation_mib: 512,
+        pids_limit: 1_024,
+        nofile_limit: 65_536
       }
     }
   end

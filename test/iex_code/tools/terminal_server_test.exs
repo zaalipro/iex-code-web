@@ -1,8 +1,9 @@
 defmodule IexCode.Tools.TerminalServerTest do
-  use ExUnit.Case, async: false
+  use IexCode.DataCase, async: false
   require Logger
 
   alias IexCode.Tools.TerminalServer
+  alias IexCode.Outputs
   alias Phoenix.PubSub
 
   @pubsub_server IexCode.PubSub
@@ -191,6 +192,130 @@ defmodule IexCode.Tools.TerminalServerTest do
       assert result.exit_code == 7
     end
 
+    @tag :tmp_dir
+    test "spools output and kills a producer group at its configured ceiling", %{
+      session_id: session_id,
+      tmp_dir: output_root
+    } do
+      output_options = [
+        root: output_root,
+        min_free_bytes: 1,
+        free_bytes: fn _root -> 1_073_741_824 end,
+        global_quota_bytes: 64 * 1_024
+      ]
+
+      assert {:error, {:output_limit_exceeded, artifact_id}} =
+               TerminalServer.run_agent_command(
+                 session_id,
+                 "yes OUTPUT_LIMIT_TEST | head -c 100000",
+                 "VerifierAgent",
+                 timeout_ms: 8_000,
+                 output_artifact: true,
+                 output_limit_bytes: 2 * 1_024,
+                 output_options: output_options
+               )
+
+      artifact = Outputs.get(artifact_id)
+      assert artifact.status == "limit_exceeded"
+      assert artifact.byte_size == 2 * 1_024
+      assert {:ok, data} = Outputs.read_chunk(artifact, 0, 64 * 1_024, root: output_root)
+      assert byte_size(data) == 2 * 1_024
+
+      assert {:ok, %{exit_code: 0, output: output}} =
+               TerminalServer.run_agent_command(
+                 session_id,
+                 "printf SHELL_SURVIVED",
+                 "VerifierAgent",
+                 timeout_ms: 8_000
+               )
+
+      assert output =~ "SHELL_SURVIVED"
+    end
+
+    test "continuous output cannot starve timeout and the terminal remains usable", %{
+      session_id: session_id
+    } do
+      started_at = System.monotonic_time(:millisecond)
+
+      assert {:error, :timeout} =
+               TerminalServer.run_agent_command(
+                 session_id,
+                 "sh -c 'while :; do printf x; done'",
+                 "VerifierAgent",
+                 timeout_ms: 100,
+                 output_artifact: false,
+                 output_limit_bytes: 64 * 1_024 * 1_024
+               )
+
+      assert System.monotonic_time(:millisecond) - started_at < 3_000
+
+      assert {:ok, %{exit_code: 0, output: output}} =
+               TerminalServer.run_agent_command(
+                 session_id,
+                 "printf TERMINAL_TIMEOUT_RECOVERED",
+                 "VerifierAgent",
+                 timeout_ms: 8_000,
+                 output_artifact: false
+               )
+
+      assert output =~ "TERMINAL_TIMEOUT_RECOVERED"
+      assert {:ok, %{occupant: :user}} = TerminalServer.get_state(session_id)
+    end
+
+    @tag :tmp_dir
+    test "caller death kills producer and releases terminal-owned mutation state", %{
+      session_id: session_id,
+      tmp_dir: tmp_dir
+    } do
+      pid_file = Path.join(tmp_dir, "abandoned-producer.pid")
+      parent = self()
+
+      caller =
+        spawn(fn ->
+          result =
+            TerminalServer.run_agent_command(
+              session_id,
+              "sh -c 'echo $$ > #{pid_file}; while :; do printf abandoned; done'",
+              "AbandonedAgent",
+              timeout_ms: 30_000,
+              output_artifact: false
+            )
+
+          send(parent, {:abandoned_result, result})
+        end)
+
+      caller_ref = Process.monitor(caller)
+
+      await_terminal_condition(session_id, fn state -> state.active_occupant != :user end,
+        allow_missing?: true
+      )
+
+      await_file(pid_file)
+
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^caller_ref, :process, ^caller, :killed}, 2_000
+
+      await_terminal_condition(session_id, fn state ->
+        state.active_occupant == :user and state.external_lock_count == 0 and
+          is_nil(state.workspace_lock_handle) and state.status == :running
+      end)
+
+      producer_pid = pid_file |> File.read!() |> String.trim()
+      await_process_dead(producer_pid)
+
+      assert {:ok, %{exit_code: 0, output: output}} =
+               TerminalServer.run_agent_command(
+                 session_id,
+                 "printf OWNER_DEATH_RECOVERED",
+                 "VerifierAgent",
+                 timeout_ms: 8_000,
+                 output_artifact: false
+               )
+
+      assert output =~ "OWNER_DEATH_RECOVERED"
+      refute_receive {:abandoned_result, _result}, 50
+    end
+
     test "redacts bounded agent commands from every dispatch and completion telemetry event", %{
       session_id: session_id
     } do
@@ -366,6 +491,75 @@ defmodule IexCode.Tools.TerminalServerTest do
     after
       timeout ->
         {:error, {:timeout, acc}}
+    end
+  end
+
+  defp await_terminal_condition(session_id, predicate, opts \\ []) do
+    attempts = Keyword.get(opts, :attempts, 200)
+    allow_missing? = Keyword.get(opts, :allow_missing?, false)
+    do_await_terminal_condition(session_id, predicate, attempts, allow_missing?)
+  end
+
+  defp do_await_terminal_condition(_session_id, _predicate, 0, _allow_missing?),
+    do: flunk("terminal condition was not reached")
+
+  defp do_await_terminal_condition(session_id, predicate, attempts, allow_missing?) do
+    case TerminalServer.whereis(session_id) do
+      pid when is_pid(pid) ->
+        state = :sys.get_state(pid)
+
+        if predicate.(state) do
+          state
+        else
+          receive do
+          after
+            10 ->
+              do_await_terminal_condition(session_id, predicate, attempts - 1, allow_missing?)
+          end
+        end
+
+      nil when allow_missing? ->
+        receive do
+        after
+          10 -> do_await_terminal_condition(session_id, predicate, attempts - 1, allow_missing?)
+        end
+
+      nil ->
+        flunk("terminal disappeared while awaiting condition")
+    end
+  end
+
+  defp await_file(path, attempts \\ 200)
+  defp await_file(_path, 0), do: flunk("producer pid file was not created")
+
+  defp await_file(path, attempts) do
+    if File.exists?(path) do
+      :ok
+    else
+      receive do
+      after
+        10 -> await_file(path, attempts - 1)
+      end
+    end
+  end
+
+  defp await_process_dead(pid, attempts \\ 200)
+  defp await_process_dead(_pid, 0), do: flunk("producer process remained alive")
+
+  defp await_process_dead(pid, attempts) do
+    case System.cmd("ps", ["-o", "stat=", "-p", pid], stderr_to_stdout: true) do
+      {_, status} when status != 0 ->
+        :ok
+
+      {process_state, 0} ->
+        if String.trim(process_state) |> String.starts_with?("Z") do
+          :ok
+        else
+          receive do
+          after
+            10 -> await_process_dead(pid, attempts - 1)
+          end
+        end
     end
   end
 end

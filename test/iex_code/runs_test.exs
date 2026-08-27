@@ -103,6 +103,42 @@ defmodule IexCode.RunsTest do
     assert Runs.get_run!(run.id).event_sequence == 3
   end
 
+  test "step summaries omit body-bearing params and results", %{
+    project: project,
+    session: session
+  } do
+    attrs = %{
+      project_id: project.id,
+      session_id: session.id,
+      objective: "Bounded lifecycle projection"
+    }
+
+    assert {:ok, run} =
+             Runs.create_run_with_steps(attrs, [
+               %{
+                 key: "bounded-step",
+                 kind: "prepare",
+                 title: "Bounded step",
+                 params: %{"body" => String.duplicate("p", 100_000)}
+               }
+             ])
+
+    [step] = Runs.list_steps(run)
+
+    assert {:ok, _completed} =
+             Runs.transition_step(step, "completed", %{
+               progress: 100,
+               result: %{"body" => String.duplicate("r", 100_000)}
+             })
+
+    [summary] = Runs.list_step_summaries(run)
+    assert summary.id == step.id
+    assert summary.status == "completed"
+    assert summary.progress == 100
+    assert summary.params == %{}
+    assert is_nil(summary.result)
+  end
+
   test "session-scoped request keys make creation durable and idempotent", %{
     project: project,
     session: session

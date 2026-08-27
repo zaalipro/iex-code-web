@@ -177,12 +177,10 @@ defmodule IexCode.Adversarial.TerminalWhiteboxAdversarialTest do
     test "reassembles 4-byte emojis and 3-byte CJK characters split across chunk boundaries", %{
       session_id: session_id
     } do
-      {:ok, pid} =
+      {:ok, _pid} =
         start_supervised(
           {TerminalSession, [session_id: session_id, project_root: File.cwd!(), mode: :fallback]}
         )
-
-      fake_port = make_ref()
 
       # Emoji 🚀 is <<240, 159, 154, 128>> (4 bytes)
       rocket_bytes = "🚀"
@@ -197,22 +195,22 @@ defmodule IexCode.Adversarial.TerminalWhiteboxAdversarialTest do
       <<c1::binary-size(2), c2::binary-size(2), c3::binary-size(2)>> = cjk_bytes
 
       # Step 1: Inject first partial chunk of rocket
-      send(pid, {fake_port, {:data, r1}})
+      assert :ok = TerminalSession.inject_test_output(session_id, r1)
       # No complete text broadcast yet
       refute_receive {:terminal_output, %{data: "🚀"}}, 100
 
       # Step 2: Inject remaining chunk of rocket + first part of bolt
-      send(pid, {fake_port, {:data, r2 <> b1}})
+      assert :ok = TerminalSession.inject_test_output(session_id, r2 <> b1)
       out1 = assert_receive_output("🚀", 1_000)
       assert String.contains?(out1, "🚀")
 
       # Step 3: Inject remaining chunk of bolt + partial CJK
-      send(pid, {fake_port, {:data, b2 <> c1}})
+      assert :ok = TerminalSession.inject_test_output(session_id, b2 <> c1)
       out2 = assert_receive_output("⚡", 1_000)
       assert String.contains?(out2, "⚡")
 
       # Step 4: Complete the CJK characters
-      send(pid, {fake_port, {:data, c2 <> c3}})
+      assert :ok = TerminalSession.inject_test_output(session_id, c2 <> c3)
       out3 = assert_receive_output("東京", 1_000)
       assert String.contains?(out3, "東京")
 
@@ -232,17 +230,15 @@ defmodule IexCode.Adversarial.TerminalWhiteboxAdversarialTest do
           {TerminalSession, [session_id: session_id, project_root: File.cwd!(), mode: :fallback]}
         )
 
-      fake_port = make_ref()
-
       # Inject invalid UTF-8 byte sequences
       invalid_bytes = <<0xFF, 0xFE, 0x80, 0x81, 0xC0, 0xAF>>
-      send(pid, {fake_port, {:data, invalid_bytes}})
+      assert :ok = TerminalSession.inject_test_output(session_id, invalid_bytes)
 
       # GenServer must survive and stay alive
       assert Process.alive?(pid)
 
       # Follow up with valid data
-      send(pid, {fake_port, {:data, "RECOVERY_OK\n"}})
+      assert :ok = TerminalSession.inject_test_output(session_id, "RECOVERY_OK\n")
       out = assert_receive_output("RECOVERY_OK", 1_000)
       assert String.contains?(out, "RECOVERY_OK")
 
@@ -275,14 +271,12 @@ defmodule IexCode.Adversarial.TerminalWhiteboxAdversarialTest do
            ]}
         )
 
-      fake_port = make_ref()
-
       # Generate 50KB of numbered lines (way exceeding 4KB)
       for i <- 1..500 do
         line =
           "LOG_LINE_#{String.pad_leading(to_string(i), 4, "0")}: #{String.duplicate("X", 80)}\n"
 
-        send(pid, {fake_port, {:data, line}})
+        assert :ok = TerminalSession.inject_test_output(session_id, line)
       end
 
       # Allow message processing
@@ -317,8 +311,7 @@ defmodule IexCode.Adversarial.TerminalWhiteboxAdversarialTest do
            ]}
         )
 
-      fake_port = make_ref()
-      send(pid, {fake_port, {:data, "Hello World\n"}})
+      assert :ok = TerminalSession.inject_test_output(session_id, "Hello World\n")
       _ = :sys.get_state(pid)
 
       {:ok, state} = TerminalSession.get_state(session_id)
@@ -549,8 +542,6 @@ defmodule IexCode.Adversarial.TerminalWhiteboxAdversarialTest do
           {TerminalSession, [session_id: session_id, project_root: File.cwd!(), mode: :fallback]}
         )
 
-      fake_port = make_ref()
-
       sample_log = """
       [INFO] 2026-08-23 Starting build pipeline...
       [DEBUG] \e[32mSUCCESS: Compiled 42 modules in 120ms\e[0m
@@ -559,7 +550,7 @@ defmodule IexCode.Adversarial.TerminalWhiteboxAdversarialTest do
       [INFO] Pipeline finished with code 1
       """
 
-      send(pid, {fake_port, {:data, sample_log}})
+      assert :ok = TerminalSession.inject_test_output(session_id, sample_log)
       _ = :sys.get_state(pid)
 
       # 1. Plain substring search (case-insensitive by default)

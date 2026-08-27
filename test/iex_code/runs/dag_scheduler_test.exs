@@ -52,6 +52,66 @@ defmodule IexCode.Runs.DagSchedulerTest do
     assert {:error, {:run_not_running, "completed"}} = DagScheduler.claim_ready(run, @owner, 1)
   end
 
+  test "lazy claims retain no dependency payload until fenced hydration", context do
+    {run, _steps} = dag_fixture(context)
+
+    assert {:ok, first} =
+             DagScheduler.claim_ready(run, @owner, 1, load_dependencies?: false)
+
+    assert {:ok, second} =
+             DagScheduler.claim_ready(run, @owner, 1, load_dependencies?: false)
+
+    assert first.dependency_results_loaded?
+    assert second.dependency_results_loaded?
+    assert first.dependency_results == %{}
+    assert second.dependency_results == %{}
+
+    for claim <- [first, second] do
+      assert {:ok, _attempt} =
+               DagScheduler.complete(
+                 claim.attempt,
+                 @owner,
+                 1,
+                 claim.attempt.lease_generation,
+                 %{"content" => String.duplicate("x", 100_000)}
+               )
+    end
+
+    assert {:ok, join} =
+             DagScheduler.claim_ready(run, @owner, 1, load_dependencies?: false)
+
+    assert join.dependency_results == %{}
+    refute join.dependency_results_loaded?
+
+    assert {:ok, dependencies} =
+             DagScheduler.load_dependency_results(
+               join.attempt,
+               @owner,
+               1,
+               join.attempt.lease_generation
+             )
+
+    assert Map.keys(dependencies) |> Enum.sort() == ["inventory", "read"]
+
+    assert Enum.sum(
+             Enum.map(dependencies, fn {_key, payload} ->
+               {:ok, encoded} = IexCode.Runs.DagPayload.canonical_json(payload)
+               byte_size(encoded)
+             end)
+           ) <= 32 * 256_000
+  end
+
+  test "closed registry makes the maximum direct fan-in envelope explicit" do
+    descriptors = DagStepRegistry.descriptors()
+
+    assert Enum.all?(descriptors, &(&1.max_output_bytes <= 256_000))
+    assert Enum.max(Enum.map(descriptors, & &1.max_output_bytes)) == 256_000
+    # DagManifest admits at most 32 direct dependencies, so even adversarial
+    # fan-in is capped at 8,192,000 canonical bytes and is hydrated only after
+    # governor admission by DagRunner.
+    assert 32 * Enum.max(Enum.map(descriptors, & &1.max_output_bytes)) == 8_192_000
+  end
+
   test "fences foreign owners, stale parent generations and stale step generations", context do
     {run, _steps} = dag_fixture(context)
     assert {:error, :run_lease_lost} = DagScheduler.claim_ready(run, "foreign", 1)

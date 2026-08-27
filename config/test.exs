@@ -6,6 +6,13 @@ import Config
 config :iex_code, :start_run_dispatcher, false
 config :iex_code, :start_kanban_scheduler, false
 config :iex_code, :control_plane_telemetry, enabled: false
+config :iex_code, :output_artifacts, enabled: false
+config :iex_code, :allow_terminal_test_injection, true
+config :iex_code, :apply_persisted_resource_policy_on_start, false
+# The application-scoped monitor starts before any per-test SQL Sandbox owner.
+# Individual restart tests opt in explicitly; production retains fail-closed
+# startup reconciliation by default.
+config :iex_code, :operation_monitor_reconcile_on_start, false
 
 # Configure your database
 #

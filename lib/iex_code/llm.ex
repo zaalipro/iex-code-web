@@ -6,7 +6,7 @@ defmodule IexCode.LLM do
   There is no mock/local mode: a missing API key returns `{:error, :no_api_key}`
   and a provider failure returns an error — content is never fabricated.
   """
-  alias IexCode.Execution.Limits
+  alias IexCode.Execution.{Limits, ResourceGovernor}
   alias IexCode.Settings
   alias IexCode.LLM.{Anthropic, OpenAI, Resilience}
 
@@ -26,6 +26,18 @@ defmodule IexCode.LLM do
     route. When present, the gateway does not reread global settings.
   """
   def chat(messages, system_prompt, session, on_chunk \\ fn _c -> :ok end, opts \\ []) do
+    permit_opts =
+      ResourceGovernor.admission_opts(opts,
+        priority: :interactive,
+        run_key: session_run_key(session)
+      )
+
+    ResourceGovernor.with_permit(:llm_provider, permit_opts, fn ->
+      dispatch_chat(messages, system_prompt, session, on_chunk, opts)
+    end)
+  end
+
+  defp dispatch_chat(messages, system_prompt, session, on_chunk, opts) do
     case Keyword.pop(opts, :resolved_route) do
       {nil, opts} ->
         settings = Settings.get_settings()
@@ -55,6 +67,9 @@ defmodule IexCode.LLM do
         do_resolved_chat(messages, system_prompt, on_chunk, opts, route)
     end
   end
+
+  defp session_run_key(%{id: id}) when is_binary(id), do: id
+  defp session_run_key(_session), do: self()
 
   @doc "Returns the explicitly selected transport provider, with model-family inference only as a legacy fallback."
   def effective_provider(provider, model) do

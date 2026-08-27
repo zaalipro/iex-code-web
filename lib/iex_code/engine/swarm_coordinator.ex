@@ -151,7 +151,7 @@ defmodule IexCode.Engine.SwarmCoordinator do
 
   @doc """
   Reverts working tree modifications recorded in this session's MultiPatch snapshots.
-  When no session is scoped (default `%State{}`), falls back to all snapshots.
+  A session scope is required; durable runs rollback only their own snapshots.
   Never touches unrelated files or git state.
   """
   def perform_rollback(_project_root, state \\ %State{}) do
@@ -159,11 +159,11 @@ defmodule IexCode.Engine.SwarmCoordinator do
     run_id = Map.get(state, :run_id)
 
     if is_binary(session_id) and session_id != "" do
-      snapshots =
+      snapshot_refs =
         if is_binary(run_id) and run_id != "" do
-          MultiPatch.Snapshot.list_run_snapshots(run_id)
+          MultiPatch.Snapshot.stream_run_snapshot_refs(run_id)
         else
-          MultiPatch.Snapshot.list_snapshots(session_id)
+          MultiPatch.Snapshot.stream_session_snapshot_refs(session_id)
         end
 
       lock_opts = [
@@ -172,12 +172,20 @@ defmodule IexCode.Engine.SwarmCoordinator do
         session_id: session_id
       ]
 
-      results =
-        Enum.map(snapshots, fn snapshot ->
-          Tools.rollback_multi_patch(snapshot.transaction_id, snapshot.project_root, lock_opts)
+      errors =
+        Enum.reduce(snapshot_refs, [], fn snapshot_ref, errors ->
+          case Tools.rollback_multi_patch(
+                 snapshot_ref.transaction_id,
+                 snapshot_ref.project_root,
+                 lock_opts
+               ) do
+            {:error, _reason} = error -> [error | errors]
+            _success -> errors
+          end
         end)
+        |> Enum.reverse()
 
-      case Enum.filter(results, &match?({:error, _}, &1)) do
+      case errors do
         [] -> {:ok, :rolled_back}
         errors -> {:error, errors}
       end
@@ -192,19 +200,26 @@ defmodule IexCode.Engine.SwarmCoordinator do
   Stages and commits working changes in the target project repository.
   """
   def perform_commit(project_root, opts \\ []) do
-    if project_root != File.cwd!() and git_repo?(project_root) do
-      commit_msg = Keyword.get(opts, :message, "chore: session cancelled checkpoint commit")
+    {result, committed?} =
+      if project_root != File.cwd!() and git_repo?(project_root) do
+        commit_msg = Keyword.get(opts, :message, "chore: session cancelled checkpoint commit")
 
-      with :ok <- Tools.git_stage(:all, project_root, opts),
-           {:ok, _} <-
-             Tools.git_commit(commit_msg, project_root, Keyword.put(opts, :allow_empty, true)) do
-        {:ok, :committed}
+        result =
+          with :ok <- Tools.git_stage(:all, project_root, opts),
+               {:ok, _} <-
+                 Tools.git_commit(commit_msg, project_root, Keyword.put(opts, :allow_empty, true)) do
+            {:ok, :committed}
+          else
+            {:error, reason} -> {:error, reason}
+          end
+
+        {result, match?({:ok, :committed}, result)}
       else
-        {:error, reason} -> {:error, reason}
+        {{:ok, :committed}, false}
       end
-    else
-      {:ok, :committed}
-    end
+
+    if committed?, do: cleanup_snapshot_scope(opts)
+    result
   rescue
     e -> {:error, Exception.message(e)}
   end
@@ -1786,7 +1801,29 @@ defmodule IexCode.Engine.SwarmCoordinator do
       {:goal_lifecycle_changed, %{session_id: session_id, status: state.status}}
     )
 
+    if state.status == :completed do
+      cleanup_snapshot_scope(run_id: state.run_id, session_id: session_id)
+    end
+
     {:ok, final_msg}
+  end
+
+  # A durable run owns only its own manifests. Interactive sessions use the
+  # legacy session scope, which deliberately excludes every run-owned row.
+  defp cleanup_snapshot_scope(opts) do
+    run_id = Keyword.get(opts, :run_id)
+    session_id = Keyword.get(opts, :session_id)
+
+    cond do
+      is_binary(run_id) and run_id != "" ->
+        MultiPatch.Snapshot.delete_run_snapshots(run_id)
+
+      is_binary(session_id) and session_id != "" ->
+        MultiPatch.Snapshot.delete_session_snapshots(session_id)
+
+      true ->
+        :ok
+    end
   end
 
   # ============================================================================

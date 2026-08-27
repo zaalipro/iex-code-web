@@ -59,9 +59,7 @@ sudo bash /tmp/iex-code-web-install.sh \
   --port <LISTEN_PORT> \
   --bind <BIND_ADDRESS> \
   --workspace-root <WORKSPACE_DIRECTORY> \
-  --memory-limit-mib 1024 \
-  --memory-reservation-mib 512 \
-  --nofile-limit 65536 \
+  --resource-profile balanced \
   --env-file <ENV_FILE> \
   --source-ref <GIT_REF> \
   --yes
@@ -91,22 +89,56 @@ upstream on `0.0.0.0`.
 
 ## Application memory guardrails
 
-The default installation gives the application container a 1,024 MiB hard
-memory limit and a 512 MiB soft reservation. It also caps both the container's
-open-file limit and the BEAM port table at 65,536. The port cap prevents OTP
+The default **Balanced** profile gives the application container a 2,048 MiB
+hard memory limit, a 512 MiB soft reservation, and a 1,024-process safety
+limit. It also caps both the container's open-file limit and the BEAM port table
+at 65,536. The port cap prevents OTP
 from sizing its port table from an excessively large host `nofile` limit, which
 can otherwise consume gigabytes before any work is running.
 
-The defaults are designed to keep an idle application comfortably below 600
-MiB while leaving room for interactive work. The hard limit is a safety
+Profiles change the hard ceiling without preallocating it: Linux lets actual
+usage grow on demand and reclaim unused memory. The defaults are designed to
+keep an idle application comfortably below 600 MiB while leaving room for
+interactive work. The hard limit is a safety
 boundary, not a guarantee that every workload will fit: large builds, many
 simultaneous agents, and memory-heavy repository commands may need more RAM.
 
+| Profile | Hard limit | Reservation | `nofile` / BEAM ports | Processes | Intended use |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `compact` | 1,024 MiB | 512 MiB | 65,536 | 1,024 | Small VPS and light interactive use |
+| `balanced` | 2,048 MiB | 512 MiB | 65,536 | 1,024 | Default general-purpose installation |
+| `throughput` | 2,560 MiB | 512 MiB | 65,536 | 1,024 | Builds, swarms, and deep research on a larger VPS |
+| `custom` | Explicit values | Explicit values | Explicit value | Explicit value | Operator-tuned deployment |
+
+Select a preset during a fresh installation:
+
+```bash
+sudo bash /tmp/iex-code-web-install.sh --resource-profile throughput
+```
+
+Or change an existing managed deployment:
+
+```bash
+sudo iex-code-web update --resource-profile throughput
+```
+
+In particular, the GCP deployment is intended to run with `throughput`; verify
+it afterward with `sudo iex-code-web config`. The reported values should be a
+2,560 MiB hard limit, 512 MiB reservation, 1,024-process cap, and 65,536
+`nofile` limit.
+
+Do not combine a preset profile with individual limit flags. Supplying any
+individual limit selects `custom`; use `--resource-profile custom` only when an
+explicit label is useful. On a new installation, `custom` requires at least one
+individual limit; unspecified limits retain their defaults.
+
 | Installer option | Default | Accepted range | Persisted key |
 | --- | ---: | ---: | --- |
-| `--memory-limit-mib` | `1024` | `256..65536` | `IEX_CODE_MEMORY_LIMIT_MIB` |
+| `--resource-profile` | `balanced` | `compact`, `balanced`, `throughput`, `custom` | `IEX_CODE_RESOURCE_PROFILE` |
+| `--memory-limit-mib` | `2048` | `256..65536` | `IEX_CODE_MEMORY_LIMIT_MIB` |
 | `--memory-reservation-mib` | `512` | `128..memory-limit` | `IEX_CODE_MEMORY_RESERVATION_MIB` |
 | `--nofile-limit` | `65536` | `4096..1048576` | `IEX_CODE_NOFILE_LIMIT` |
+| `--pids-limit` | `1024` | `128..65536` | `IEX_CODE_PIDS_LIMIT` |
 
 Choose explicit limits during installation when necessary:
 
@@ -114,13 +146,30 @@ Choose explicit limits during installation when necessary:
 sudo bash /tmp/iex-code-web-install.sh \
   --memory-limit-mib 2048 \
   --memory-reservation-mib 768 \
-  --nofile-limit 131072
+  --nofile-limit 131072 \
+  --pids-limit 2048
 ```
 
 These values are stored in `/etc/iex-code-web/install.conf` and retained by
 `sudo iex-code-web update`. An older installation receives the current defaults
 on its next update unless it already has saved values. Do not put these settings
 in `app.env`; the installer passes them to Compose separately.
+
+### Memory-aware work admission
+
+The container ceiling is complemented by an application-level governor for
+expensive work. Model calls, AST scans, research fetches, DAG steps, native
+commands, and build/test jobs request weighted permits. At the default 70%
+pressure threshold, new heavy work waits rather than expanding concurrency. The
+85% critical threshold and profile-specific safety headroom keep capacity for
+already admitted work. The governor does not cancel an active job or weaken its
+reasoning, fleet topology, or research level.
+
+Interactive work has reserved capacity and is considered before background
+work. Background permits rotate fairly among durable runs so a large swarm does
+not monopolize admission. The thresholds can be changed live under
+**Settings → Resources**; deployment ceilings, PID limits, and BEAM port limits
+remain installer settings and require an update/restart.
 
 ## First login
 
@@ -151,13 +200,21 @@ access layer. See [Domain and trusted TLS](#domain-and-trusted-tls).
 | `/opt/iex-code-web/source` | Root-owned source checkout, `compose.yaml`, image metadata, and proxy configuration |
 | `/etc/iex-code-web/app.env` | Root-readable runtime secrets and settings |
 | `/etc/iex-code-web/install.conf` | Root-readable deployment topology and resource limits |
-| `/var/lib/iex-code-web` | Persistent SQLite database and research outputs |
+| `/var/lib/iex-code-web` | Persistent SQLite database, `research/` reports, and `outputs/` command/test artifacts |
 | `/var/backups/iex-code-web` | Root-only manager-created backup archives |
 | `/srv/iex-code-workspaces` | Host directory made available for checked-out repositories |
 | `/usr/local/bin/iex-code-web` | Root operator command |
 
 Keep `/etc/iex-code-web/app.env` mode `0600`. Do not move the database onto NFS
 or a filesystem without reliable SQLite locking and durability semantics.
+
+Verbose command and test output is file-backed below
+`/var/lib/iex-code-web/outputs`. By default, each producer may write at most
+256 MiB, all artifacts share a 2 GiB spool quota, and completed artifacts expire
+after seven days. New artifacts require at least 5 GiB free on the state
+filesystem. Active-run artifacts are not expired. Configure these bounds in
+**Settings → Resources** rather than increasing them implicitly, and monitor
+free space alongside memory.
 
 ## Verify the deployment
 

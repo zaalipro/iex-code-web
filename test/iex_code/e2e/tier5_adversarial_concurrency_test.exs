@@ -373,7 +373,7 @@ defmodule IexCode.E2E.Tier5AdversarialConcurrencyTest do
 
       # The prefix of the command's stdout survives truncation
       assert String.starts_with?(output, "AAAA")
-      assert String.contains?(output, "[output truncated at")
+      assert output =~ ~r/\[output truncated(?:; retrieve artifact [0-9a-f-]+)?\]/
 
       # Force GC and verify memory returns to stable level
       :erlang.garbage_collect(self())

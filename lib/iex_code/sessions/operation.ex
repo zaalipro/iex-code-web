@@ -29,6 +29,8 @@ defmodule IexCode.Sessions.Operation do
   end
 
   @statuses ~w(pending running completed failed)
+  @max_projection_bytes 64 * 1_024
+  @max_params_bytes 64_000
 
   def changeset(operation, attrs) do
     operation
@@ -51,8 +53,28 @@ defmodule IexCode.Sessions.Operation do
     |> validate_required([:session_id, :agent_name, :op_type, :title])
     |> validate_inclusion(:status, @statuses)
     |> validate_number(:progress, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
+    |> validate_projection(:result)
+    |> validate_projection(:error_message)
+    |> validate_params()
     |> foreign_key_constraint(:session_id)
   end
 
   def statuses, do: @statuses
+
+  defp validate_projection(changeset, field) do
+    validate_change(changeset, field, fn ^field, value ->
+      if is_binary(value) and byte_size(value) <= @max_projection_bytes,
+        do: [],
+        else: [{field, "must be at most #{@max_projection_bytes} bytes"}]
+    end)
+  end
+
+  defp validate_params(changeset) do
+    validate_change(changeset, :params, fn :params, params ->
+      case Jason.encode(params) do
+        {:ok, encoded} when byte_size(encoded) <= @max_params_bytes -> []
+        _other -> [params: "must be a JSON value of at most #{@max_params_bytes} bytes"]
+      end
+    end)
+  end
 end

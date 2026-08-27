@@ -144,7 +144,13 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
+    # File discovery is intentionally lazy so every connected workspace does
+    # not retain a full tree while the user is working in another tab.
+    assert live_assigns(view).project_files == []
+    refute live_assigns(view).files_loaded?
+    render_click(view, "switch_tab", %{"tab" => "files"})
     files = live_assigns(view).project_files
+    assert live_assigns(view).files_loaded?
     assert "lib/visible.ex" in files
     refute Enum.any?(files, &String.starts_with?(&1, "node_modules/"))
     refute Enum.any?(files, &String.starts_with?(&1, "tmp/"))
@@ -159,6 +165,40 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
 
     render_click(view, "close_all_usage_modal")
     refute live_assigns(view).show_all_usage_modal
+  end
+
+  test "chat retains a byte-bounded preview while the inspector retrieves the durable body", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    body = String.duplicate("large-message-", 20_000)
+
+    messages =
+      for index <- 1..100 do
+        {:ok, message} =
+          Sessions.create_message(%{
+            session_id: session.id,
+            role: "assistant",
+            content: "#{index}:" <> body
+          })
+
+        message
+      end
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    previews = live_assigns(view).messages
+
+    assert Enum.sum(Enum.map(previews, &byte_size(&1.content))) <= 1_000_000
+    assert Enum.all?(previews, &(String.length(&1.content) <= 12_000))
+
+    newest = List.last(messages)
+    render_click(view, "expand_message", %{"id" => newest.id})
+    assert live_assigns(view).expanded_message.content == newest.content
+
+    render_click(view, "close_expand_message")
+    assert is_nil(live_assigns(view).expanded_message)
   end
 
   test "calendar only shows tasks scheduled on the cell's full date", %{

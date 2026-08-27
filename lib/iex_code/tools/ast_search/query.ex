@@ -18,53 +18,65 @@ defmodule IexCode.Tools.ASTSearch.Query do
   """
   @spec filter([Extractor.symbol_entry()], String.t() | map() | keyword()) ::
           [Extractor.symbol_entry()] | {:error, term()}
-  def filter(symbols, query) when is_binary(query) do
-    q = String.trim(query)
-
-    if q == "" do
-      symbols
-    else
-      q_down = String.downcase(q)
-
-      Enum.filter(symbols, fn s ->
-        name_match = is_binary(s.name) and String.contains?(String.downcase(s.name), q_down)
-        mod_match = is_binary(s.module) and String.contains?(String.downcase(s.module), q_down)
-        code_match = is_binary(s.code) and String.contains?(String.downcase(s.code), q_down)
-        doc_match = match_doc_text(s.metadata, q_down)
-
-        name_match or mod_match or code_match or doc_match
-      end)
+  def filter(symbols, query) do
+    case compile(query) do
+      {:ok, matcher} -> Enum.filter(symbols, matcher)
+      {:error, _reason} = error -> error
     end
   end
 
-  def filter(symbols, query) when is_list(query) do
+  @doc false
+  @spec compile(String.t() | map() | keyword()) ::
+          {:ok, (Extractor.symbol_entry() -> boolean())} | {:error, term()}
+  def compile(query) when is_binary(query) do
+    q = String.trim(query)
+
+    if q == "" do
+      {:ok, fn _symbol -> true end}
+    else
+      q_down = String.downcase(q)
+
+      {:ok,
+       fn s ->
+         name_match = is_binary(s.name) and String.contains?(String.downcase(s.name), q_down)
+         mod_match = is_binary(s.module) and String.contains?(String.downcase(s.module), q_down)
+         code_match = is_binary(s.code) and String.contains?(String.downcase(s.code), q_down)
+         doc_match = match_doc_text(s.metadata, q_down)
+
+         name_match or mod_match or code_match or doc_match
+       end}
+    end
+  end
+
+  def compile(query) when is_list(query) do
     if Keyword.keyword?(query) do
-      filter(symbols, Map.new(query))
+      compile(Map.new(query))
     else
       {:error, :invalid_query}
     end
   end
 
-  def filter(symbols, query) when is_map(query) do
+  def compile(query) when is_map(query) do
     case validate_query(query) do
       :ok ->
-        Enum.filter(symbols, fn s ->
-          matches_type?(s, query_get(query, [:type])) and
-            matches_name?(s, query_get(query, [:function, :name])) and
-            matches_module?(s, query_get(query, [:module])) and
-            matches_arity?(s, query_get(query, [:arity])) and
-            matches_visibility?(s, query_get(query, [:visibility])) and
-            matches_line?(s, query_get(query, [:line])) and
-            matches_path?(s, query_get(query, [:path, :file])) and
-            matches_text?(s, query_get(query, [:text, :query]))
-        end)
+        {:ok,
+         fn s ->
+           matches_type?(s, query_get(query, [:type])) and
+             matches_name?(s, query_get(query, [:function, :name])) and
+             matches_module?(s, query_get(query, [:module])) and
+             matches_arity?(s, query_get(query, [:arity])) and
+             matches_visibility?(s, query_get(query, [:visibility])) and
+             matches_line?(s, query_get(query, [:line])) and
+             matches_path?(s, query_get(query, [:path, :file])) and
+             matches_text?(s, query_get(query, [:text, :query]))
+         end}
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  def filter(_symbols, _query), do: {:error, :invalid_query}
+  def compile(_query), do: {:error, :invalid_query}
 
   # --- Query Validation ---
 

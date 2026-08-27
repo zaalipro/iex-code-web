@@ -9,6 +9,7 @@ defmodule IexCode.Research.Search do
   retaining duplicate-provider provenance.
   """
 
+  alias IexCode.Execution.ResourceGovernor
   alias IexCode.Research.{Registry, Result}
 
   @provider_option_keys ~w(api_key base_url enabled cx engine_id engine country language search_depth location safe include_domains exclude_domains start_date end_date search_after_date search_before_date recency)a
@@ -43,11 +44,14 @@ defmodule IexCode.Research.Search do
   defp run(query, selected, opts) do
     timeout = positive_integer(Keyword.get(opts, :timeout), 15_000)
     concurrency = positive_integer(Keyword.get(opts, :max_concurrency), 4)
+    resource_opts = explicit_resource_opts(opts)
 
     outputs =
       Task.async_stream(
         selected,
-        fn {name, module, config} -> invoke(name, module, query, provider_opts(config, opts)) end,
+        fn {name, module, config} ->
+          invoke(name, module, query, provider_opts(config, opts) ++ resource_opts)
+        end,
         max_concurrency: concurrency,
         timeout: timeout,
         on_timeout: :kill_task,
@@ -152,6 +156,17 @@ defmodule IexCode.Research.Search do
         end
       end
     )
+  end
+
+  defp explicit_resource_opts(opts) do
+    admission = ResourceGovernor.admission_opts(opts, priority: :background)
+
+    [
+      resource_governor: admission[:server],
+      resource_priority: admission[:priority],
+      resource_run_key: admission[:run_key],
+      resource_timeout: admission[:timeout]
+    ]
   end
 
   defp interleave(provider_results) do

@@ -202,36 +202,6 @@
           </button>
 
           <button
-            id="sidebar-tab-tests"
-            phx-click="switch_tab"
-            phx-value-sidebar_tab="tests"
-            aria-current={if @active_tab == "tests", do: "page", else: false}
-            class={[
-              "w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-smooth text-left",
-              @active_tab == "tests" && "bg-[#21262d] text-white shadow-sm font-semibold",
-              @active_tab != "tests" && "text-gray-400 hover:text-gray-200 hover:bg-[#161b22]"
-            ]}
-          >
-            <.icon name="hero-beaker" class="w-3.5 h-3.5 text-emerald-400" />
-            <span>Visual Test Runner</span>
-          </button>
-
-          <button
-            id="sidebar-tab-ast"
-            phx-click="switch_tab"
-            phx-value-sidebar_tab="ast"
-            aria-current={if @active_tab == "ast", do: "page", else: false}
-            class={[
-              "w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-smooth text-left",
-              @active_tab == "ast" && "bg-[#21262d] text-white shadow-sm font-semibold",
-              @active_tab != "ast" && "text-gray-400 hover:text-gray-200 hover:bg-[#161b22]"
-            ]}
-          >
-            <.icon name="hero-magnifying-glass" class="w-3.5 h-3.5 text-purple-400" />
-            <span>AST Symbol Explorer</span>
-          </button>
-
-          <button
             id="sidebar-tab-chat"
             phx-click="switch_tab"
             phx-value-sidebar_tab="chat"
@@ -502,36 +472,6 @@
             >
               <.icon name="hero-code-bracket" class="w-3.5 h-3.5 text-cyan-400" />
               <span class="workspace-tab-label">Changes</span>
-            </button>
-
-            <button
-              id="tab-btn-tests"
-              phx-click="switch_tab"
-              phx-value-tab="tests"
-              aria-pressed={@active_tab == "tests"}
-              class={[
-                "px-3 py-1 rounded-lg text-xs font-mono font-medium flex items-center gap-1.5 transition-smooth",
-                @active_tab == "tests" && "bg-[#21262d] text-white shadow-sm",
-                @active_tab != "tests" && "text-gray-400 hover:text-gray-200"
-              ]}
-            >
-              <.icon name="hero-beaker" class="w-3.5 h-3.5 text-emerald-400" />
-              <span class="workspace-tab-label">Tests</span>
-            </button>
-
-            <button
-              id="tab-btn-ast"
-              phx-click="switch_tab"
-              phx-value-tab="ast"
-              aria-pressed={@active_tab == "ast"}
-              class={[
-                "px-3 py-1 rounded-lg text-xs font-mono font-medium flex items-center gap-1.5 transition-smooth",
-                @active_tab == "ast" && "bg-[#21262d] text-white shadow-sm",
-                @active_tab != "ast" && "text-gray-400 hover:text-gray-200"
-              ]}
-            >
-              <.icon name="hero-magnifying-glass" class="w-3.5 h-3.5 text-purple-400" />
-              <span class="workspace-tab-label">AST</span>
             </button>
 
             <button
@@ -2047,6 +1987,14 @@
 
                   <!-- Tier 3: Untracked Files -->
                   <% untracked = (@git_status && @git_status.untracked) || [] %>
+                  <div
+                    :if={@git_status && @git_status.truncated?}
+                    id="git-status-truncated"
+                    class="border border-amber-400/25 bg-amber-400/[0.06] px-2.5 py-2 text-[10px] leading-4 text-amber-200"
+                  >
+                    Status preview retained {@git_status.retained_paths} paths and is truncated.
+                    Narrow the area with the terminal for omitted files.
+                  </div>
                   <%= if untracked != [] do %>
                     <div class="space-y-1.5">
                       <div class="flex items-center justify-between text-gray-300 font-semibold pb-1 border-b border-[#21262d]">
@@ -2164,6 +2112,15 @@
                 id="changes-diff-panel"
                 class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0a0d12] p-2 sm:p-3"
               >
+                <div
+                  :if={@diff_truncated?}
+                  id="diff-preview-truncated"
+                  class="mb-2 flex items-center gap-2 border border-amber-400/30 bg-amber-400/[0.07] px-3 py-2 font-mono text-[10px] text-amber-200"
+                >
+                  <.icon name="hero-exclamation-triangle" class="h-3.5 w-3.5 shrink-0" />
+                  Preview capped at 2 MiB. The repository content is unchanged; open the file or
+                  use Git locally for the complete diff.
+                </div>
                 <.interactive_diff_viewer
                   diff_text={@diff_text}
                   diff_mode={@diff_mode}
@@ -2174,34 +2131,6 @@
               </div>
             </div>
           </div>
-        <% end %>
-
-        <!-- TAB: VISUAL TEST RUNNER & AUTOFIX STUDIO -->
-        <%= if @active_tab == "tests" do %>
-          <.test_runner_panel
-            test_runner_status={@test_runner_status}
-            test_runner_progress_pct={@test_runner_progress_pct}
-            test_runner_progress_msg={@test_runner_progress_msg}
-            test_runner_result={@test_runner_result}
-            show_autofix_modal={@show_autofix_modal}
-            autofix_status={@autofix_status}
-            autofix_target_failure={@autofix_target_failure}
-            autofix_diff={@autofix_diff}
-            autofix_planned_patches={@autofix_planned_patches}
-            autofix_tx_id={@autofix_tx_id}
-          />
-        <% end %>
-
-        <!-- TAB: AST QUERY EXPLORER & SYMBOL NAVIGATOR -->
-        <%= if @active_tab == "ast" do %>
-          <.ast_explorer
-            ast_query={@ast_query}
-            ast_type_filter={@ast_type_filter}
-            ast_visibility={@ast_visibility}
-            ast_results={@ast_results}
-            ast_searching?={@ast_searching?}
-            ast_total_count={@ast_total_count}
-          />
         <% end %>
 
         <!-- DEDICATED DEEP RESEARCH WORKSPACE -->
@@ -2709,6 +2638,15 @@
               phx-hook=".ChatScrollAssistant"
               class="flex-1 flex flex-col h-full overflow-y-auto p-6 space-y-6 scroll-smooth"
             >
+              <button
+                :if={@messages_more?}
+                id="load-older-messages"
+                type="button"
+                phx-click="load_older_messages"
+                class="mx-auto flex items-center gap-1.5 rounded-lg border border-[#30363d] bg-[#11151c] px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-gray-300 transition-smooth hover:border-cyan-500/50 hover:text-cyan-200"
+              >
+                <.icon name="hero-arrow-up" class="h-3.5 w-3.5" /> Load older messages
+              </button>
               <div
                 :if={@messages == []}
                 id="chat-empty-state"
@@ -2793,6 +2731,15 @@
                   </div>
                 </div>
               <% end %>
+              <button
+                :if={@messages_newer?}
+                id="load-newer-messages"
+                type="button"
+                phx-click="load_newer_messages"
+                class="mx-auto flex items-center gap-1.5 rounded-lg border border-[#30363d] bg-[#11151c] px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-gray-300 transition-smooth hover:border-cyan-500/50 hover:text-cyan-200"
+              >
+                Load newer messages <.icon name="hero-arrow-down" class="h-3.5 w-3.5" />
+              </button>
             </div>
           </div>
 
@@ -2841,6 +2788,7 @@
         <%= if @active_tab == "files" do %>
           <.file_explorer
             files={@project_files}
+            more_files={@files_more?}
             filter={@file_filter}
             filter_form={@file_filter_form}
             expanded_folders={@expanded_folders}
@@ -4071,7 +4019,7 @@
 
   <!-- Expanded Message Modal -->
   <%= if @expanded_message_id do %>
-    <% expanded_msg = Enum.find(@messages, &((&1.id || "") == @expanded_message_id)) %>
+    <% expanded_msg = @expanded_message %>
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
       <div
         id="expanded-message-modal"

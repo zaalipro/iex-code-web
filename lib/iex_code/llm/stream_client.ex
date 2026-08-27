@@ -112,7 +112,7 @@ defmodule IexCode.LLM.StreamClient do
 
     http_result =
       try do
-        Req.post(
+        IexCode.HTTP.post(
           url,
           json: body,
           headers: headers,

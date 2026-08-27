@@ -31,26 +31,22 @@ defmodule IexCode.Observability.RuntimeStatusTest do
         end
       )
 
-    assert snapshot == %{
-             state: :idle,
-             container: %{
-               memory_current_bytes: 268_435_456,
-               memory_limit_bytes: 1_073_741_824
-             },
-             beam: %{
-               memory_total_bytes: 134_217_728,
-               port_count: 7,
-               port_limit: 65_536
-             },
-             dispatcher: %{active: 0, queued: 0, capacity: 2},
-             activity: %{
-               agents: 0,
-               fleets: 0,
-               sessions: 3,
-               terminals: 2,
-               dag_attempts: 0
-             }
+    assert snapshot.state == :idle
+    assert snapshot.container.memory_current_bytes == 268_435_456
+    assert snapshot.container.memory_limit_bytes == 1_073_741_824
+    assert snapshot.beam == %{memory_total_bytes: 134_217_728, port_count: 7, port_limit: 65_536}
+    assert snapshot.dispatcher == %{active: 0, queued: 0, capacity: 2}
+
+    assert snapshot.activity == %{
+             agents: 0,
+             fleets: 0,
+             sessions: 3,
+             terminals: 2,
+             dag_attempts: 0
            }
+
+    assert snapshot.governor.state in [:normal, :pressure, :critical, :unavailable]
+    assert snapshot.deployment.profile in ["compact", "balanced", "throughput", "custom"]
   end
 
   test "paused durable agents and active DAG attempts make the runtime active" do
@@ -78,6 +74,47 @@ defmodule IexCode.Observability.RuntimeStatusTest do
     assert snapshot.activity.agents == 3
     assert snapshot.activity.dag_attempts == 1
     assert snapshot.container.memory_limit_bytes == :unlimited
+  end
+
+  test "reports peak memory, OOM/PID facts, and aggregate governor pressure" do
+    root = cgroup_fixture("536870912", "2147483648")
+    File.write!(Path.join(root, "memory.peak"), "805306368\n")
+    File.write!(Path.join(root, "memory.events"), "low 0\nhigh 2\nmax 1\noom 3\noom_kill 1\n")
+    File.write!(Path.join(root, "pids.current"), "42\n")
+    File.write!(Path.join(root, "pids.max"), "1024\n")
+
+    snapshot =
+      RuntimeStatus.snapshot(
+        cgroup_root: root,
+        dispatcher_stats: fn -> %{active: 0, queued: 0, capacity: 4} end,
+        metrics_snapshot: fn -> zero_control_plane() end,
+        supervisor_count: fn _ -> %{active: 0} end,
+        beam_memory: fn -> 100 end,
+        beam_system_info: fn _ -> 1 end,
+        governor_snapshot: fn ->
+          %{
+            state: :pressure,
+            reserved_bytes: 134_217_728,
+            active_by_class: %{native_command: 1, llm_provider: 2},
+            queued_interactive: 1,
+            queued_background: 4
+          }
+        end
+      )
+
+    assert snapshot.container.memory_peak_bytes == 805_306_368
+    assert snapshot.container.oom_events == 3
+    assert snapshot.container.oom_kill_events == 1
+    assert snapshot.container.pids_current == 42
+    assert snapshot.container.pids_limit == 1_024
+
+    assert snapshot.governor == %{
+             state: :pressure,
+             reserved_bytes: 134_217_728,
+             active_tickets: 3,
+             queued_interactive: 1,
+             queued_background: 4
+           }
   end
 
   test "legacy agents and fleets are included without exposing supervisor details" do
@@ -117,7 +154,8 @@ defmodule IexCode.Observability.RuntimeStatusTest do
       )
 
     assert snapshot.state == :unavailable
-    assert snapshot.container == %{memory_current_bytes: nil, memory_limit_bytes: nil}
+    assert snapshot.container.memory_current_bytes == nil
+    assert snapshot.container.memory_limit_bytes == nil
     assert snapshot.beam == %{memory_total_bytes: nil, port_count: nil, port_limit: nil}
     assert snapshot.dispatcher == %{active: nil, queued: nil, capacity: nil}
 
@@ -178,6 +216,9 @@ defmodule IexCode.Observability.RuntimeStatusTest do
     assert RuntimeStatus.format_cli(snapshot) == [
              "IexCode runtime: idle",
              "Container memory: 256.0 MiB / 1.0 GiB",
+             "Container peak memory: unavailable",
+             "Container OOM events: unavailable, kills: unavailable",
+             "Container PIDs: unavailable / unavailable",
              "BEAM memory: 128.0 MiB",
              "BEAM ports: 7 / 65536",
              "Runs: 0 active, 0 queued, 2 capacity",
@@ -185,7 +226,8 @@ defmodule IexCode.Observability.RuntimeStatusTest do
              "Fleets: 0 active",
              "DAG attempts: 0 active",
              "Sessions: 3",
-             "Terminals: 2"
+             "Terminals: 2",
+             "Governor: unavailable, unavailable active tickets, unavailable interactive queued, unavailable background queued"
            ]
   end
 
@@ -193,6 +235,9 @@ defmodule IexCode.Observability.RuntimeStatusTest do
     assert RuntimeStatus.format_cli(%{state: :unavailable}) == [
              "IexCode runtime: unavailable",
              "Container memory: unavailable / unavailable",
+             "Container peak memory: unavailable",
+             "Container OOM events: unavailable, kills: unavailable",
+             "Container PIDs: unavailable / unavailable",
              "BEAM memory: unavailable",
              "BEAM ports: unavailable / unavailable",
              "Runs: unavailable active, unavailable queued, unavailable capacity",
@@ -200,7 +245,8 @@ defmodule IexCode.Observability.RuntimeStatusTest do
              "Fleets: unavailable active",
              "DAG attempts: unavailable active",
              "Sessions: unavailable",
-             "Terminals: unavailable"
+             "Terminals: unavailable",
+             "Governor: unavailable, unavailable active tickets, unavailable interactive queued, unavailable background queued"
            ]
   end
 

@@ -9,6 +9,7 @@ defmodule IexCode.Tools.TerminalSession do
 
   alias IexCode.LLM.UTF8Buffer
   alias IexCode.Tools.PTYAdapter
+  alias IexCode.Tools.TerminalSupervisor
   alias IexCode.WorkspaceLocks
 
   @default_cols 80
@@ -25,6 +26,7 @@ defmodule IexCode.Tools.TerminalSession do
   @default_interrupt_signal_delay_ms 100
   @default_interrupt_timeout_ms 2_000
   @default_interrupt_force_timeout_ms 1_000
+  @default_idle_timeout_ms 30 * 60 * 1_000
   @pubsub_server IexCode.PubSub
 
   defstruct [
@@ -57,7 +59,12 @@ defmodule IexCode.Tools.TerminalSession do
     :workspace_lock_handle,
     :raw_input_lock?,
     :external_lock_count,
+    :agent_owner_pid,
+    :agent_owner_ref,
     :pending_interrupt,
+    :viewers,
+    :idle_timeout_ms,
+    :idle_timer,
     :interrupt_signal_delay_ms,
     :interrupt_timeout_ms,
     :interrupt_force_timeout_ms
@@ -97,6 +104,45 @@ defmodule IexCode.Tools.TerminalSession do
 
       _ ->
         nil
+    end
+  end
+
+  @doc "Registers a process as an interactive viewer, preventing idle reaping."
+  @spec attach_viewer(String.t(), pid()) :: :ok | {:error, :not_found | :invalid_viewer}
+  def attach_viewer(session_id, viewer_pid \\ self())
+
+  def attach_viewer(session_id, viewer_pid)
+      when is_binary(session_id) and is_pid(viewer_pid) do
+    try do
+      GenServer.call(via_tuple(session_id), {:attach_viewer, viewer_pid})
+    catch
+      :exit, _ -> {:error, :not_found}
+    end
+  end
+
+  def attach_viewer(_session_id, _viewer_pid), do: {:error, :invalid_viewer}
+
+  @doc "Unregisters an interactive viewer and begins the idle grace period when safe."
+  @spec detach_viewer(String.t(), pid()) :: :ok
+  def detach_viewer(session_id, viewer_pid \\ self())
+
+  def detach_viewer(session_id, viewer_pid)
+      when is_binary(session_id) and is_pid(viewer_pid) do
+    try do
+      GenServer.call(via_tuple(session_id), {:detach_viewer, viewer_pid})
+    catch
+      :exit, _ -> :ok
+    end
+  end
+
+  def detach_viewer(_session_id, _viewer_pid), do: :ok
+
+  @doc false
+  def update_idle_timeout(session_id, timeout_ms)
+      when is_binary(session_id) and is_integer(timeout_ms) and timeout_ms > 0 do
+    case whereis(session_id) do
+      pid when is_pid(pid) -> GenServer.cast(pid, {:update_idle_timeout, timeout_ms})
+      nil -> :ok
     end
   end
 
@@ -217,11 +263,11 @@ defmodule IexCode.Tools.TerminalSession do
   @doc """
   Sends an OS signal to the child shell process.
   """
-  @spec send_signal(session_id :: String.t(), signal :: atom() | binary()) ::
+  @spec send_signal(session_id :: String.t(), signal :: atom() | binary(), keyword()) ::
           :ok | {:error, term()}
-  def send_signal(session_id, signal) when is_binary(session_id) do
+  def send_signal(session_id, signal, opts \\ []) when is_binary(session_id) do
     try do
-      GenServer.call(via_tuple(session_id), {:send_signal, signal})
+      GenServer.call(via_tuple(session_id), {:send_signal, signal, opts})
     catch
       :exit, _ -> {:error, :not_found}
     end
@@ -258,11 +304,12 @@ defmodule IexCode.Tools.TerminalSession do
   """
   @spec set_occupant(
           session_id :: String.t(),
-          occupant :: :user | {:agent, String.t(), String.t() | nil}
-        ) :: :ok
-  def set_occupant(session_id, occupant) when is_binary(session_id) do
+          occupant :: :user | {:agent, String.t(), String.t() | nil},
+          keyword()
+        ) :: :ok | {:error, term()}
+  def set_occupant(session_id, occupant, opts \\ []) when is_binary(session_id) do
     try do
-      GenServer.call(via_tuple(session_id), {:set_occupant, occupant})
+      GenServer.call(via_tuple(session_id), {:set_occupant, occupant, opts})
     catch
       :exit, _ -> {:error, :not_found}
     end
@@ -278,12 +325,24 @@ defmodule IexCode.Tools.TerminalSession do
   end
 
   @doc false
-  def end_workspace_mutation(session_id) when is_binary(session_id) do
+  def end_workspace_mutation(session_id, opts \\ []) when is_binary(session_id) do
     try do
-      GenServer.call(via_tuple(session_id), :end_workspace_mutation)
+      GenServer.call(via_tuple(session_id), {:end_workspace_mutation, opts})
     catch
       :exit, _ -> :ok
     end
+  end
+
+  @doc false
+  def inject_test_output(session_id, data) when is_binary(session_id) and is_binary(data) do
+    if Application.get_env(:iex_code, :allow_terminal_test_injection, false) and
+         byte_size(data) <= @max_raw_input_bytes do
+      GenServer.call(via_tuple(session_id), {:inject_test_output, data})
+    else
+      {:error, :test_injection_disabled}
+    end
+  catch
+    :exit, _ -> {:error, :not_found}
   end
 
   @doc """
@@ -384,6 +443,15 @@ defmodule IexCode.Tools.TerminalSession do
         10_000
       )
 
+    idle_timeout_ms =
+      normalize_idle_timeout(
+        Keyword.get(
+          opts,
+          :idle_timeout_ms,
+          Application.get_env(:iex_code, :terminal_idle_timeout_ms, @default_idle_timeout_ms)
+        )
+      )
+
     state = %__MODULE__{
       session_id: session_id,
       project_root: project_root,
@@ -410,17 +478,22 @@ defmodule IexCode.Tools.TerminalSession do
       max_queued_commands: max_queued_commands,
       history_suppressed_command_id: nil,
       recent_command_inputs: [],
-      command_history: [],
+      command_history: TerminalSupervisor.cached_history(session_id),
       workspace_lock_handle: nil,
       raw_input_lock?: false,
       external_lock_count: 0,
+      agent_owner_pid: nil,
+      agent_owner_ref: nil,
       pending_interrupt: nil,
+      viewers: %{},
+      idle_timeout_ms: idle_timeout_ms,
+      idle_timer: nil,
       interrupt_signal_delay_ms: interrupt_signal_delay_ms,
       interrupt_timeout_ms: interrupt_timeout_ms,
       interrupt_force_timeout_ms: interrupt_force_timeout_ms
     }
 
-    {:ok, state, {:continue, :spawn_shell}}
+    {:ok, schedule_idle_reap(state), {:continue, :spawn_shell}}
   end
 
   @impl true
@@ -430,7 +503,7 @@ defmodule IexCode.Tools.TerminalSession do
         running_state = %{
           state
           | adapter: adapter,
-            adapter_generation: state.adapter_generation + 1,
+            adapter_generation: next_adapter_generation(),
             shell: adapter.shell || state.shell,
             status: :running
         }
@@ -463,6 +536,38 @@ defmodule IexCode.Tools.TerminalSession do
   # --- Calls ---
 
   @impl true
+  def handle_cast({:update_idle_timeout, timeout_ms}, state) do
+    {:noreply,
+     state
+     |> cancel_idle_reap()
+     |> Map.put(:idle_timeout_ms, timeout_ms)
+     |> schedule_idle_reap()}
+  end
+
+  @impl true
+  def handle_call({:attach_viewer, viewer_pid}, _from, state) do
+    cond do
+      not Process.alive?(viewer_pid) ->
+        {:reply, {:error, :invalid_viewer}, state}
+
+      Map.has_key?(state.viewers, viewer_pid) ->
+        {:reply, :ok, cancel_idle_reap(state)}
+
+      true ->
+        ref = Process.monitor(viewer_pid)
+
+        {:reply, :ok,
+         cancel_idle_reap(%{state | viewers: Map.put(state.viewers, viewer_pid, ref)})}
+    end
+  end
+
+  @impl true
+  def handle_call({:detach_viewer, viewer_pid}, _from, state) do
+    state = remove_viewer(state, viewer_pid)
+    {:reply, :ok, schedule_idle_reap(state)}
+  end
+
+  @impl true
   def handle_call(
         {:send_input, data, opts},
         _from,
@@ -473,6 +578,9 @@ defmodule IexCode.Tools.TerminalSession do
     cond do
       validate_raw_input(data) != :ok ->
         {:reply, validate_raw_input(data), state}
+
+      stale_adapter_generation?(state, opts) ->
+        {:reply, {:error, :stale_terminal_generation}, state}
 
       state.active_occupant != :user and not force? ->
         {:reply, {:error, :agent_occupied}, state}
@@ -492,7 +600,7 @@ defmodule IexCode.Tools.TerminalSession do
                 new_state =
                   if force?, do: maybe_release_workspace_lock(new_state), else: new_state
 
-                {:reply, :ok, new_state}
+                {:reply, :ok, cancel_idle_reap(new_state)}
 
               {:error, reason} ->
                 locked_state =
@@ -546,7 +654,7 @@ defmodule IexCode.Tools.TerminalSession do
               nil ->
                 case dispatch_command(locked_state, entry) do
                   {:ok, new_state} ->
-                    {:reply, {:ok, entry.id}, new_state}
+                    {:reply, {:ok, entry.id}, cancel_idle_reap(new_state)}
 
                   {:error, reason, new_state} ->
                     new_state =
@@ -561,7 +669,7 @@ defmodule IexCode.Tools.TerminalSession do
                   | command_queue: :queue.in(entry, locked_state.command_queue)
                 }
 
-                {:reply, {:ok, entry.id}, new_state}
+                {:reply, {:ok, entry.id}, cancel_idle_reap(new_state)}
             end
 
           {:error, reason, locked_state} ->
@@ -611,10 +719,13 @@ defmodule IexCode.Tools.TerminalSession do
   end
 
   @impl true
-  def handle_call({:send_signal, signal}, _from, state)
+  def handle_call({:send_signal, signal, opts}, _from, state)
       when signal in [:sigint, :interrupt, "SIGINT"] do
-    case state.adapter do
-      %PTYAdapter{port: port} ->
+    case {stale_adapter_generation?(state, opts), state.adapter} do
+      {true, _adapter} ->
+        {:reply, {:error, :stale_terminal_generation}, state}
+
+      {false, %PTYAdapter{port: port}} ->
         case ensure_workspace_lock(state) do
           {:ok, locked_state, _acquired?} ->
             {:reply, :ok, schedule_interrupt(locked_state, signal, port)}
@@ -623,25 +734,30 @@ defmodule IexCode.Tools.TerminalSession do
             {:reply, {:error, reason}, locked_state}
         end
 
-      _not_running ->
+      {false, _not_running} ->
         {:reply, {:error, :not_running}, state}
     end
   end
 
   @impl true
-  def handle_call({:send_signal, signal}, _from, state) do
-    if state.adapter do
-      case signal do
-        sig when sig in [:eof, :ctrl_d, "EOF"] ->
-          PTYAdapter.send_input(state.adapter, <<4>>)
+  def handle_call({:send_signal, signal, opts}, _from, state) do
+    cond do
+      stale_adapter_generation?(state, opts) ->
+        {:reply, {:error, :stale_terminal_generation}, state}
 
-        other ->
-          PTYAdapter.send_signal(state.adapter, other)
-      end
+      state.adapter ->
+        case signal do
+          sig when sig in [:eof, :ctrl_d, "EOF"] ->
+            PTYAdapter.send_input(state.adapter, <<4>>)
 
-      {:reply, :ok, state}
-    else
-      {:reply, {:error, :not_running}, state}
+          other ->
+            PTYAdapter.send_signal(state.adapter, other)
+        end
+
+        {:reply, :ok, state}
+
+      true ->
+        {:reply, {:error, :not_running}, state}
     end
   end
 
@@ -691,53 +807,78 @@ defmodule IexCode.Tools.TerminalSession do
     }
 
     broadcast_event(state.session_id, {:terminal_cleared, %{session_id: state.session_id}})
-    {:reply, :ok, new_state}
+    TerminalSupervisor.clear_cached_history(state.session_id)
+    {:reply, :ok, touch_activity(new_state)}
   end
 
   @impl true
-  def handle_call({:set_occupant, occupant}, _from, state) do
-    new_state = %{state | active_occupant: occupant}
+  def handle_call({:set_occupant, occupant, opts}, _from, state) do
+    if stale_adapter_generation?(state, opts) do
+      {:reply, {:error, :stale_terminal_generation}, state}
+    else
+      apply_occupant(occupant, state)
+    end
+  end
 
-    broadcast_event(state.session_id, {
-      :terminal_occupant,
-      %{session_id: state.session_id, occupant: occupant}
-    })
-
-    broadcast_status(new_state)
-    {:reply, :ok, new_state}
+  def handle_call({:inject_test_output, data}, _from, state) do
+    if Application.get_env(:iex_code, :allow_terminal_test_injection, false) do
+      case process_output_bytes(state, data) do
+        {:noreply, state} -> {:reply, :ok, state}
+      end
+    else
+      {:reply, {:error, :test_injection_disabled}, state}
+    end
   end
 
   @impl true
-  def handle_call({:begin_workspace_mutation, identity_opts}, _from, state)
+  def handle_call({:begin_workspace_mutation, identity_opts}, from, state)
       when state.external_lock_count > 0 or not is_nil(state.active_command) do
-    if Keyword.get(identity_opts, :terminal_mutation_kind) == :agent do
-      {:reply, {:error, :terminal_mutation_busy}, state}
-    else
-      do_begin_workspace_mutation(identity_opts, state)
+    cond do
+      stale_adapter_generation?(state, identity_opts) ->
+        {:reply, {:error, :stale_terminal_generation}, state}
+
+      Keyword.get(identity_opts, :terminal_mutation_kind) == :agent ->
+        {:reply, {:error, :terminal_mutation_busy}, state}
+
+      true ->
+        do_begin_workspace_mutation(identity_opts, from, state)
     end
   end
 
-  def handle_call({:begin_workspace_mutation, identity_opts}, _from, state) do
-    if Keyword.get(identity_opts, :terminal_mutation_kind) == :agent and
-         not :queue.is_empty(state.command_queue) do
-      {:reply, {:error, :terminal_mutation_busy}, state}
-    else
-      do_begin_workspace_mutation(identity_opts, state)
+  def handle_call({:begin_workspace_mutation, identity_opts}, from, state) do
+    cond do
+      stale_adapter_generation?(state, identity_opts) ->
+        {:reply, {:error, :stale_terminal_generation}, state}
+
+      Keyword.get(identity_opts, :terminal_mutation_kind) == :agent and
+          not :queue.is_empty(state.command_queue) ->
+        {:reply, {:error, :terminal_mutation_busy}, state}
+
+      true ->
+        do_begin_workspace_mutation(identity_opts, from, state)
     end
   end
 
   @impl true
-  def handle_call(:end_workspace_mutation, _from, state) do
-    state = %{state | external_lock_count: max(state.external_lock_count - 1, 0)}
-    {:reply, :ok, maybe_release_workspace_lock(state)}
+  def handle_call({:end_workspace_mutation, opts}, _from, state) do
+    if stale_adapter_generation?(state, opts) do
+      {:reply, {:error, :stale_terminal_generation}, state}
+    else
+      state =
+        state
+        |> Map.put(:external_lock_count, max(state.external_lock_count - 1, 0))
+        |> maybe_clear_agent_owner()
+
+      {:reply, :ok, maybe_release_workspace_lock(state)}
+    end
   end
 
   @impl true
   def handle_call({:restart, opts}, _from, state) do
-    state = cancel_pending_interrupt(state)
+    state = state |> cancel_pending_interrupt() |> maybe_clear_agent_owner()
     if state.adapter, do: PTYAdapter.close(state.adapter)
     state = release_workspace_lock(state)
-    next_adapter_generation = state.adapter_generation + 1
+    next_adapter_generation = next_adapter_generation()
 
     updated_shell = Keyword.get(opts, :shell, state.shell)
 
@@ -822,6 +963,7 @@ defmodule IexCode.Tools.TerminalSession do
       rows: state.rows,
       occupant: state.active_occupant,
       active_occupant: state.active_occupant,
+      adapter_generation: state.adapter_generation,
       buffer_bytes: state.buffer_bytes,
       os_pid: state.adapter && state.adapter.os_pid,
       mode: state.adapter && state.adapter.mode,
@@ -831,7 +973,8 @@ defmodule IexCode.Tools.TerminalSession do
       queued_command_count: :queue.len(state.command_queue),
       raw_input_lock?: state.raw_input_lock?,
       interrupt_pending?: not is_nil(state.pending_interrupt),
-      command_history: state.command_history
+      command_history: state.command_history,
+      viewer_count: map_size(state.viewers)
     }
 
     {:reply, {:ok, summary}, state}
@@ -840,8 +983,38 @@ defmodule IexCode.Tools.TerminalSession do
   # --- Port & System Info Messages ---
 
   @impl true
+  def handle_info({:DOWN, ref, :process, viewer_pid, _reason}, state) do
+    cond do
+      ref == state.agent_owner_ref and viewer_pid == state.agent_owner_pid ->
+        {:noreply, recover_agent_owner_death(state)}
+
+      Map.get(state.viewers, viewer_pid) == ref ->
+        {:noreply, state |> remove_viewer(viewer_pid, false) |> schedule_idle_reap()}
+
+      true ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info(
-        {port, {:data, raw_bytes}} = msg,
+        {:terminal_idle_timeout, timer_ref},
+        %{idle_timer: {timer_ref, _timer_handle}} = state
+      ) do
+    handle_idle_timeout(state)
+  end
+
+  # Compatibility for tests and already-materialized state using the earlier
+  # logical-reference-only representation.
+  def handle_info({:terminal_idle_timeout, timer_ref}, %{idle_timer: timer_ref} = state) do
+    handle_idle_timeout(state)
+  end
+
+  def handle_info({:terminal_idle_timeout, _stale_ref}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(
+        {port, {:data, _raw_bytes}} = msg,
         %{adapter: %PTYAdapter{port: port} = adapter} = state
       ) do
     case PTYAdapter.handle_port_message(adapter, msg) do
@@ -861,14 +1034,11 @@ defmodule IexCode.Tools.TerminalSession do
         {:noreply, %{state | adapter: new_adapter}}
 
       :unknown ->
-        process_output_bytes(state, raw_bytes)
+        # PTY protocol frames that are not recognized are never terminal
+        # output. Treating their raw bytes as output could synthesize command
+        # markers and prematurely complete a correlated command.
+        {:noreply, state}
     end
-  end
-
-  # Handle direct data message injection (for unit tests / mock streams)
-  @impl true
-  def handle_info({_port, {:data, raw_bytes}}, state) do
-    process_output_bytes(state, raw_bytes)
   end
 
   @impl true
@@ -962,6 +1132,7 @@ defmodule IexCode.Tools.TerminalSession do
   @impl true
   def terminate(reason, state) do
     Logger.debug("[TerminalSession] Terminating #{state.session_id}: #{inspect(reason)}")
+    TerminalSupervisor.cache_history(state.session_id, state.command_history)
     if state.adapter, do: PTYAdapter.close(state.adapter)
     _ = release_workspace_lock(state)
 
@@ -995,11 +1166,94 @@ defmodule IexCode.Tools.TerminalSession do
 
   # --- Internal Helpers ---
 
+  defp handle_idle_timeout(state) do
+    state = %{state | idle_timer: nil}
+
+    if idle_reap_safe?(state) do
+      {:stop, :normal, state}
+    else
+      {:noreply, schedule_idle_reap(state)}
+    end
+  end
+
+  defp apply_occupant(occupant, state) do
+    new_state = touch_activity(%{state | active_occupant: occupant})
+
+    broadcast_event(state.session_id, {
+      :terminal_occupant,
+      %{session_id: state.session_id, occupant: occupant}
+    })
+
+    broadcast_status(new_state)
+    {:reply, :ok, new_state}
+  end
+
   defp bounded_timeout(value, _default, minimum, maximum) when is_integer(value) do
     value |> max(minimum) |> min(maximum)
   end
 
   defp bounded_timeout(_value, default, _minimum, _maximum), do: default
+
+  defp normalize_idle_timeout(:infinity), do: :infinity
+  defp normalize_idle_timeout(value) when is_integer(value) and value > 0, do: value
+  defp normalize_idle_timeout(_invalid), do: @default_idle_timeout_ms
+
+  defp touch_activity(state), do: schedule_idle_reap(state)
+
+  defp schedule_idle_reap(%{idle_timeout_ms: :infinity} = state), do: cancel_idle_reap(state)
+
+  defp schedule_idle_reap(%{viewers: viewers} = state) when map_size(viewers) > 0,
+    do: cancel_idle_reap(state)
+
+  defp schedule_idle_reap(state) do
+    cond do
+      not idle_reap_safe?(state) ->
+        cancel_idle_reap(state)
+
+      state.idle_timer != nil ->
+        state
+
+      true ->
+        timer_ref = make_ref()
+
+        timer_handle =
+          Process.send_after(self(), {:terminal_idle_timeout, timer_ref}, state.idle_timeout_ms)
+
+        %{state | idle_timer: {timer_ref, timer_handle}}
+    end
+  end
+
+  defp cancel_idle_reap(%{idle_timer: nil} = state), do: state
+
+  defp cancel_idle_reap(%{idle_timer: {_timer_ref, timer_handle}} = state) do
+    # Keep the logical reference check in handle_info for already-delivered
+    # messages, while actively releasing timers that are still pending.
+    _ = Process.cancel_timer(timer_handle, async: false, info: false)
+    %{state | idle_timer: nil}
+  end
+
+  defp cancel_idle_reap(state) do
+    # Compatibility with state created before timer handles were retained.
+    %{state | idle_timer: nil}
+  end
+
+  defp idle_reap_safe?(state) do
+    map_size(state.viewers) == 0 and state.active_occupant == :user and
+      is_nil(state.active_command) and :queue.is_empty(state.command_queue) and
+      is_nil(state.workspace_lock_handle) and state.external_lock_count == 0 and
+      not state.raw_input_lock? and is_nil(state.pending_interrupt)
+  end
+
+  defp remove_viewer(state, viewer_pid, demonitor? \\ true) do
+    case Map.pop(state.viewers, viewer_pid) do
+      {nil, _viewers} ->
+        state
+
+      {ref, viewers} ->
+        if demonitor?, do: Process.demonitor(ref, [:flush])
+        %{state | viewers: viewers}
+    end
+  end
 
   defp schedule_interrupt(state, signal, port) do
     case state.pending_interrupt do
@@ -1106,7 +1360,7 @@ defmodule IexCode.Tools.TerminalSession do
     )
 
     old_adapter = state.adapter
-    next_generation = state.adapter_generation + 1
+    next_generation = next_adapter_generation()
     if old_adapter, do: PTYAdapter.close(old_adapter)
 
     state =
@@ -1229,6 +1483,7 @@ defmodule IexCode.Tools.TerminalSession do
       |> complete_active_on_shell_exit(code)
       |> complete_queued_on_shell_exit()
       |> cancel_pending_interrupt()
+      |> maybe_clear_agent_owner()
       |> Map.put(:raw_input_lock?, false)
       |> release_workspace_lock()
 
@@ -1271,7 +1526,12 @@ defmodule IexCode.Tools.TerminalSession do
 
     broadcast_event(state.session_id, {
       :terminal_exit,
-      %{session_id: state.session_id, exit_code: code, reason: reason}
+      %{
+        session_id: state.session_id,
+        adapter_generation: state.adapter_generation,
+        exit_code: code,
+        reason: reason
+      }
     })
 
     broadcast_status(stopped_state)
@@ -1466,6 +1726,8 @@ defmodule IexCode.Tools.TerminalSession do
         do: state.command_history,
         else: bounded_command_history([history_entry | state.command_history])
 
+    TerminalSupervisor.cache_history(state.session_id, command_history)
+
     %{
       state
       | active_command: nil,
@@ -1538,15 +1800,87 @@ defmodule IexCode.Tools.TerminalSession do
     %{state | command_queue: :queue.new()}
   end
 
-  defp do_begin_workspace_mutation(identity_opts, state) do
-    identity_opts = Keyword.delete(identity_opts, :terminal_mutation_kind)
+  defp do_begin_workspace_mutation(identity_opts, from, state) do
+    agent? = Keyword.get(identity_opts, :terminal_mutation_kind) == :agent
+    identity_opts = Keyword.drop(identity_opts, [:terminal_mutation_kind, :adapter_generation])
 
     case ensure_workspace_lock(state, identity_opts) do
       {:ok, locked_state, _acquired?} ->
-        {:reply, :ok, %{locked_state | external_lock_count: locked_state.external_lock_count + 1}}
+        locked_state =
+          locked_state
+          |> Map.put(:external_lock_count, locked_state.external_lock_count + 1)
+          |> maybe_monitor_agent_owner(agent?, elem(from, 0))
+
+        {:reply, :ok, locked_state}
 
       {:error, reason, locked_state} ->
         {:reply, {:error, reason}, locked_state}
+    end
+  end
+
+  defp maybe_monitor_agent_owner(state, false, _owner), do: state
+
+  defp maybe_monitor_agent_owner(%{agent_owner_ref: nil} = state, true, owner) do
+    %{state | agent_owner_pid: owner, agent_owner_ref: Process.monitor(owner)}
+  end
+
+  defp maybe_monitor_agent_owner(state, true, _owner), do: state
+
+  defp maybe_clear_agent_owner(%{external_lock_count: count} = state) when count > 0, do: state
+
+  defp maybe_clear_agent_owner(state) do
+    if state.agent_owner_ref, do: Process.demonitor(state.agent_owner_ref, [:flush])
+    %{state | agent_owner_pid: nil, agent_owner_ref: nil}
+  end
+
+  defp recover_agent_owner_death(state) do
+    Logger.warning("[TerminalSession] Agent command owner exited; recovering #{state.session_id}")
+    if state.adapter, do: PTYAdapter.close(state.adapter)
+
+    state =
+      state
+      |> remove_viewer(state.agent_owner_pid, false)
+      |> cancel_pending_interrupt()
+      |> release_workspace_lock()
+      |> Map.merge(%{
+        adapter: nil,
+        adapter_generation: next_adapter_generation(),
+        status: :restarting,
+        active_occupant: :user,
+        external_lock_count: 0,
+        agent_owner_pid: nil,
+        agent_owner_ref: nil,
+        active_command: nil,
+        command_queue: :queue.new(),
+        command_marker_buffer: "",
+        utf8_acc: UTF8Buffer.new(),
+        raw_input_lock?: false,
+        pending_interrupt: nil
+      })
+
+    broadcast_event(
+      state.session_id,
+      {:terminal_occupant, %{session_id: state.session_id, occupant: :user}}
+    )
+
+    broadcast_status(state)
+
+    case spawn_adapter(state) do
+      {:ok, adapter} ->
+        recovered = %{
+          state
+          | adapter: adapter,
+            shell: adapter.shell || state.shell,
+            status: :running
+        }
+
+        broadcast_status(recovered)
+        schedule_idle_reap(recovered)
+
+      {:error, reason} ->
+        failed = %{state | status: :error, exit_reason: {:agent_owner_recovery_failed, reason}}
+        broadcast_status(failed)
+        schedule_idle_reap(failed)
     end
   end
 
@@ -1622,13 +1956,16 @@ defmodule IexCode.Tools.TerminalSession do
   end
 
   defp maybe_release_workspace_lock(state) do
-    if state.raw_input_lock? or state.external_lock_count > 0 or
-         not is_nil(state.pending_interrupt) or not is_nil(state.active_command) or
-         not :queue.is_empty(state.command_queue) do
-      state
-    else
-      release_workspace_lock(state)
-    end
+    state =
+      if state.raw_input_lock? or state.external_lock_count > 0 or
+           not is_nil(state.pending_interrupt) or not is_nil(state.active_command) or
+           not :queue.is_empty(state.command_queue) do
+        state
+      else
+        release_workspace_lock(state)
+      end
+
+    schedule_idle_reap(state)
   end
 
   defp release_workspace_lock(%{workspace_lock_handle: nil} = state), do: state
@@ -1649,6 +1986,7 @@ defmodule IexCode.Tools.TerminalSession do
 
     payload = %{
       session_id: state.session_id,
+      adapter_generation: state.adapter_generation,
       data: text,
       timestamp: DateTime.utc_now()
     }
@@ -1737,12 +2075,27 @@ defmodule IexCode.Tools.TerminalSession do
   defp broadcast_status(state) do
     payload = %{
       session_id: state.session_id,
+      adapter_generation: state.adapter_generation,
       status: state.status,
       shell: (state.adapter && state.adapter.shell) || state.shell,
       occupant: state.active_occupant
     }
 
     broadcast_event(state.session_id, {:terminal_status, payload})
+  end
+
+  # A globally monotonic value scopes asynchronous lifecycle work even when a
+  # public restart replaces the whole TerminalSession process. A per-process
+  # counter would reset and could let a timed-out command signal the new PTY.
+  defp next_adapter_generation do
+    System.unique_integer([:positive, :monotonic])
+  end
+
+  defp stale_adapter_generation?(state, opts) do
+    case Keyword.get(opts, :adapter_generation) do
+      nil -> false
+      generation -> generation != state.adapter_generation
+    end
   end
 
   defp drain_pending_port_output(%{adapter: %PTYAdapter{port: port}} = state, timeout_ms)

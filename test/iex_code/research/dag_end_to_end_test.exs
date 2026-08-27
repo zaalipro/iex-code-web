@@ -82,8 +82,8 @@ defmodule IexCode.Research.DagEndToEndTest do
                lease_generation: claimed.lease_generation,
                project_root: context.workspace,
                internal_step_executor: &execute_research_step/2,
-               heartbeat_ms: 10,
-               lease_ms: 1_000,
+               heartbeat_ms: 50,
+               lease_ms: 5_000,
                poll_ms: 5,
                max_concurrency: 4
              )
@@ -156,8 +156,8 @@ defmodule IexCode.Research.DagEndToEndTest do
                lease_generation: claimed.lease_generation,
                project_root: context.workspace,
                internal_step_executor: executor,
-               heartbeat_ms: 10,
-               lease_ms: 1_000,
+               heartbeat_ms: 50,
+               lease_ms: 5_000,
                poll_ms: 5,
                max_concurrency: 4
              )

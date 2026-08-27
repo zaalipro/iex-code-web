@@ -639,6 +639,40 @@ defmodule IexCode.SettingsTest do
       assert %{anthropic_base_url: _, swarm_agent_count: _, research_max_sources: _} = errors
     end
 
+    test "persists and validates the memory-safe resource policy" do
+      assert {:ok, updated} =
+               Settings.update_settings(%{
+                 resource_pressure_percent: 72,
+                 resource_critical_percent: 88,
+                 terminal_idle_timeout_minutes: 25,
+                 session_idle_timeout_minutes: 40,
+                 output_artifact_limit_mib: 128,
+                 output_spool_quota_mib: 1_536,
+                 output_retention_days: 10
+               })
+
+      assert Settings.resource_policy(updated) == %{
+               pressure_percent: 72,
+               critical_percent: 88,
+               terminal_idle_timeout_ms: 25 * 60_000,
+               session_idle_timeout_ms: 40 * 60_000,
+               output_artifact_limit_bytes: 128 * 1_048_576,
+               output_spool_quota_bytes: 1_536 * 1_048_576,
+               output_retention_seconds: 10 * 86_400
+             }
+
+      invalid =
+        Settings.change_settings(updated, %{
+          resource_pressure_percent: 90,
+          resource_critical_percent: 85,
+          output_artifact_limit_mib: 512,
+          output_spool_quota_mib: 256
+        })
+
+      refute invalid.valid?
+      assert %{resource_critical_percent: _, output_spool_quota_mib: _} = errors_on(invalid)
+    end
+
     test "normalizes default tools without dynamic atom conversion" do
       settings = Settings.get_settings()
 

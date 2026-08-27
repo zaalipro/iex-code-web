@@ -3,6 +3,7 @@ defmodule IexCode.Engine.SwarmCoordinatorTest do
   @moduletag timeout: 120_000
   alias IexCode.{Projects, Sessions}
   alias IexCode.Engine.{SwarmCoordinator, AgentSupervisor}
+  alias IexCode.Tools.MultiPatch.Snapshot
 
   setup context do
     root_path = Map.get(context, :tmp_dir, File.cwd!())
@@ -116,6 +117,24 @@ defmodule IexCode.Engine.SwarmCoordinatorTest do
       end
       """)
 
+      transaction_id = "completed-swarm-#{System.unique_integer([:positive])}"
+
+      assert :ok =
+               Snapshot.save_snapshot(
+                 transaction_id,
+                 [
+                   %{
+                     path: "lib/calc.ex",
+                     full_path: file,
+                     file_existed?: true,
+                     original_content: File.read!(file),
+                     new_content: File.read!(file)
+                   }
+                 ],
+                 project_root: tmp_dir,
+                 session_id: session.id
+               )
+
       {:ok, final_msg} =
         SwarmCoordinator.run(
           session.id,
@@ -126,6 +145,7 @@ defmodule IexCode.Engine.SwarmCoordinatorTest do
 
       assert final_msg.metadata.status == :completed
       assert String.contains?(final_msg.content, "Swarm Execution Complete")
+      assert {:error, :not_found} = Snapshot.get_snapshot(transaction_id)
 
       # Confirm AutoFix healed the syntax error
       assert File.read!(file) =~ ~s(do: "world")

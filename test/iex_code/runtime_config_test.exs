@@ -6,6 +6,9 @@ defmodule IexCode.RuntimeConfigTest do
     DATABASE_PATH SECRET_KEY_BASE PHX_HOST PHX_SCHEME PHX_PORT PORT POOL_SIZE
     PHX_SERVER IEX_CODE_BIND IEX_CODE_ALLOW_REMOTE IEX_CODE_ADMIN_TOKEN_SHA256
     IEX_CODE_WORKSPACE_ROOT IEX_CODE_DEFAULT_WORKSPACE DNS_CLUSTER_QUERY
+    IEX_CODE_HTTP_POOL_SIZE IEX_CODE_HTTP_POOL_IDLE_MS IEX_CODE_HTTP_CONNECTION_IDLE_MS
+    IEX_CODE_RESOURCE_PROFILE IEX_CODE_MEMORY_LIMIT_MIB IEX_CODE_TERMINAL_IDLE_TIMEOUT_MS
+    SQLITE_CACHE_KIB SQLITE_TEMP_STORE
   )
 
   setup do
@@ -53,6 +56,70 @@ defmodule IexCode.RuntimeConfigTest do
     assert repo[:pool_size] == 7
     assert app[:workspace_root] == canonical(root)
     assert app[:default_workspace_path] == canonical(default_workspace)
+  end
+
+  test "configures bounded shared HTTP pools from validated environment values" do
+    System.put_env("IEX_CODE_HTTP_POOL_SIZE", "16")
+    System.put_env("IEX_CODE_HTTP_POOL_IDLE_MS", "120000")
+    System.put_env("IEX_CODE_HTTP_CONNECTION_IDLE_MS", "45000")
+
+    config = read_runtime!()
+    pool = config |> Keyword.fetch!(:iex_code) |> Keyword.fetch!(:http_pool)
+
+    assert pool == [
+             size: 16,
+             pool_max_idle_time: 120_000,
+             conn_max_idle_time: 45_000
+           ]
+  end
+
+  test "rejects out-of-range shared HTTP pool values" do
+    System.put_env("IEX_CODE_HTTP_POOL_SIZE", "65")
+
+    assert_raise RuntimeError, ~r/IEX_CODE_HTTP_POOL_SIZE must be an integer/, &read_runtime!/0
+
+    System.put_env("IEX_CODE_HTTP_POOL_SIZE", "8")
+    System.put_env("IEX_CODE_HTTP_POOL_IDLE_MS", "999")
+
+    assert_raise RuntimeError, ~r/IEX_CODE_HTTP_POOL_IDLE_MS must be an integer/, &read_runtime!/0
+
+    System.put_env("IEX_CODE_HTTP_POOL_IDLE_MS", "60000")
+    System.put_env("IEX_CODE_HTTP_CONNECTION_IDLE_MS", "forever")
+
+    assert_raise RuntimeError,
+                 ~r/IEX_CODE_HTTP_CONNECTION_IDLE_MS must be an integer/,
+                 &read_runtime!/0
+  end
+
+  test "derives a safe governor tier from a custom memory envelope" do
+    System.put_env("IEX_CODE_RESOURCE_PROFILE", "custom")
+
+    for {memory_mib, expected} <- [{1_024, :compact}, {1_536, :balanced}, {2_560, :throughput}] do
+      System.put_env("IEX_CODE_MEMORY_LIMIT_MIB", Integer.to_string(memory_mib))
+
+      governor =
+        read_runtime!()
+        |> Keyword.fetch!(:iex_code)
+        |> Keyword.fetch!(:resource_governor)
+
+      assert governor[:profile] == expected
+    end
+  end
+
+  test "explicit resource presets do not change with the envelope hint" do
+    System.put_env("IEX_CODE_MEMORY_LIMIT_MIB", "1024")
+
+    for {profile, expected} <-
+          [{"compact", :compact}, {"balanced", :balanced}, {"throughput", :throughput}] do
+      System.put_env("IEX_CODE_RESOURCE_PROFILE", profile)
+
+      governor =
+        read_runtime!()
+        |> Keyword.fetch!(:iex_code)
+        |> Keyword.fetch!(:resource_governor)
+
+      assert governor[:profile] == expected
+    end
   end
 
   test "uses the exact HTTPS domain as the LiveView origin" do

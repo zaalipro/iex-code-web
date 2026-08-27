@@ -33,15 +33,33 @@ OP_READY = 0x03
 OP_INTERRUPT_BOUNDARY = 0x04
 
 
+def redirect_stdout_to_devnull():
+    """Redirect fd 1 using only async-signal-safe raw descriptor operations."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except OSError:
+        pass
+
+
 def send_packet(opcode: int, payload: bytes = b""):
     body = bytes([opcode]) + payload
     length = len(body)
-    header = struct.pack(">I", length)
-    try:
-        sys.stdout.buffer.write(header + body)
-        sys.stdout.buffer.flush()
-    except (BrokenPipeError, OSError):
-        sys.exit(0)
+    frame = struct.pack(">I", length) + body
+    offset = 0
+
+    while offset < len(frame):
+        try:
+            written = os.write(sys.stdout.fileno(), frame[offset:])
+            if written <= 0:
+                raise BrokenPipeError()
+            offset += written
+        except InterruptedError:
+            continue
+        except (BrokenPipeError, OSError):
+            redirect_stdout_to_devnull()
+            raise SystemExit(0)
 
 
 def set_winsize(fd: int, cols: int, rows: int):
@@ -105,9 +123,39 @@ def kill_child_group(child_pid: int):
 
     try:
         os.killpg(child_pid, signal.SIGKILL)
-        os.waitpid(child_pid, os.WNOHANG)
-    except (ChildProcessError, ProcessLookupError, OSError):
+    except (ProcessLookupError, OSError):
         pass
+
+    # A single WNOHANG wait after SIGKILL can observe the child before the
+    # kernel has delivered the signal. Exiting the shim at that point reparents
+    # a later zombie and makes rapid terminal churn leak defunct children.
+    # SIGKILL is terminal, so synchronously reap the exact child before the shim
+    # is allowed to exit.
+    while True:
+        try:
+            os.waitpid(child_pid, 0)
+            break
+        except InterruptedError:
+            continue
+        except (ChildProcessError, OSError):
+            break
+
+
+def kill_foreground_group(master_fd: int, child_pid: int):
+    """Terminate an external foreground job before tearing down its shell."""
+    try:
+        foreground_pgid = os.tcgetpgrp(master_fd)
+    except OSError:
+        return
+
+    if foreground_pgid <= 0 or foreground_pgid == child_pid:
+        return
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(foreground_pgid, sig)
+        except (ProcessLookupError, OSError):
+            break
 
 
 def parse_args():
@@ -140,6 +188,11 @@ def parse_args():
 def main():
     cols, rows, cwd, shell, extra_args = parse_args()
 
+    blocked_signals = {signal.SIGTERM, signal.SIGINT}
+    original_mask = None
+    if hasattr(signal, "pthread_sigmask"):
+        original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
+
     shell_cmd = []
     if shell:
         shell_cmd = shlex.split(shell)
@@ -162,6 +215,10 @@ def main():
     child_pid = os.fork()
     if child_pid == 0:
         # Child process
+        if original_mask is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, original_mask)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         os.close(master_fd)
         os.setsid()
 
@@ -209,23 +266,32 @@ def main():
     os.set_blocking(sys.stdin.fileno(), False)
 
     def signal_handler(sig, _frame):
-        kill_child_group(child_pid)
-        sys.exit(0)
+        # Signals can arrive while send_packet is blocked in raw os.write.
+        # Redirecting fd 1 interrupts that write; SystemExit then unwinds through
+        # main's finally. Never perform buffered IO, waitpid, or os._exit here.
+        redirect_stdout_to_devnull()
+        raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
-
-    send_packet(OP_READY, struct.pack(">i", child_pid))
-
-    sel = selectors.DefaultSelector()
-    sel.register(sys.stdin.fileno(), selectors.EVENT_READ, data="stdin")
-    sel.register(master_fd, selectors.EVENT_READ, data="pty")
-
-    stdin_buf = bytearray()
-    pending_interrupt_boundaries = []
-    running = True
+    sel = None
 
     try:
+        # Cleanup is now established before pending termination signals can be
+        # delivered or READY/output writes can fail.
+        if original_mask is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, original_mask)
+
+        send_packet(OP_READY, struct.pack(">i", child_pid))
+
+        sel = selectors.DefaultSelector()
+        sel.register(sys.stdin.fileno(), selectors.EVENT_READ, data="stdin")
+        sel.register(master_fd, selectors.EVENT_READ, data="pty")
+
+        stdin_buf = bytearray()
+        pending_interrupt_boundaries = []
+        running = True
+
         while running:
             events = sel.select(timeout=0.01)
 
@@ -322,13 +388,27 @@ def main():
                                     # Ctrl+Z, and continuation target the job
                                     # the user actually sees.
                                     foreground_pgid = os.tcgetpgrp(master_fd)
-                                    os.killpg(foreground_pgid, sig)
+                                    # A shell builtin executes in the original
+                                    # interactive shell group. Killing that
+                                    # group would destroy the terminal itself
+                                    # and race the next queued command. SIGINT
+                                    # is the strongest safe boundary in that
+                                    # case; external producers still receive
+                                    # the requested SIGKILL as a whole group.
+                                    effective_sig = (
+                                        signal.SIGINT
+                                        if sig == signal.SIGKILL
+                                        and foreground_pgid == child_pid
+                                        else sig
+                                    )
+                                    os.killpg(foreground_pgid, effective_sig)
                                 except (ProcessLookupError, OSError):
                                     try:
                                         os.killpg(child_pid, sig)
                                     except (ProcessLookupError, OSError):
                                         pass
                         elif opcode == OP_CLOSE:
+                            kill_foreground_group(master_fd, child_pid)
                             kill_child_group(child_pid)
                             running = False
                             break
@@ -356,15 +436,18 @@ def main():
                         break
 
     finally:
+        kill_foreground_group(master_fd, child_pid)
         kill_child_group(child_pid)
         try:
             os.close(master_fd)
         except OSError:
             pass
-        try:
-            sel.close()
-        except OSError:
-            pass
+        if sel is not None:
+            try:
+                sel.close()
+            except OSError:
+                pass
+        redirect_stdout_to_devnull()
 
 
 if __name__ == "__main__":

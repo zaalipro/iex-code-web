@@ -39,11 +39,28 @@ defmodule IexCode.Tools.ASTSearch.Extractor do
   """
   @spec extract(String.t(), String.t()) :: {:ok, [symbol_entry()]} | {:error, term()}
   def extract(source_code, file_path \\ "") when is_binary(source_code) do
+    case extract_matching(source_code, file_path, fn _entry -> true end, limit: :infinity) do
+      {:ok, %{symbols: symbols}} -> {:ok, symbols}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc false
+  @spec extract_matching(String.t(), String.t(), (symbol_entry() -> boolean()), keyword()) ::
+          {:ok, %{symbols: [symbol_entry()], truncated?: boolean()}} | {:error, term()}
+  def extract_matching(source_code, file_path, accept?, opts \\ [])
+      when is_binary(source_code) and is_function(accept?, 1) and is_list(opts) do
+    limit = normalize_limit(Keyword.get(opts, :limit, :infinity))
+    entry_transform = Keyword.get(opts, :entry_transform, fn entry -> entry end)
+
     case Code.string_to_quoted(source_code, columns: true, token_metadata: true) do
       {:ok, ast} ->
         lines = String.split(source_code, ~r/\r?\n/)
-        symbols = traverse_ast(ast, file_path, lines)
-        {:ok, Enum.reverse(symbols)}
+
+        {symbols, truncated?} =
+          traverse_ast(ast, file_path, lines, accept?, entry_transform, limit)
+
+        {:ok, %{symbols: Enum.reverse(symbols), truncated?: truncated?}}
 
       {:error, reason} ->
         {:error, reason}
@@ -51,38 +68,76 @@ defmodule IexCode.Tools.ASTSearch.Extractor do
   end
 
   # Traverses AST maintaining module context stack
-  defp traverse_ast(ast, file_path, lines) do
-    {_ast, {symbols, _mod_stack}} =
+  defp traverse_ast(ast, file_path, lines, accept?, entry_transform, limit) do
+    {_ast, {symbols, _mod_stack, _count, truncated?}} =
       Macro.traverse(
         ast,
-        {[], []},
-        fn node, {acc, mod_stack} ->
+        {[], [], 0, false},
+        fn node, {acc, mod_stack, count, truncated?} ->
           case parse_node_pre(node, file_path, mod_stack, lines) do
             {:module, entry, new_mod_name} ->
-              {node, {[entry | acc], [new_mod_name | mod_stack]}}
+              {acc, count, truncated?} =
+                retain_entry(
+                  entry,
+                  acc,
+                  count,
+                  truncated?,
+                  accept?,
+                  entry_transform,
+                  limit
+                )
+
+              {node, {acc, [new_mod_name | mod_stack], count, truncated?}}
 
             {:symbol, entry} ->
-              {node, {[entry | acc], mod_stack}}
+              {acc, count, truncated?} =
+                retain_entry(
+                  entry,
+                  acc,
+                  count,
+                  truncated?,
+                  accept?,
+                  entry_transform,
+                  limit
+                )
+
+              {node, {acc, mod_stack, count, truncated?}}
 
             :skip ->
-              {node, {acc, mod_stack}}
+              {node, {acc, mod_stack, count, truncated?}}
           end
         end,
-        fn node, {acc, mod_stack} ->
+        fn node, {acc, mod_stack, count, truncated?} ->
           # On post-walk of module-like definitions, pop module stack
           case node do
             {def_kind, _, _} when def_kind in [:defmodule, :defprotocol, :defimpl] ->
               new_mod_stack = if mod_stack == [], do: [], else: tl(mod_stack)
-              {node, {acc, new_mod_stack}}
+              {node, {acc, new_mod_stack, count, truncated?}}
 
             _ ->
-              {node, {acc, mod_stack}}
+              {node, {acc, mod_stack, count, truncated?}}
           end
         end
       )
 
-    symbols
+    {symbols, truncated?}
   end
+
+  defp retain_entry(entry, acc, count, truncated?, accept?, entry_transform, limit) do
+    if accept?.(entry) do
+      if limit == :infinity or count < limit do
+        {[entry_transform.(entry) | acc], count + 1, truncated?}
+      else
+        {acc, count, true}
+      end
+    else
+      {acc, count, truncated?}
+    end
+  end
+
+  defp normalize_limit(:infinity), do: :infinity
+  defp normalize_limit(limit) when is_integer(limit) and limit >= 0, do: limit
+  defp normalize_limit(_invalid), do: 0
 
   defp current_module_name([]), do: nil
   defp current_module_name([mod | _]), do: mod

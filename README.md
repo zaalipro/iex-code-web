@@ -56,7 +56,7 @@ The install creates:
 | --- | --- |
 | `/opt/iex-code-web/source` | Installed source, `compose.yaml`, and deployment files |
 | `/etc/iex-code-web/app.env` | Root-owned runtime configuration and secrets |
-| `/var/lib/iex-code-web` | SQLite data and research reports |
+| `/var/lib/iex-code-web` | SQLite data, research reports, and bounded output artifacts |
 | `/var/backups/iex-code-web` | Manager-created backup archives |
 | `/srv/iex-code-workspaces` | Repositories exposed to the application |
 | `/usr/local/bin/iex-code-web` | Operator command |
@@ -97,7 +97,7 @@ before launching autonomous work.
 | Tests | Asynchronous ExUnit runs, parsed failures, and reversible AutoFix proposals |
 | Terminal | Supervised native PTY, ANSI output, resize, signals, history, and quick actions |
 | Planning | Kanban, schedules, subtasks, priorities, and a monthly calendar |
-| Settings | Models, credentials, budgets, dispatch, fleets, research, editor, and usage |
+| Settings | Models, credentials, budgets, dispatch, fleets, research, resources, runtime health, editor, and usage |
 
 The composer and local Mix CLI share a strict command vocabulary:
 
@@ -116,6 +116,43 @@ Work is journaled in SQLite and claimed by leased OTP workers. A connected
 browser is not required after submission, but one continuously running
 application instance is required to claim queued work.
 
+## Resource-aware execution
+
+Expensive model calls, research fetches, DAG steps, AST scans, native commands,
+and build/test jobs pass through a memory-aware admission governor. When the
+container approaches its configured pressure threshold, the governor queues new
+heavy work instead of cancelling work already in progress or silently reducing
+agent reasoning, swarm topology, or research depth. Interactive requests receive
+reserved headroom; background requests are scheduled round-robin by run.
+
+The VPS installer provides fixed Docker safety limits without preallocating the
+memory ceiling:
+
+| Profile | Hard memory limit | Reservation | PID cap | `nofile` / BEAM ports |
+| --- | ---: | ---: | ---: | ---: |
+| `compact` | 1,024 MiB | 512 MiB | 1,024 | 65,536 |
+| `balanced` (default) | 2,048 MiB | 512 MiB | 1,024 | 65,536 |
+| `throughput` | 2,560 MiB | 512 MiB | 1,024 | 65,536 |
+
+Select a profile at install time with `--resource-profile`, or update an
+existing deployment. The GCP deployment should use Throughput:
+
+```bash
+sudo iex-code-web update --resource-profile throughput
+```
+
+Pressure and critical thresholds, session and terminal idle timeouts, output
+caps, spool quota, and retention are configurable under **Settings → Resources**.
+The adjacent **Runtime** page shows current/peak memory, OOM counters, process
+usage, and admission queue state.
+
+Verbose command and test output is streamed to protected files under
+`/var/lib/iex-code-web/outputs` rather than retained in BEAM or SQLite as one
+large value. The default policy is 256 MiB per producer, a 2 GiB spool quota,
+64 KiB bounded reads, and seven-day retention. Active-run artifacts are exempt
+from expiry. Manager backup and restore keep these files consistent with their
+SQLite metadata.
+
 ## Operate the service
 
 ```bash
@@ -126,9 +163,9 @@ sudo iex-code-web backup
 ```
 
 Updates create a backup before changing the deployment. Backup SQLite together
-with report artifacts; copying only a live `.db` file is not a valid backup when
-WAL mode is active. For restore, token rotation, firewall, reverse-proxy, and
-uninstall instructions, see:
+with research and output artifacts; copying only a live `.db` file is not a
+valid backup when WAL mode is active. For restore, token rotation, firewall,
+reverse-proxy, and uninstall instructions, see:
 
 - [VPS installation](docs/INSTALL_VPS.md)
 - [Operations and recovery](docs/OPERATIONS.md)

@@ -1,6 +1,7 @@
 defmodule IexCode.Research.HTTP do
   @moduledoc false
 
+  alias IexCode.Execution.ResourceGovernor
   alias IexCode.Research.URLGuard
 
   @max_body_bytes 2_000_000
@@ -10,6 +11,14 @@ defmodule IexCode.Research.HTTP do
   @max_error_depth 8
 
   def request(method, url, opts) do
+    permit_opts = ResourceGovernor.admission_opts(opts, priority: :background)
+
+    ResourceGovernor.with_permit(:research_fetch, permit_opts, fn ->
+      do_request(method, url, opts)
+    end)
+  end
+
+  defp do_request(method, url, opts) do
     secret = Keyword.get(opts, :api_key)
 
     result =
@@ -38,7 +47,11 @@ defmodule IexCode.Research.HTTP do
             :end_date,
             :search_after_date,
             :search_before_date,
-            :recency
+            :recency,
+            :resource_governor,
+            :resource_priority,
+            :resource_run_key,
+            :resource_timeout
           ])
           |> Keyword.put(:method, method)
           |> Keyword.put(:url, url)
@@ -101,7 +114,7 @@ defmodule IexCode.Research.HTTP do
       opts
       |> Keyword.put(:url, URI.to_string(pinned_uri))
       |> Keyword.put(:connect_options, connect_options)
-      |> Req.request()
+      |> IexCode.HTTP.pinned_request()
     end
   end
 

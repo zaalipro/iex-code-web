@@ -195,13 +195,17 @@ defmodule IexCode.Adversarial.GoalLifecycleAndSteeringAdversarialTest do
 
       # Create a snapshot change via MultiPatch
       {:ok, _} =
-        MultiPatch.apply_patches(test_root, [
-          %{
-            path: "murder_target.ex",
-            target: "def value, do: 1",
-            replacement: "def value, do: 999"
-          }
-        ])
+        MultiPatch.apply_patches(
+          test_root,
+          [
+            %{
+              path: "murder_target.ex",
+              target: "def value, do: 1",
+              replacement: "def value, do: 999"
+            }
+          ],
+          session_id: session.id
+        )
 
       assert File.read!(sample_file) =~ "999"
 
@@ -212,7 +216,17 @@ defmodule IexCode.Adversarial.GoalLifecycleAndSteeringAdversarialTest do
       assert {:ok, _server} = SessionServer.ensure_started(session.id)
 
       # Launch a swarm task and obtain PID
-      {:ok, task_pid} = SwarmCoordinator.run_swarm(session.id, "Task to be murdered", test_root)
+      barrier_ref = make_ref()
+
+      {:ok, task_pid} =
+        SwarmCoordinator.run_swarm(session.id, "Task to be murdered", test_root,
+          control_barrier: {self(), barrier_ref}
+        )
+
+      # The existing control barrier is reached only after init persistence has
+      # returned, so murdering the coordinator here tests an external owner
+      # crash without killing SQLite in the middle of that client's query.
+      assert_receive {:swarm_control_barrier, ^task_pid, ^barrier_ref}, 5_000
 
       # Kill the worker externally and confirm its DOWN before asking the
       # session coordinator to settle cancellation. This preserves the process

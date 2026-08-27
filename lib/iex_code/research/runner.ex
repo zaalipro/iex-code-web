@@ -7,6 +7,7 @@ defmodule IexCode.Research.Runner do
   attempt and can safely coexist with dispatcher-created graph nodes and prior retries.
   """
 
+  alias IexCode.Execution.ResourceGovernor
   alias IexCode.Research.{Fetcher, Report, Results, Search}
   alias IexCode.Runs
   alias IexCode.Runs.{Run, RunStep}
@@ -19,6 +20,11 @@ defmodule IexCode.Research.Runner do
   def execute(run, progress_fun, opts \\ [])
 
   def execute(%Run{} = run, progress_fun, opts) when is_function(progress_fun, 2) do
+    opts =
+      opts
+      |> Keyword.put_new(:resource_priority, :background)
+      |> Keyword.put_new(:resource_run_key, run.id)
+
     search_module = Keyword.get(opts, :search_module, Search)
     llm_module = Keyword.get(opts, :llm_module, IexCode.LLM)
     config = research_config(run, opts)
@@ -144,6 +150,7 @@ defmodule IexCode.Research.Runner do
       |> maybe_put(:request, Keyword.get(opts, :request))
       |> maybe_put(:timeout, Keyword.get(opts, :timeout))
       |> maybe_put(:max_concurrency, config.max_concurrency)
+      |> Keyword.merge(resource_opts(opts))
 
     outcomes_result =
       Enum.reduce_while(queries, {:ok, []}, fn query, {:ok, outcomes} ->
@@ -385,6 +392,7 @@ defmodule IexCode.Research.Runner do
       |> Keyword.put(:timeout, Keyword.get(opts, :source_timeout, 10_000))
       |> Keyword.put(:max_body_bytes, Keyword.get(opts, :source_max_body_bytes, 750_000))
       |> Keyword.put(:max_text_chars, Keyword.get(opts, :source_max_text_chars, 20_000))
+      |> Keyword.merge(resource_opts(opts))
 
     case fetcher.fetch(source.url, fetch_opts) do
       {:ok, fetched} ->
@@ -417,6 +425,7 @@ defmodule IexCode.Research.Runner do
       |> Keyword.take([:cancelled?, :max_tokens, :receive_timeout])
       |> Keyword.put_new(:temperature, 0.1)
       |> Keyword.put(:allowed_tools, [])
+      |> Keyword.merge(resource_opts(opts))
 
     with {:ok, response} <-
            llm_module.chat(messages, system_prompt, session, fn _ -> :ok end, llm_opts),
@@ -463,6 +472,17 @@ defmodule IexCode.Research.Runner do
     else
       :ok
     end
+  end
+
+  defp resource_opts(opts) do
+    admission = ResourceGovernor.admission_opts(opts, priority: :background)
+
+    [
+      resource_governor: admission[:server],
+      resource_priority: admission[:priority],
+      resource_run_key: admission[:run_key],
+      resource_timeout: admission[:timeout]
+    ]
   end
 
   defp create_step(run, attrs, opts) do

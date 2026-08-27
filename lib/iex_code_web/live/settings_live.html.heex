@@ -977,6 +977,157 @@
           </section>
 
           <section
+            id="resources"
+            aria-labelledby="resources-title"
+            class="settings-section-card scroll-mt-24"
+          >
+            <.settings_section_header
+              id="resources-title"
+              eyebrow="Resources"
+              title="Memory and lifecycle policy"
+              description="Tune safe admission and cleanup thresholds without changing agent reasoning, swarm topology, or the quality of running work. Under pressure, new heavy work queues; active work is never cancelled by this policy."
+            />
+
+            <div id="settings-resource-defaults" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <.input
+                field={@settings_form[:resource_pressure_percent]}
+                id="settings-resource-pressure"
+                type="number"
+                min="50"
+                max="90"
+                label="Queue new heavy work at (%)"
+                class="settings-control"
+                error_class="settings-control-error"
+              />
+              <.input
+                field={@settings_form[:resource_critical_percent]}
+                id="settings-resource-critical"
+                type="number"
+                min="60"
+                max="95"
+                label="Critical memory threshold (%)"
+                class="settings-control"
+                error_class="settings-control-error"
+              />
+              <.input
+                field={@settings_form[:terminal_idle_timeout_minutes]}
+                id="settings-terminal-idle-timeout"
+                type="number"
+                min="1"
+                max="1440"
+                label="Terminal idle timeout (minutes)"
+                class="settings-control"
+                error_class="settings-control-error"
+              />
+            </div>
+
+            <div class="mt-4 grid gap-3 sm:grid-cols-3">
+              <div class="settings-policy-note">
+                <span>70%</span><p>Default pressure threshold</p><em>Applies live</em>
+              </div>
+              <div class="settings-policy-note">
+                <span>85%</span><p>Default critical threshold</p><em>Applies live</em>
+              </div>
+              <div class="settings-policy-note">
+                <span>30 min</span><p>Dormant terminal cleanup</p><em>Applies live</em>
+              </div>
+            </div>
+
+            <details id="settings-resource-advanced" class="settings-advanced-disclosure mt-5">
+              <summary>
+                <span><strong>Advanced resource controls</strong><small>Guardrails prevent unsafe or contradictory values.</small></span>
+                <.icon name="hero-chevron-down" class="h-4 w-4" />
+              </summary>
+              <div class="grid gap-4 border-t border-[#29313a] p-4 sm:grid-cols-2 lg:grid-cols-4">
+                <.input
+                  field={@settings_form[:session_idle_timeout_minutes]}
+                  id="settings-session-idle-timeout"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  label="Session idle timeout (minutes)"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:output_artifact_limit_mib]}
+                  id="settings-output-artifact-limit"
+                  type="number"
+                  min="16"
+                  max="1024"
+                  label="Per-producer cap (MiB)"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:output_spool_quota_mib]}
+                  id="settings-output-spool-quota"
+                  type="number"
+                  min="256"
+                  max="10240"
+                  label="Output spool quota (MiB)"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:output_retention_days]}
+                  id="settings-output-retention"
+                  type="number"
+                  min="1"
+                  max="90"
+                  label="Output retention (days)"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+              </div>
+              <p
+                id="settings-resource-advanced-note"
+                class="border-t border-[#29313a] px-4 py-3 text-xs leading-5 text-gray-500"
+              >
+                Defaults: 30-minute session passivation, 256 MiB per producer, 2 GiB total spool, and 7-day retention. Output and session changes apply to new work; admission thresholds and terminal cleanup apply live.
+              </p>
+            </details>
+
+            <% deployment = runtime_group(@runtime_status, :deployment) %>
+            <div
+              id="settings-deployment-limits"
+              class="mt-5 border border-[#29313a] bg-[#0c1015] p-4"
+            >
+              <div class="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 class="text-sm font-semibold text-white">Container envelope</h3><p class="mt-1 text-xs text-gray-500">
+                    Read-only · change with the VPS installer or manager, then restart.
+                  </p>
+                </div>
+                <span class="settings-restart-badge">Restart required</span>
+              </div>
+              <dl class="grid gap-px overflow-hidden border border-[#29313a] bg-[#29313a] sm:grid-cols-2 lg:grid-cols-5">
+                <div>
+                  <dt>Profile</dt><dd id="settings-resource-profile">
+                    {deployment_value(deployment, :profile)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Memory limit</dt><dd>
+                    {deployment_value(deployment, :memory_limit_mib, " MiB")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Reservation</dt><dd>
+                    {deployment_value(deployment, :memory_reservation_mib, " MiB")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>PID limit</dt><dd>{deployment_value(deployment, :pids_limit)}</dd>
+                </div>
+                <div>
+                  <dt>Open files / +Q</dt><dd>{deployment_value(deployment, :nofile_limit)}</dd>
+                </div>
+              </dl>
+            </div>
+          </section>
+
+          <section
             id="runtime"
             aria-labelledby="runtime-title"
             class="settings-section-card scroll-mt-24"
@@ -991,6 +1142,7 @@
             <% beam = runtime_group(@runtime_status, :beam) %>
             <% dispatcher = runtime_group(@runtime_status, :dispatcher) %>
             <% activity = runtime_group(@runtime_status, :activity) %>
+            <% governor = runtime_group(@runtime_status, :governor) %>
             <div
               id="settings-runtime-panel"
               data-state={@runtime_status.state}
@@ -1051,6 +1203,26 @@
                 </div>
                 <div id="settings-runtime-beam-memory" class="settings-runtime-metric">
                   <dt>BEAM memory</dt><dd>{runtime_beam_memory_value(beam)}</dd>
+                </div>
+                <div id="settings-runtime-memory-peak" class="settings-runtime-metric">
+                  <dt>Container peak</dt><dd>{runtime_peak_memory_value(container)}</dd>
+                </div>
+                <div id="settings-runtime-pids" class="settings-runtime-metric">
+                  <dt>Container PIDs</dt><dd>{runtime_pids_value(container)}</dd>
+                </div>
+                <div id="settings-runtime-oom" class="settings-runtime-metric">
+                  <dt>OOM history</dt><dd>{runtime_oom_value(container)}</dd>
+                </div>
+                <div id="settings-runtime-pressure" class="settings-runtime-metric">
+                  <dt>Admission pressure</dt><dd>{runtime_governor_state(governor)}</dd>
+                </div>
+                <div
+                  id="settings-runtime-governor"
+                  class="settings-runtime-metric settings-runtime-metric-full"
+                >
+                  <dt><.icon name="hero-scale" class="h-4 w-4" /> Governor tickets</dt><dd>
+                    {runtime_governor_value(governor)}
+                  </dd>
                 </div>
                 <div id="settings-runtime-ports" class="settings-runtime-metric">
                   <dt>BEAM ports</dt><dd>{runtime_ports_value(beam)}</dd>

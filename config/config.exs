@@ -9,12 +9,31 @@ import Config
 
 config :iex_code,
   ecto_repos: [IexCode.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  terminal_idle_timeout_ms: 30 * 60 * 1_000
 
 config :iex_code, :kanban_scheduler,
   poll_interval: 30_000,
   stale_after: 300_000,
   claim_limit: 20
+
+config :iex_code, :resource_governor,
+  profile: :balanced,
+  pressure_percent: 70,
+  critical_percent: 85
+
+config :iex_code, :output_artifacts,
+  enabled: true,
+  artifact_limit_bytes: 256 * 1_048_576,
+  preview_bytes: 64 * 1_024,
+  global_quota_bytes: 2 * 1_073_741_824,
+  min_free_bytes: 5 * 1_073_741_824,
+  retention_seconds: 7 * 24 * 60 * 60
+
+config :iex_code, :http_pool,
+  size: 8,
+  pool_max_idle_time: 60_000,
+  conn_max_idle_time: 30_000
 
 # Configure the endpoint
 config :iex_code, IexCodeWeb.Endpoint,

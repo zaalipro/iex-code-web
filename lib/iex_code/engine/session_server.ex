@@ -16,6 +16,7 @@ defmodule IexCode.Engine.SessionServer do
 
   @cancel_session_attempts 5
   @session_call_attempts 5
+  @default_idle_timeout_ms 30 * 60 * 1_000
 
   # Client API
 
@@ -121,6 +122,23 @@ defmodule IexCode.Engine.SessionServer do
     call_session_server(session_id, :get_state)
   end
 
+  @doc false
+  def update_idle_timeout(timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+    IexCode.Engine.SessionSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.each(fn
+      {_id, pid, _type, _modules} when is_pid(pid) ->
+        GenServer.cast(pid, {:update_idle_timeout, timeout_ms})
+
+      _child ->
+        :ok
+    end)
+
+    :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
   defp call_session_server(session_id, request, timeout \\ 5_000, opts \\ []) do
     attempts = Keyword.get(opts, :attempts, @session_call_attempts)
     retry_after_call_exit? = Keyword.get(opts, :retry_after_call_exit?, true)
@@ -143,6 +161,8 @@ defmodule IexCode.Engine.SessionServer do
        ) do
     case ensure_started(session_id) do
       {:ok, pid} ->
+        send(pid, :session_activity)
+
         call_exact_session_server(
           session_id,
           pid,
@@ -304,7 +324,11 @@ defmodule IexCode.Engine.SessionServer do
       current_task: nil,
       task_ref: nil,
       run_mode: nil,
-      active_goal: nil
+      active_goal: nil,
+      idle_timeout_ms:
+        Application.get_env(:iex_code, :session_idle_timeout_ms, @default_idle_timeout_ms),
+      idle_timer: nil,
+      idle_timer_handle: nil
     }
 
     state =
@@ -353,7 +377,11 @@ defmodule IexCode.Engine.SessionServer do
           state
       end
 
-    {:ok, state}
+    goal_session_status =
+      if status == :running and not is_pid(swarm_owner), do: :interrupted, else: state.status
+
+    state = %{state | active_goal: restore_active_goal(session_id, goal_session_status)}
+    {:ok, schedule_idle_passivation(state)}
   end
 
   # A stale UI/process must not recreate an in-memory SessionServer after its
@@ -532,6 +560,10 @@ defmodule IexCode.Engine.SessionServer do
   end
 
   @impl true
+  def handle_cast({:update_idle_timeout, timeout_ms}, state) do
+    {:noreply, state |> Map.put(:idle_timeout_ms, timeout_ms) |> schedule_idle_passivation()}
+  end
+
   def handle_cast({:send_prompt, raw_prompt}, state),
     do: handle_send_prompt(raw_prompt, [], state)
 
@@ -716,6 +748,25 @@ defmodule IexCode.Engine.SessionServer do
   end
 
   @impl true
+  def handle_info({:session_idle_timeout, timer_ref}, %{idle_timer: timer_ref} = state) do
+    state =
+      state
+      |> Map.put(:idle_timer, nil)
+      |> Map.put(:idle_timer_handle, nil)
+      |> refresh_registered_owner()
+
+    if idle_passivation_safe?(state) do
+      {:stop, :normal, state}
+    else
+      {:noreply, schedule_idle_passivation(state), :hibernate}
+    end
+  end
+
+  def handle_info({:session_idle_timeout, _stale_ref}, state), do: {:noreply, state}
+
+  def handle_info(:session_activity, state), do: {:noreply, schedule_idle_passivation(state)}
+
+  @impl true
   def handle_info(
         {:DOWN, ref, :process, pid, :noconnection},
         %{task_ref: ref, current_task: pid} = state
@@ -769,6 +820,85 @@ defmodule IexCode.Engine.SessionServer do
     {:noreply, state}
   end
 
+  defp schedule_idle_passivation(state) do
+    if state.idle_timer_handle do
+      Process.cancel_timer(state.idle_timer_handle, async: true, info: false)
+    end
+
+    timer_ref = make_ref()
+
+    timer_handle =
+      Process.send_after(self(), {:session_idle_timeout, timer_ref}, state.idle_timeout_ms)
+
+    %{state | idle_timer: timer_ref, idle_timer_handle: timer_handle}
+  end
+
+  defp idle_passivation_safe?(state) do
+    inactive? =
+      state.status in [:idle, :stopped, :completed, :failed] and is_nil(state.current_task) and
+        is_nil(state.task_ref) and is_nil(state.run_mode)
+
+    resumable_paused_owner? =
+      state.status == :paused and is_pid(task_pid(state.current_task)) and
+        (state.run_mode == :swarm or match?({:durable_swarm, _run_id}, state.run_mode))
+
+    inactive? or resumable_paused_owner?
+  end
+
+  defp restore_active_goal(session_id, session_status) do
+    case Sessions.latest_goal_checkpoint(session_id) do
+      %{id: id, content: content, metadata: metadata, inserted_at: inserted_at}
+      when is_map(metadata) ->
+        stored_status = Map.get(metadata, "goal_status")
+        {fallback_title, fallback_prompt} = parse_goal_message(content)
+
+        if stored_status in ~w(idle running paused stopped completed failed) do
+          %{
+            id: Map.get(metadata, "goal_id", id),
+            session_id: session_id,
+            title: Map.get(metadata, "goal_title", fallback_title),
+            prompt: fallback_prompt,
+            status: restored_goal_status(session_status, stored_status),
+            created_at: inserted_at
+          }
+        end
+
+      _not_a_draft_checkpoint ->
+        nil
+    end
+  rescue
+    _error -> nil
+  catch
+    _kind, _reason -> nil
+  end
+
+  defp parse_goal_message(content) when is_binary(content) do
+    content = String.replace_prefix(content, "🎯 **Goal**: ", "")
+
+    case String.split(content, "\n\n", parts: 2) do
+      [title, prompt] -> {String.slice(title, 0, 240), prompt}
+      [prompt] -> {String.slice(prompt, 0, 240), prompt}
+    end
+  end
+
+  defp parse_goal_message(_content), do: {"Autonomous Goal", "Analyze workspace"}
+
+  defp restored_goal_status(:running, _stored), do: :running
+  defp restored_goal_status(:paused, _stored), do: :paused
+  defp restored_goal_status(:failed, _stored), do: :failed
+  defp restored_goal_status(:interrupted, _stored), do: :failed
+  defp restored_goal_status(:stopped, _stored), do: :stopped
+  defp restored_goal_status(:completed, _stored), do: :completed
+  # Interactive swarm completion returns the durable session to `idle`, while
+  # its creation checkpoint remains `running`. With no registered owner, that
+  # pair represents a normally completed goal rather than a lost draft.
+  defp restored_goal_status(:idle, "running"), do: :completed
+  defp restored_goal_status(:idle, "completed"), do: :completed
+  defp restored_goal_status(:idle, "failed"), do: :failed
+  defp restored_goal_status(:idle, "stopped"), do: :stopped
+  defp restored_goal_status(_session_status, "failed"), do: :failed
+  defp restored_goal_status(_session_status, _stored), do: :idle
+
   defp run_single_agent(session_id, session, user_prompt, project_root, allowed_tools) do
     subscribe_steering(session_id)
     broadcast(session_id, {:session_status_changed, "running"})
@@ -785,7 +915,7 @@ defmodule IexCode.Engine.SessionServer do
           # Fetch previous messages
           prev_messages =
             try do
-              Sessions.list_messages(session_id)
+              Sessions.list_messages(session_id, limit: 20, content_limit: 20_000)
               |> Enum.map(fn m -> %{role: m.role, content: m.content} end)
             rescue
               _ -> []
@@ -1057,7 +1187,7 @@ defmodule IexCode.Engine.SessionServer do
 
       case SwarmCoordinator.run_swarm(session_id, prompt, project_root, run_opts) do
         {:ok, task_pid} ->
-          persist_goal_message(session_id, title, prompt)
+          persist_goal_message(session_id, goal_record)
           broadcast(session_id, {:goal_created, goal_record})
 
           update_db_session_status(session_id, "running")
@@ -1107,7 +1237,7 @@ defmodule IexCode.Engine.SessionServer do
           end
       end
     else
-      persist_goal_message(session_id, title, prompt)
+      persist_goal_message(session_id, goal_record)
       broadcast(session_id, {:goal_created, goal_record})
 
       update_db_session_status(session_id, "idle")
@@ -1125,13 +1255,21 @@ defmodule IexCode.Engine.SessionServer do
     end
   end
 
-  defp persist_goal_message(session_id, title, prompt) do
+  defp persist_goal_message(session_id, goal_record) do
+    title = goal_record.title
+    prompt = goal_record.prompt
+
     user_msg =
       case Sessions.create_message(%{
              session_id: session_id,
              role: "user",
              agent_name: "User (Goal)",
-             content: "🎯 **Goal**: #{title}\n\n#{prompt}"
+             content: "🎯 **Goal**: #{title}\n\n#{prompt}",
+             metadata: %{
+               "goal_id" => goal_record.id,
+               "goal_title" => title,
+               "goal_status" => to_string(goal_record.status)
+             }
            }) do
         {:ok, msg} ->
           msg
@@ -1250,8 +1388,9 @@ defmodule IexCode.Engine.SessionServer do
         :commit ->
           commit_opts =
             opts
-            |> Keyword.delete(:project_id)
+            |> Keyword.drop([:project_id, :run_id, :session_id])
             |> maybe_put_project_id(mutation_project_id)
+            |> Keyword.put(:session_id, session_id)
 
           SwarmCoordinator.perform_commit(
             project_root,

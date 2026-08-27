@@ -2,6 +2,7 @@ defmodule IexCode.Runs.DagRunner do
   @moduledoc false
 
   alias IexCode.Engine.FleetControlToken
+  alias IexCode.Execution.ResourceGovernor
   alias IexCode.Projects
   alias IexCode.Research.{DagFinalizer, ProviderEffect}
   alias IexCode.Runs
@@ -153,6 +154,9 @@ defmodule IexCode.Runs.DagRunner do
             end
         end
 
+      {:dag_step_admitted, pid} when is_pid(pid) ->
+        state |> start_admitted_timer(pid) |> loop()
+
       {ref, result} when is_reference(ref) ->
         case Map.get(state.active, ref) do
           nil ->
@@ -234,7 +238,8 @@ defmodule IexCode.Runs.DagRunner do
            state.config.run,
            state.config.owner,
            state.config.generation,
-           lease_ms: state.config.lease_ms
+           lease_ms: state.config.lease_ms,
+           load_dependencies?: false
          ) do
       {:ok, claim} ->
         state |> start_claim(claim) |> fill_capacity()
@@ -253,15 +258,37 @@ defmodule IexCode.Runs.DagRunner do
   defp start_claim(state, claim) do
     token = FleetControlToken.new()
     runner = self()
-    context = execution_context(state.config, claim, token)
 
     task =
       Task.Supervisor.async_nolink(state.supervisor, fn ->
-        execute_step(state.config, claim, context)
-      end)
+        ResourceGovernor.put_process_context(:background, state.config.run.id)
 
-    timeout_ms = state.config.internal_timeout_ms || step_timeout(claim.step)
-    timer = Process.send_after(runner, {:step_timeout, task.ref}, timeout_ms)
+        permit_opts = [
+          server: state.config.resource_governor,
+          priority: :background,
+          run_key: state.config.run.id,
+          timeout: :infinity
+        ]
+
+        ResourceGovernor.with_permit(:dag_step, permit_opts, fn ->
+          send(runner, {:dag_step_admitted, self()})
+
+          case FleetControlToken.checkpoint(token) do
+            :ok ->
+              case hydrate_claim_dependencies(state.config, claim) do
+                {:ok, hydrated_claim} ->
+                  context = execution_context(state.config, hydrated_claim, token)
+                  execute_step(state.config, hydrated_claim, context)
+
+                {:error, reason} ->
+                  {:error, {:dependency_load_failed, reason}}
+              end
+
+            :cancelled ->
+              {:error, :cancelled}
+          end
+        end)
+      end)
 
     entry = %{
       pid: task.pid,
@@ -269,10 +296,40 @@ defmodule IexCode.Runs.DagRunner do
       step: claim.step,
       generation: claim.attempt.lease_generation,
       token: token,
-      timer: timer
+      timer: nil,
+      timeout_ms: state.config.internal_timeout_ms || step_timeout(claim.step)
     }
 
     put_in(state.active[task.ref], entry)
+  end
+
+  defp start_admitted_timer(state, pid) do
+    case Enum.find(state.active, fn {_ref, entry} -> entry.pid == pid end) do
+      {ref, %{timer: nil} = entry} ->
+        timer = Process.send_after(self(), {:step_timeout, ref}, entry.timeout_ms)
+        put_in(state.active[ref], %{entry | timer: timer})
+
+      _missing_or_already_started ->
+        state
+    end
+  end
+
+  defp hydrate_claim_dependencies(_config, %{dependency_results_loaded?: true} = claim),
+    do: {:ok, claim}
+
+  defp hydrate_claim_dependencies(config, claim) do
+    case DagScheduler.load_dependency_results(
+           claim.attempt,
+           config.owner,
+           config.generation,
+           claim.attempt.lease_generation
+         ) do
+      {:ok, results} ->
+        {:ok, %{claim | dependency_results: results, dependency_results_loaded?: true}}
+
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   defp execution_context(config, claim, token) do
@@ -325,7 +382,15 @@ defmodule IexCode.Runs.DagRunner do
       checkpoint: claim.attempt.checkpoint,
       cancelled?: cancelled?,
       checkpoint_callback: checkpoint_callback,
-      provider_effect: provider_effect
+      provider_effect: provider_effect,
+      # Provider effects execute in supervised/fan-out tasks that do not inherit
+      # the DAG task's process dictionary. Carry admission identity explicitly
+      # so nested LLM/search/fetch work is recognized as a continuation of this
+      # already-admitted DAG step instead of waiting behind itself under pressure.
+      resource_governor: config.resource_governor,
+      resource_priority: :background,
+      resource_run_key: config.run.id,
+      resource_timeout: :infinity
     }
   end
 
@@ -523,6 +588,7 @@ defmodule IexCode.Runs.DagRunner do
              internal_timeout(Keyword.get(opts, :internal_step_timeout_ms), step_executor),
            internal_observer:
              internal_observer(Keyword.get(opts, :internal_observer), step_executor),
+           resource_governor: Keyword.get(opts, :resource_governor, ResourceGovernor),
            max_concurrency:
              bounded(
                Keyword.get(opts, :max_concurrency),

@@ -115,7 +115,7 @@ defmodule IexCode.Tools.Git.HunkOps do
 
   defp do_revert_file(project_root, file_path, full_path) do
     # Check git status first
-    case Git.status(project_root) do
+    case Git.status(project_root, paths: [file_path], path_limit: 4, output_limit_bytes: 32_768) do
       {:ok, status} ->
         is_untracked = file_path in status.untracked
 
@@ -218,8 +218,13 @@ defmodule IexCode.Tools.Git.HunkOps do
       _ ->
         staged = Keyword.get(opts, :staged, false)
 
-        case Git.diff(project_root, paths: [file_path], staged: staged) do
-          {:ok, output} -> {:ok, output}
+        case Git.diff_bounded(project_root,
+               paths: [file_path],
+               staged: staged,
+               max_bytes: 8 * 1_024 * 1_024
+             ) do
+          {:ok, %{content: output, truncated?: false}} -> {:ok, output}
+          {:ok, %{truncated?: true}} -> {:error, :diff_too_large}
           {:error, reason} -> {:error, {:diff_failed, reason}}
         end
     end
@@ -253,8 +258,9 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp fetch_updated_diff(project_root, file_path) do
-    case Git.diff(project_root, paths: [file_path]) do
-      {:ok, remaining_diff} -> {:ok, remaining_diff}
+    case Git.diff_bounded(project_root, paths: [file_path], max_bytes: 8 * 1_024 * 1_024) do
+      {:ok, %{content: remaining_diff, truncated?: false}} -> {:ok, remaining_diff}
+      {:ok, %{truncated?: true}} -> {:error, :diff_too_large}
       {:error, reason} -> {:error, reason}
     end
   end

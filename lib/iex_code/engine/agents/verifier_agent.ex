@@ -5,13 +5,12 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
   """
   use GenServer, restart: :transient
   require Logger
-  alias IexCode.Engine.{AgentRegistry, OperationManager}
+  alias IexCode.Engine.{AgentCancellation, AgentRegistry, AgentStateRetention, OperationManager}
   alias IexCode.{Sessions, Tools}
   alias IexCode.Tools.TestRunner
 
   @outer_timeout 90_000
   @inner_timeout 60_000
-  @history_limit 20
   @lock_retry_interval 25
   @call_completion_margin 250
 
@@ -24,6 +23,7 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
       :session,
       :project_root,
       :control_token,
+      :cancel_token,
       status: :idle,
       current_op_id: nil,
       last_result: nil,
@@ -103,11 +103,12 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
       session: session,
       project_root: project_root,
       control_token: opts[:control_token],
+      cancel_token: if(is_binary(opts[:run_id]), do: nil, else: AgentCancellation.new()),
       status: :idle
     }
 
     unless is_binary(opts[:run_id]) do
-      set_cancelled?(session_id, false)
+      AgentCancellation.erase_legacy(__MODULE__, session_id)
       subscribe_steering(session_id)
     end
 
@@ -232,25 +233,27 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
 
     case verify_res do
       {:ok, summary_map} ->
+        {last_result, history} = AgentStateRetention.remember(state.history, summary_map)
+
         new_state = %State{
           state
           | status: :idle,
-            last_result: summary_map,
-            history: Enum.take([summary_map | state.history], @history_limit)
+            last_result: last_result,
+            history: history
         }
 
-        {:reply, {:ok, summary_map}, new_state}
+        {:reply, {:ok, summary_map}, new_state, :hibernate}
 
       {:error, {:verification_failed, _}} = err ->
-        new_state = %State{state | status: :idle, last_result: err}
-        {:reply, err, new_state}
+        new_state = %State{state | status: :idle, last_result: AgentStateRetention.retain(err)}
+        {:reply, err, new_state, :hibernate}
 
       # Normalize raw timeout/crash reasons into a structured verification failure
       {:error, reason} ->
         err = verification_error(reason, "Verification error: #{format_reason(reason)}")
 
-        new_state = %State{state | status: :idle, last_result: err}
-        {:reply, err, new_state}
+        new_state = %State{state | status: :idle, last_result: AgentStateRetention.retain(err)}
+        {:reply, err, new_state, :hibernate}
     end
   end
 
@@ -267,7 +270,7 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
         Tools.run_tests(opts)
       end)
 
-    {:reply, res, state}
+    {:reply, res, state, :hibernate}
   end
 
   @impl true
@@ -304,12 +307,12 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
         )
       end)
 
-    {:reply, res, state}
+    {:reply, res, state, :hibernate}
   end
 
   @impl true
   def handle_call(:get_state, _from, %State{} = state) do
-    {:reply, state, state}
+    {:reply, state, state, :hibernate}
   end
 
   defp trusted_project_id(_opts, state) do
@@ -369,12 +372,8 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
     Phoenix.PubSub.subscribe(IexCode.PubSub, "session:#{session_id}:steer")
   end
 
-  defp set_cancelled?(session_id, value) do
-    :persistent_term.put({__MODULE__, :cancelled?, session_id}, value)
-  end
-
-  defp cancelled_fun(%State{control_token: nil, session_id: session_id}) do
-    fn -> :persistent_term.get({__MODULE__, :cancelled?, session_id}, false) end
+  defp cancelled_fun(%State{control_token: nil, cancel_token: token}) do
+    fn -> AgentCancellation.cancelled?(token) end
   end
 
   defp cancelled_fun(%State{control_token: token}) do
@@ -619,40 +618,40 @@ defmodule IexCode.Engine.Agents.VerifierAgent do
   end
 
   @impl true
-  def handle_info({:cancel, session_id, _opts}, state) do
-    set_cancelled?(session_id, true)
-    {:noreply, state}
+  def handle_info({:cancel, session_id, _opts}, %{session_id: session_id} = state) do
+    AgentCancellation.cancel(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
-  def handle_info({:pause, session_id}, state) do
-    set_cancelled?(session_id, true)
-    {:noreply, state}
+  def handle_info({:pause, session_id}, %{session_id: session_id} = state) do
+    AgentCancellation.cancel(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
-  def handle_info({:resume, session_id}, state) do
-    set_cancelled?(session_id, false)
-    {:noreply, state}
+  def handle_info({:resume, session_id}, %{session_id: session_id} = state) do
+    AgentCancellation.resume(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   def handle_info({ref, _result}, state) when is_reference(ref) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({:operation_task_done, _op_id, _result}, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info(_msg, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   defp format_exception_message(%SyntaxError{description: {prefix, suffix}}) do

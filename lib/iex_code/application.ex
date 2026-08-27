@@ -15,10 +15,14 @@ defmodule IexCode.Application do
         IexCode.DatabasePermissions,
         IexCode.Settings.Bootstrap,
         {DNSCluster, query: Application.get_env(:iex_code, :dns_cluster_query) || :ignore},
+        IexCode.HTTP,
         {Phoenix.PubSub, name: IexCode.PubSub},
         {Registry, keys: :unique, name: IexCode.SessionRegistry},
         {Registry, keys: :unique, name: IexCode.Engine.AgentRegistry},
         {Task.Supervisor, name: IexCode.TaskSupervisor},
+        IexCode.Engine.OperationMonitor,
+        IexCode.Execution.ResourcePermitSupervisor,
+        IexCode.Execution.ResourceGovernor,
         IexCode.WorkspaceLocks,
         IexCode.Engine.SessionSupervisor,
         IexCode.Engine.AgentSupervisor,
@@ -32,7 +36,18 @@ defmodule IexCode.Application do
       |> Enum.reject(&is_nil/1)
 
     opts = [strategy: :one_for_one, name: IexCode.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    case Supervisor.start_link(children, opts) do
+      {:ok, _pid} = started ->
+        if Application.get_env(:iex_code, :apply_persisted_resource_policy_on_start, true) do
+          IexCode.Settings.get_settings() |> IexCode.Settings.apply_resource_policy()
+        end
+
+        started
+
+      error ->
+        error
+    end
   end
 
   defp run_dispatcher_child do

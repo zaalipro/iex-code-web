@@ -51,11 +51,31 @@ defmodule IexCode.DataCase do
 
     if pid do
       on_exit(fn ->
-        # 1. Synchronously terminate and await all child processes before stopping sandbox owner
-        drain_all_processes()
+        try do
+          # Synchronous operation callers are deliberately released before a
+          # contended terminal persistence write. Give those already-complete
+          # operation tasks a short grace period to unregister cleanly before
+          # forcibly draining supervisors; killing a task while SQL Sandbox is
+          # serving its final write disconnects the shared connection and
+          # creates noisy, slow cross-test retries in the central finalizer.
+          _ = IexCode.Engine.OperationMonitor.await_idle(250)
 
-        # 2. Stop Sandbox Owner
-        Ecto.Adapters.SQL.Sandbox.stop_owner(pid)
+          # 1. Synchronously terminate and await all child processes before stopping sandbox owner
+          drain_all_processes()
+
+          # OperationMonitor is application-scoped rather than owned by an
+          # individual test. Wait for it to consume every task DOWN and finish
+          # its durable crash writes while this test's shared sandbox owner is
+          # still alive. Otherwise the next test can receive stale PubSub /
+          # telemetry and the SQLite connection can be torn away mid-query.
+          case IexCode.Engine.OperationMonitor.await_idle() do
+            :ok -> :ok
+            {:error, :timeout} -> raise "OperationMonitor did not quiesce before sandbox teardown"
+          end
+        after
+          # 2. Stop Sandbox Owner only after application-scoped finalizers are idle.
+          Ecto.Adapters.SQL.Sandbox.stop_owner(pid)
+        end
       end)
     end
 

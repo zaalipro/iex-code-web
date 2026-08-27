@@ -8,6 +8,9 @@ defmodule IexCode.Tools.TerminalSupervisor do
 
   alias IexCode.Tools.TerminalSession
 
+  @history_cache :iex_code_terminal_command_history
+  @history_cache_max_sessions 128
+
   @doc """
   Starts the DynamicSupervisor.
   """
@@ -17,7 +20,52 @@ defmodule IexCode.Tools.TerminalSupervisor do
 
   @impl true
   def init(_init_arg) do
+    ensure_history_cache()
     DynamicSupervisor.init(strategy: :one_for_one)
+  end
+
+  @doc false
+  def cached_history(session_id) when is_binary(session_id) do
+    case :ets.whereis(@history_cache) do
+      :undefined ->
+        []
+
+      _table ->
+        case :ets.lookup(@history_cache, session_id) do
+          [{^session_id, history, _updated_at}] when is_list(history) -> history
+          _other -> []
+        end
+    end
+  end
+
+  @doc false
+  def cache_history(session_id, history) when is_binary(session_id) and is_list(history) do
+    case :ets.whereis(@history_cache) do
+      :undefined ->
+        :ok
+
+      _table ->
+        true =
+          :ets.insert(
+            @history_cache,
+            {session_id, history, System.monotonic_time(:millisecond)}
+          )
+
+        prune_history_cache()
+        :ok
+    end
+  end
+
+  @doc false
+  def clear_cached_history(session_id) when is_binary(session_id) do
+    case :ets.whereis(@history_cache) do
+      :undefined ->
+        :ok
+
+      _table ->
+        true = :ets.delete(@history_cache, session_id)
+        :ok
+    end
   end
 
   @doc """
@@ -94,6 +142,15 @@ defmodule IexCode.Tools.TerminalSupervisor do
     DynamicSupervisor.count_children(__MODULE__)
   end
 
+  @doc "Applies a new idle timeout to running terminals; future terminals read application config."
+  def update_idle_timeout(timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+    Enum.each(list_sessions(), fn {session_id, _pid} ->
+      TerminalSession.update_idle_timeout(session_id, timeout_ms)
+    end)
+
+    :ok
+  end
+
   @doc """
   Returns active child tuples from DynamicSupervisor.
   """
@@ -109,6 +166,35 @@ defmodule IexCode.Tools.TerminalSupervisor do
         _ -> :ok
       catch
         _, _ -> :ok
+      end
+    end
+  end
+
+  defp ensure_history_cache do
+    case :ets.whereis(@history_cache) do
+      :undefined ->
+        :ets.new(@history_cache, [
+          :named_table,
+          :public,
+          :set,
+          read_concurrency: true,
+          write_concurrency: true
+        ])
+
+      _table ->
+        @history_cache
+    end
+  end
+
+  defp prune_history_cache do
+    if :ets.info(@history_cache, :size) > @history_cache_max_sessions do
+      case :ets.tab2list(@history_cache) do
+        [] ->
+          :ok
+
+        rows ->
+          {oldest_id, _history, _updated_at} = Enum.min_by(rows, &elem(&1, 2))
+          :ets.delete(@history_cache, oldest_id)
       end
     end
   end

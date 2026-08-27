@@ -60,6 +60,13 @@ defmodule IexCode.Settings.AppSettings do
     field :research_max_cost_cents, :integer
     field :research_max_tokens, :integer
     field :research_time_budget_minutes, :integer
+    field :resource_pressure_percent, :integer, default: 70
+    field :resource_critical_percent, :integer, default: 85
+    field :terminal_idle_timeout_minutes, :integer, default: 30
+    field :session_idle_timeout_minutes, :integer, default: 30
+    field :output_artifact_limit_mib, :integer, default: 256
+    field :output_spool_quota_mib, :integer, default: 2048
+    field :output_retention_days, :integer, default: 7
 
     timestamps(type: :utc_datetime)
   end
@@ -89,7 +96,14 @@ defmodule IexCode.Settings.AppSettings do
     :research_level,
     :research_max_sources,
     :research_parallelism,
-    :research_require_conflict_audit
+    :research_require_conflict_audit,
+    :resource_pressure_percent,
+    :resource_critical_percent,
+    :terminal_idle_timeout_minutes,
+    :session_idle_timeout_minutes,
+    :output_artifact_limit_mib,
+    :output_spool_quota_mib,
+    :output_retention_days
   ]
 
   def changeset(settings, attrs) do
@@ -125,7 +139,14 @@ defmodule IexCode.Settings.AppSettings do
       :research_require_conflict_audit,
       :research_max_cost_cents,
       :research_max_tokens,
-      :research_time_budget_minutes
+      :research_time_budget_minutes,
+      :resource_pressure_percent,
+      :resource_critical_percent,
+      :terminal_idle_timeout_minutes,
+      :session_idle_timeout_minutes,
+      :output_artifact_limit_mib,
+      :output_spool_quota_mib,
+      :output_retention_days
     ])
     |> validate_required(@required_fields)
     |> validate_length(:anthropic_api_key, max: 4_096)
@@ -189,6 +210,35 @@ defmodule IexCode.Settings.AppSettings do
       greater_than_or_equal_to: 1,
       less_than_or_equal_to: 1_440
     )
+    |> validate_number(:resource_pressure_percent,
+      greater_than_or_equal_to: 50,
+      less_than_or_equal_to: 90
+    )
+    |> validate_number(:resource_critical_percent,
+      greater_than_or_equal_to: 60,
+      less_than_or_equal_to: 95
+    )
+    |> validate_number(:terminal_idle_timeout_minutes,
+      greater_than_or_equal_to: 1,
+      less_than_or_equal_to: 1_440
+    )
+    |> validate_number(:session_idle_timeout_minutes,
+      greater_than_or_equal_to: 1,
+      less_than_or_equal_to: 1_440
+    )
+    |> validate_number(:output_artifact_limit_mib,
+      greater_than_or_equal_to: 16,
+      less_than_or_equal_to: 1_024
+    )
+    |> validate_number(:output_spool_quota_mib,
+      greater_than_or_equal_to: 256,
+      less_than_or_equal_to: 10_240
+    )
+    |> validate_number(:output_retention_days,
+      greater_than_or_equal_to: 1,
+      less_than_or_equal_to: 90
+    )
+    |> validate_resource_policy()
     |> check_constraint(:research_level, name: :app_settings_research_level_check)
     |> validate_search_providers()
     |> validate_search_provider_order()
@@ -214,6 +264,23 @@ defmodule IexCode.Settings.AppSettings do
       _ ->
         add_error(changeset, :search_providers, "must be a map with at most 32 providers")
     end
+  end
+
+  defp validate_resource_policy(changeset) do
+    pressure = get_field(changeset, :resource_pressure_percent)
+    critical = get_field(changeset, :resource_critical_percent)
+    artifact_limit = get_field(changeset, :output_artifact_limit_mib)
+    spool_quota = get_field(changeset, :output_spool_quota_mib)
+
+    changeset =
+      if is_integer(pressure) and is_integer(critical) and pressure >= critical,
+        do: add_error(changeset, :resource_critical_percent, "must exceed pressure threshold"),
+        else: changeset
+
+    if is_integer(artifact_limit) and is_integer(spool_quota) and
+         artifact_limit > spool_quota,
+       do: add_error(changeset, :output_spool_quota_mib, "must cover one output artifact"),
+       else: changeset
   end
 
   defp valid_provider_config?({id, config}) when is_binary(id) and is_map(config) do

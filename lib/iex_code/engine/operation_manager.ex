@@ -7,6 +7,8 @@ defmodule IexCode.Engine.OperationManager do
   require Logger
   alias IexCode.Sessions
   alias IexCode.Sessions.Operation
+  alias IexCode.Engine.OperationMonitor
+  alias IexCode.Engine.OperationProjection
   alias Phoenix.PubSub
 
   @update_max_attempts 10
@@ -31,6 +33,8 @@ defmodule IexCode.Engine.OperationManager do
     emit_telemetry(:start, session_id, op_id, 0, nil, nil, op)
 
     case Task.Supervisor.start_child(task_supervisor, fn ->
+           await_monitor_registration(op_id)
+
            if fleet_owner, do: Process.put(:iex_code_fleet_owner, fleet_owner)
 
            if fleet_control_token,
@@ -46,15 +50,16 @@ defmodule IexCode.Engine.OperationManager do
 
            progress_fn = fn percent, message ->
              assert_fleet_control!(fleet_control_token)
-             safe_update_operation(op_id, %{progress: percent, result: message}, op)
+             projected_message = OperationProjection.text(message)
+             safe_update_operation(op_id, %{progress: percent, result: projected_message}, op)
 
-             case IexCode.Engine.FleetRuntime.progress(fleet_owner, percent, message) do
+             case IexCode.Engine.FleetRuntime.progress(fleet_owner, percent, projected_message) do
                :ok -> :ok
                {:error, reason} -> exit({:fleet_lease_lost, reason})
              end
 
-             broadcast(session_id, {:operation_progress, op_id, percent, message})
-             emit_telemetry(:progress, session_id, op_id, percent, nil, message, op)
+             broadcast(session_id, {:operation_progress, op_id, percent, projected_message})
+             emit_telemetry(:progress, session_id, op_id, percent, nil, projected_message, op)
            end
 
            result =
@@ -62,7 +67,7 @@ defmodule IexCode.Engine.OperationManager do
                case fun.(progress_fn) do
                  {:ok, res} ->
                    duration = System.monotonic_time(:millisecond) - start_time
-                   res_str = if is_binary(res), do: res, else: inspect(res)
+                   res_str = OperationProjection.text(res)
 
                    final_op =
                      persist_terminal_operation(
@@ -89,7 +94,7 @@ defmodule IexCode.Engine.OperationManager do
 
                  {:error, reason} ->
                    duration = System.monotonic_time(:millisecond) - start_time
-                   err_str = format_crash_reason(reason)
+                   err_str = reason |> format_crash_reason() |> OperationProjection.text()
 
                    final_op =
                      persist_terminal_operation(
@@ -110,7 +115,7 @@ defmodule IexCode.Engine.OperationManager do
              catch
                kind, err ->
                  duration = System.monotonic_time(:millisecond) - start_time
-                 err_str = "#{kind}: #{format_crash_reason(err)}"
+                 err_str = OperationProjection.text("#{kind}: #{format_crash_reason(err)}")
 
                  final_op =
                    persist_terminal_operation(
@@ -140,38 +145,38 @@ defmodule IexCode.Engine.OperationManager do
              end
 
            send(parent_caller, {:operation_task_done, op_id, result})
+           OperationMonitor.unregister(self())
            result
          end) do
       {:ok, task_pid} ->
         if fleet_owner, do: safely_link_fleet_task(task_pid)
 
-        # Spawn crash watcher process under TaskSupervisor to guarantee zero dangling operations on abnormal exits
-        watcher_fun = fn ->
-          ref = Process.monitor(task_pid)
+        monitor_metadata = %{
+          session_id: session_id,
+          operation_id: op_id,
+          started_monotonic_ms: start_time,
+          parent_caller: parent_caller,
+          agent_name: op.agent_name,
+          op_type: op.op_type,
+          parent_op_id: op.parent_op_id
+        }
 
-          receive do
-            {:DOWN, ^ref, :process, ^task_pid, :normal} ->
-              # Normal exit: the task always attempts its terminal persist
-              # before exiting, and hands a failed persist to a detached
-              # retrier, so nothing to do here.
-              :ok
+        case OperationMonitor.register(task_pid, monitor_metadata) do
+          :ok ->
+            send(task_pid, {:operation_monitor_ready, op_id})
 
-            {:DOWN, ^ref, :process, ^task_pid, reason} ->
-              ensure_finalized(session_id, op_id, op, start_time, parent_caller, reason)
-          end
-        end
-
-        case Task.Supervisor.start_child(task_supervisor, watcher_fun) do
-          {:ok, _watcher_pid} ->
-            :ok
-
-          {:error, watcher_reason} ->
+          {:error, monitor_reason} ->
             Logger.warning(
-              "OperationManager: failed to start crash watcher for #{inspect(op_id)}: " <>
-                "#{inspect(watcher_reason)}; falling back to unlinked watcher"
+              "OperationManager: failed to register centralized crash monitor for " <>
+                "#{inspect(op_id)}: #{inspect(monitor_reason)}"
             )
 
-            spawn(watcher_fun)
+            Process.exit(task_pid, :kill)
+
+            finalize_abnormal_exit(
+              monitor_metadata,
+              {:monitor_registration_failed, monitor_reason}
+            )
         end
 
         {:ok, task_pid, op}
@@ -181,7 +186,7 @@ defmodule IexCode.Engine.OperationManager do
           "OperationManager: failed to start operation task for #{inspect(op_id)}: #{inspect(reason)}"
         )
 
-        err_str = format_crash_reason(reason)
+        err_str = reason |> format_crash_reason() |> OperationProjection.text()
         duration = System.monotonic_time(:millisecond) - start_time
 
         final_op =
@@ -199,6 +204,15 @@ defmodule IexCode.Engine.OperationManager do
         broadcast(session_id, {:operation_failed, final_op})
         emit_telemetry(:crash, session_id, op_id, duration, reason, err_str, final_op)
         {:error, err_str}
+    end
+  end
+
+  @doc false
+  def await_monitor_registration(op_id, timeout_ms \\ 5_000) do
+    receive do
+      {:operation_monitor_ready, ^op_id} -> :ok
+    after
+      timeout_ms -> exit(:operation_monitor_registration_timeout)
     end
   end
 
@@ -252,7 +266,89 @@ defmodule IexCode.Engine.OperationManager do
 
   # Final safety net for abnormal task exits: make sure the operation record
   # does not stay stuck in "running".
-  defp ensure_finalized(session_id, op_id, op, start_time, parent_caller, crash_reason) do
+  @doc false
+  def finalize_abnormal_exit(metadata, crash_reason) when is_map(metadata) do
+    op_id = metadata.operation_id
+
+    op =
+      Sessions.get_operation(op_id) ||
+        %Operation{
+          id: op_id,
+          session_id: metadata.session_id,
+          agent_name: metadata[:agent_name],
+          op_type: metadata[:op_type],
+          parent_op_id: metadata[:parent_op_id],
+          status: "running"
+        }
+
+    ensure_finalized(
+      metadata.session_id,
+      op_id,
+      op,
+      metadata.started_monotonic_ms,
+      metadata.parent_caller,
+      crash_reason
+    )
+  rescue
+    error ->
+      Logger.warning(
+        "OperationManager: abnormal exit finalization raised for " <>
+          "#{inspect(metadata[:operation_id])}: #{Exception.message(error)}"
+      )
+
+      :error
+  catch
+    kind, reason ->
+      Logger.warning(
+        "OperationManager: abnormal exit finalization #{kind} for " <>
+          "#{inspect(metadata[:operation_id])}: #{inspect(reason)}"
+      )
+
+      :error
+  end
+
+  @doc false
+  def finalize_orphaned_operation(%Operation{status: "running"} = op) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    duration = operation_wall_duration(op, now)
+    err_str = "Operation monitor restarted before task completion"
+
+    attrs = %{
+      status: "failed",
+      error_message: err_str,
+      completed_at: now,
+      duration_ms: duration
+    }
+
+    case finalize_operation(op.id, attrs, @update_max_attempts) do
+      {:ok, final_op} ->
+        broadcast(op.session_id, {:operation_failed, final_op})
+
+        emit_telemetry(
+          :crash,
+          op.session_id,
+          op.id,
+          duration,
+          :monitor_restarted,
+          err_str,
+          final_op
+        )
+
+        :ok
+
+      :error ->
+        :error
+    end
+  end
+
+  def finalize_orphaned_operation(_operation), do: :ok
+
+  defp operation_wall_duration(%Operation{started_at: %DateTime{} = started_at}, now),
+    do: max(DateTime.diff(now, started_at, :millisecond), 0)
+
+  defp operation_wall_duration(_operation, _now), do: 0
+
+  defp ensure_finalized(session_id, op_id, _op, start_time, parent_caller, crash_reason) do
     should_finalize =
       try do
         case Sessions.get_operation(op_id) do
@@ -273,7 +369,7 @@ defmodule IexCode.Engine.OperationManager do
     if should_finalize do
       duration = System.monotonic_time(:millisecond) - start_time
 
-      err_str = format_crash_reason(crash_reason)
+      err_str = crash_reason |> format_crash_reason() |> OperationProjection.text()
 
       attrs = %{
         status: "failed",
@@ -282,20 +378,23 @@ defmodule IexCode.Engine.OperationManager do
         duration_ms: duration
       }
 
-      final_op =
-        case finalize_operation(op_id, attrs, @update_max_attempts) do
-          {:ok, updated} -> updated
-          :error -> %{op | status: "failed", error_message: err_str, duration_ms: duration}
-        end
+      case finalize_operation(op_id, attrs, @update_max_attempts) do
+        {:ok, final_op} ->
+          broadcast(session_id, {:operation_failed, final_op})
+          emit_telemetry(:crash, session_id, op_id, duration, crash_reason, err_str, final_op)
+          send(parent_caller, {:operation_task_done, op_id, {:error, err_str}})
+          :ok
 
-      broadcast(session_id, {:operation_failed, final_op})
-      emit_telemetry(:crash, session_id, op_id, duration, crash_reason, err_str, final_op)
-      send(parent_caller, {:operation_task_done, op_id, {:error, err_str}})
+        :error ->
+          :error
+      end
     else
       Logger.warning(
         "OperationManager: operation #{inspect(op_id)} crashed with " <>
           "#{format_crash_reason(crash_reason)} but was already finalized; not overwriting status"
       )
+
+      :ok
     end
   end
 
@@ -468,8 +567,11 @@ defmodule IexCode.Engine.OperationManager do
 
   def format_crash_reason(term) when is_binary(term), do: Sessions.sanitize_utf8(term)
   def format_crash_reason(term) when is_atom(term), do: Atom.to_string(term)
-  def format_crash_reason({kind, term}) when is_atom(kind), do: "#{kind}: #{inspect(term)}"
-  def format_crash_reason(term), do: inspect(term)
+
+  def format_crash_reason({kind, term}) when is_atom(kind),
+    do: "#{kind}: #{OperationProjection.text(term)}"
+
+  def format_crash_reason(term), do: OperationProjection.text(term)
 
   defp create_or_fallback_operation(session_id, parent_op_id, agent_name, op_type, title, params) do
     try do
@@ -481,7 +583,7 @@ defmodule IexCode.Engine.OperationManager do
              title: title,
              status: "running",
              progress: 0,
-             params: params,
+             params: OperationProjection.params(params),
              started_at: DateTime.utc_now() |> DateTime.truncate(:second)
            }) do
         {:ok, created} ->
@@ -516,7 +618,7 @@ defmodule IexCode.Engine.OperationManager do
       title: title,
       status: "running",
       progress: 0,
-      params: params,
+      params: OperationProjection.params(params),
       started_at: DateTime.utc_now() |> DateTime.truncate(:second)
     }
   end

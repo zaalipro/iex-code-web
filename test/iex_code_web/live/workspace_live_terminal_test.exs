@@ -4,12 +4,33 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
   @moduletag timeout: 120_000
 
   alias Phoenix.PubSub
+  alias IexCode.Tools.{TerminalServer, TerminalSession}
 
   # ============================================================================
   # 1. Terminal Mount & DOM Elements
   # ============================================================================
 
   describe "Terminal Viewport & Toolbar Component Rendering" do
+    test "starts the PTY lazily on terminal activation and releases its viewer on exit", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+      refute TerminalServer.running?(session.id)
+
+      view |> element("#tab-btn-terminal") |> render_click()
+
+      assert pid = TerminalServer.whereis(session.id)
+      assert {:ok, %{viewer_count: 1}} = TerminalSession.get_state(session.id)
+
+      view |> element("#tab-btn-kanban") |> render_click()
+      _ = :sys.get_state(pid)
+      assert {:ok, %{viewer_count: 0}} = TerminalSession.get_state(session.id)
+    end
+
     test "renders terminal container with xterm hook, update ignore, and session data attribute",
          %{
            conn: conn,

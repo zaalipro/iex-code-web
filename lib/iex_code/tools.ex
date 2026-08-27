@@ -5,17 +5,24 @@ defmodule IexCode.Tools do
   """
   require Logger
 
-  alias IexCode.{Projects, Runs}
+  alias IexCode.{Outputs, Projects, Runs}
   alias IexCode.Projects.Project
   alias IexCode.Research.{Fetcher, Search}
   alias IexCode.Sessions
   alias IexCode.Settings
-  alias IexCode.Tools.{ASTSearch, Git, MultiPatch, TerminalServer, TestRunner}
+
+  alias IexCode.Tools.{
+    ASTSearch,
+    BoundedFiles,
+    Git,
+    MultiPatch,
+    NativeCommand,
+    TerminalServer,
+    TestRunner
+  }
+
   alias IexCode.Tools.MultiPatch.Snapshot
   alias IexCode.WorkspacePath
-
-  @max_command_output 256_000
-  @excluded_dirs ["_build", "deps", "node_modules", ".git"]
 
   @doc """
   Returns tool specifications formatted for Anthropic and OpenAI tool calls.
@@ -24,15 +31,54 @@ defmodule IexCode.Tools do
     definitions = [
       %{
         name: "read_file",
-        description: "Read contents of a file from the workspace filesystem.",
+        description:
+          "Read a bounded, line-numbered page from a workspace file. At most 800 lines or 1 MiB are returned; use start_line/end_line to continue when the response says it was truncated.",
         parameters: %{
           type: "object",
           properties: %{
             path: %{type: "string", description: "Relative or absolute path to the file"},
             start_line: %{type: "integer", description: "Optional 1-indexed start line"},
-            end_line: %{type: "integer", description: "Optional 1-indexed end line"}
+            end_line: %{
+              type: "integer",
+              description: "Optional 1-indexed end line (each response is still bounded)"
+            },
+            scan_offset: %{
+              type: "integer",
+              minimum: 0,
+              description:
+                "Continuation byte offset returned when scanning to a distant start_line pauses"
+            },
+            scan_start_line: %{
+              type: "integer",
+              minimum: 1,
+              description:
+                "Continuation line number returned with scan_offset; preserve the original start_line"
+            }
           },
           required: ["path"]
+        }
+      },
+      %{
+        name: "read_output_artifact",
+        description:
+          "Read one bounded chunk from a previously returned command or test output artifact.",
+        parameters: %{
+          type: "object",
+          properties: %{
+            artifact_id: %{type: "string", description: "Opaque output artifact ID"},
+            offset: %{
+              type: "integer",
+              minimum: 0,
+              description: "Byte offset to start reading at (default 0)"
+            },
+            length: %{
+              type: "integer",
+              minimum: 1,
+              maximum: 65_536,
+              description: "Maximum bytes to read (default and maximum 65536)"
+            }
+          },
+          required: ["artifact_id"]
         }
       },
       %{
@@ -198,7 +244,8 @@ defmodule IexCode.Tools do
       },
       %{
         name: "list_dir",
-        description: "List directory contents including files and subdirectories.",
+        description:
+          "List a bounded page of directory contents including files and subdirectories.",
         parameters: %{
           type: "object",
           properties: %{
@@ -206,19 +253,32 @@ defmodule IexCode.Tools do
               type: "string",
               description: "Directory path relative to workspace or absolute"
             },
-            recursive: %{type: "boolean", description: "Whether to list recursively"}
+            recursive: %{type: "boolean", description: "Whether to list recursively"},
+            offset: %{type: "integer", minimum: 0, description: "Entry offset for pagination"},
+            limit: %{
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              description: "Entries to return (default and maximum 200)"
+            }
           }
         }
       },
       %{
         name: "grep_search",
-        description: "Search for regex or text query patterns across project files.",
+        description:
+          "Search for regex or text query patterns across project files with bounded file and match scanning.",
         parameters: %{
           type: "object",
           properties: %{
             query: %{type: "string", description: "Text or regex pattern to search for"},
             path: %{type: "string", description: "Subdirectory or file to search in"},
-            case_sensitive: %{type: "boolean", description: "Whether search is case-sensitive"}
+            case_sensitive: %{type: "boolean", description: "Whether search is case-sensitive"},
+            offset: %{
+              type: "integer",
+              minimum: 0,
+              description: "Eligible-file offset for continuing a truncated search"
+            }
           },
           required: ["query"]
         }
@@ -287,13 +347,35 @@ defmodule IexCode.Tools do
 
   def run_tests(opts \\ []) do
     root_path = Keyword.get(opts, :project_root, File.cwd!())
-    args = trusted_lock_args(opts)
+    args = Map.put(trusted_lock_args(opts), "operation_id", Keyword.get(opts, :operation_id))
 
-    with_mutation_locks("run_tests", args, root_path, fn -> TestRunner.run(opts) end)
+    with_mutation_locks("run_tests", args, root_path, fn identity_opts ->
+      scoped_opts =
+        opts
+        |> Keyword.put(:run_id, Keyword.get(identity_opts, :run_id))
+        |> Keyword.put(:session_id, Keyword.get(identity_opts, :session_id))
+        |> Keyword.put(:operation_id, trusted_operation_id(args, identity_opts))
+
+      TestRunner.run(scoped_opts)
+    end)
   end
 
   def git_status(repo_dir \\ "."), do: Git.status(repo_dir)
-  def git_diff(repo_dir \\ ".", opts \\ []), do: Git.diff(repo_dir, opts)
+
+  def git_diff(repo_dir \\ ".", opts \\ []) do
+    preview_limit = Keyword.get(opts, :max_bytes, 8 * 1_024 * 1_024)
+
+    case Git.diff_bounded(repo_dir, Keyword.put(opts, :max_bytes, preview_limit)) do
+      {:ok, %{content: output, truncated?: false}} ->
+        {:ok, output}
+
+      {:ok, %{content: output, truncated?: true}} ->
+        {:ok, output <> "\n\n[diff preview truncated at #{preview_limit} bytes]"}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
 
   def git_stage(files, repo_dir \\ ".", opts \\ []) do
     args = Map.put(trusted_lock_args(opts), "files", files)
@@ -313,11 +395,14 @@ defmodule IexCode.Tools do
 
   def rollback_multi_patch(transaction_id, project_root, opts \\ []) do
     case Snapshot.get_snapshot(transaction_id) do
-      {:ok, %{patches: patches}} ->
-        args = Map.put(trusted_lock_args(opts), "patches", patches)
+      {:ok, %{patches: patches} = snapshot} ->
+        # Lock planning needs paths only. Keep the one hydrated manifest as the
+        # sole body-bearing value while the rollback runs.
+        path_refs = Enum.map(patches, &%{"path" => &1.path})
+        args = Map.put(trusted_lock_args(opts), "patches", path_refs)
 
         with_mutation_locks("multi_patch", args, project_root, fn ->
-          MultiPatch.rollback(transaction_id)
+          MultiPatch.rollback_snapshot(transaction_id, snapshot)
         end)
 
       _missing_or_invalid ->
@@ -333,14 +418,16 @@ defmodule IexCode.Tools do
   instead of propagating to callers.
   """
   def execute(tool_name, args, root_path, on_progress \\ fn _p, _msg -> :ok end) do
-    with_mutation_locks(tool_name, args, root_path, fn identity_opts, remaining_timeout_ms ->
-      trusted_args =
-        args
-        |> Map.put("__workspace_lock_identity__", identity_opts)
-        |> put_remaining_command_timeout(tool_name, remaining_timeout_ms)
+    with {:ok, args} <- prepare_trusted_tool_args(tool_name, args, root_path) do
+      with_mutation_locks(tool_name, args, root_path, fn identity_opts, remaining_timeout_ms ->
+        trusted_args =
+          args
+          |> Map.put("__workspace_lock_identity__", identity_opts)
+          |> put_remaining_command_timeout(tool_name, remaining_timeout_ms)
 
-      do_execute(tool_name, trusted_args, root_path, on_progress)
-    end)
+        do_execute(tool_name, trusted_args, root_path, on_progress)
+      end)
+    end
   rescue
     exception -> {:error, "Tool #{tool_name} crashed: #{Exception.message(exception)}"}
   end
@@ -350,44 +437,44 @@ defmodule IexCode.Tools do
 
     case resolve_path(root_path, path) do
       {:ok, full_path} ->
-        if File.exists?(full_path) do
+        if File.regular?(full_path) do
           on_progress.(50, "Reading file bytes...")
 
-          case File.read(full_path) do
-            {:ok, content} ->
-              lines = String.split(content, ~r/\r?\n/)
-              start_l = Map.get(args, "start_line")
-              end_l = Map.get(args, "end_line")
+          opts = [
+            start_line: Map.get(args, "start_line"),
+            end_line: Map.get(args, "end_line"),
+            scan_offset: Map.get(args, "scan_offset"),
+            scan_start_line: Map.get(args, "scan_start_line")
+          ]
 
-              sliced_lines =
+          case BoundedFiles.read_range(full_path, opts) do
+            {:ok, page} ->
+              on_progress.(100, "Read complete (#{page.lines_read} lines)")
+              content = IexCode.Sessions.sanitize_utf8(page.content)
+
+              notice =
                 cond do
-                  is_integer(start_l) and is_integer(end_l) and start_l <= end_l ->
-                    Enum.slice(lines, max(0, start_l - 1), max(1, end_l - start_l + 1))
+                  page.scan_limited? ->
+                    "\n... [scan paused after #{page.scan_limit} bytes before reaching the requested range; " <>
+                      "continue with the same start_line/end_line plus scan_offset=#{page.next_scan_offset} " <>
+                      "and scan_start_line=#{page.next_scan_start_line}]"
 
-                  is_integer(start_l) ->
-                    Enum.slice(lines, max(0, start_l - 1)..-1//1)
+                  page.byte_truncated? ->
+                    "\n... [truncated at #{page.byte_limit} bytes inside line #{page.last_line}; " <>
+                      "the line is too large for an agent response—narrow the file with grep_search or a command]"
+
+                  page.truncated? and is_integer(page.next_line) ->
+                    "\n... [truncated after #{page.lines_read} lines; continue with start_line=#{page.next_line}]"
 
                   true ->
-                    capped = Enum.take(lines, 800)
-
-                    if length(lines) > 800 do
-                      capped ++
-                        [
-                          "... [truncated: showing 800 of #{length(lines)} lines, use start_line/end_line for more]"
-                        ]
-                    else
-                      capped
-                    end
+                    ""
                 end
 
-              numbered =
-                sliced_lines
-                |> Enum.with_index(if is_integer(start_l), do: start_l, else: 1)
-                |> Enum.map(fn {line, idx} -> "#{idx}: #{line}" end)
-                |> Enum.join("\n")
+              {:ok, content <> notice}
 
-              on_progress.(100, "Read complete (#{length(sliced_lines)} lines)")
-              {:ok, IexCode.Sessions.sanitize_utf8(numbered)}
+            {:error, :invalid_line_range} ->
+              {:error,
+               "Invalid line range or continuation: start_line must be >= 1, end_line must be >= start_line, scan_offset >= 0, and scan_start_line must be between 1 and start_line"}
 
             {:error, reason} ->
               {:error, "Failed to read file #{path}: #{inspect(reason)}"}
@@ -398,6 +485,44 @@ defmodule IexCode.Tools do
 
       {:error, :outside_workspace} ->
         {:error, "Path escapes the workspace: #{path}"}
+    end
+  end
+
+  defp do_execute(
+         "read_output_artifact",
+         %{"artifact_id" => artifact_id} = args,
+         _root_path,
+         on_progress
+       ) do
+    offset = Map.get(args, "offset", 0)
+    length = Map.get(args, "length", 65_536)
+
+    scope = %{
+      session_id: arg_value(args, "session_id"),
+      run_id: arg_value(args, "run_id"),
+      operation_id: arg_value(args, "operation_id") || arg_value(args, "op_id")
+    }
+
+    on_progress.(25, "Reading bounded output artifact chunk...")
+
+    case Outputs.fetch_chunk(artifact_id, scope, offset, length) do
+      {:ok, %{artifact: artifact, data: data, next_offset: next_offset, eof: eof}} ->
+        on_progress.(100, "Output artifact chunk retrieved")
+        safe_data = sanitize_artifact_chunk(data, length)
+        safe_name = sanitize_artifact_label(artifact.name)
+
+        {:ok,
+         "Artifact: #{artifact.id}\nName: #{safe_name}\nStatus: #{artifact.status}\n" <>
+           "Offset: #{offset}\nNext offset: #{next_offset}\nEOF: #{eof}\n\n#{safe_data}"}
+
+      {:error, :scope_required} ->
+        {:error, "Output artifact access requires a trusted session, run, or operation scope"}
+
+      {:error, :invalid_range} ->
+        {:error, "Invalid artifact byte range; offset must be >= 0 and length must be 1..65536"}
+
+      {:error, _not_available} ->
+        {:error, "Output artifact is unavailable in this session or run"}
     end
   end
 
@@ -496,11 +621,23 @@ defmodule IexCode.Tools do
         # Query also treats that field as a relative result-path filter.
         confined_args = args |> Map.delete("path") |> Map.delete(:path)
 
-        case ASTSearch.search(search_path, confined_args) do
-          {:ok, results} ->
+        case ASTSearch.search_with_metadata(search_path, confined_args) do
+          {:ok, metadata} ->
+            results = metadata.results
             on_progress.(100, "Found #{length(results)} matching symbols")
             formatted = ASTSearch.format_results(results, include_code: true)
-            {:ok, formatted}
+
+            notice =
+              if metadata.truncated? do
+                reasons = Enum.join(metadata.truncation_reasons, ", ")
+
+                "\n... [AST search truncated: #{reasons}; scanned #{metadata.scanned_files} files " <>
+                  "and #{metadata.scanned_bytes} bytes. Narrow query/path for omitted symbols]"
+              else
+                ""
+              end
+
+            {:ok, formatted <> notice}
 
           {:error, reason} ->
             {:error, "AST search failed: #{inspect(reason)}"}
@@ -512,6 +649,8 @@ defmodule IexCode.Tools do
   end
 
   defp do_execute("run_tests", args, root_path, on_progress) do
+    lock_identity = Map.get(args, "__workspace_lock_identity__", [])
+
     opts =
       [project_root: root_path, on_progress: on_progress]
       |> add_opt_from_map(args, "paths", :paths)
@@ -519,10 +658,14 @@ defmodule IexCode.Tools do
       |> add_opt_from_map(args, "failed", :failed)
       |> add_opt_from_map(args, "seed", :seed)
       |> add_opt_from_map(args, "timeout_ms", :timeout_ms)
+      |> Keyword.put(:run_id, Keyword.get(lock_identity, :run_id))
+      |> Keyword.put(:session_id, Keyword.get(lock_identity, :session_id))
+      |> Keyword.put(:operation_id, trusted_operation_id(args, lock_identity))
 
     case TestRunner.run(opts) do
       {:ok, %{status: :passed} = res} ->
-        {:ok, "Tests PASSED: #{res.total} tests (#{res.duration_s}s)"}
+        {:ok,
+         "Tests PASSED: #{res.total} tests (#{res.duration_s}s)\nOutput artifact: #{res.artifact_id}"}
 
       {:ok, %{status: :failed} = res} ->
         failures_summary =
@@ -534,7 +677,7 @@ defmodule IexCode.Tools do
           |> Enum.join("\n")
 
         {:ok,
-         "Tests FAILED: #{res.failures_count}/#{res.total} failures:\n#{failures_summary}\n\nRaw output:\n#{res.raw_output}"}
+         "Tests FAILED: #{res.failures_count}/#{res.total} failures:\n#{failures_summary}\n\nOutput preview:\n#{res.raw_output}\n\nOutput artifact: #{res.artifact_id}"}
 
       {:ok, %{status: :compilation_error} = res} ->
         errs =
@@ -542,10 +685,16 @@ defmodule IexCode.Tools do
           |> Enum.map(fn e -> "  * #{e.file}:#{e.line} [#{e.error_type}] #{e.message}" end)
           |> Enum.join("\n")
 
-        {:error, "Compilation errors before test run:\n#{errs}"}
+        {:error,
+         "Compilation errors before test run:\n#{errs}\nOutput artifact: #{res.artifact_id}"}
 
       {:ok, %{status: status} = res} ->
-        {:ok, "Tests completed with status #{status}:\n#{res.raw_output}"}
+        {:ok,
+         "Tests completed with status #{status}:\n#{res.raw_output}\n\nOutput artifact: #{res.artifact_id}"}
+
+      {:error, {:output_limit_exceeded, artifact_id}} ->
+        {:error,
+         "Test run stopped: output_limit_exceeded. Captured output artifact: #{artifact_id}"}
 
       {:error, reason} ->
         {:error, "Test run failed: #{inspect(reason)}"}
@@ -559,7 +708,7 @@ defmodule IexCode.Tools do
       {:ok, repo_dir} ->
         on_progress.(30, "Checking git status for #{repo_dir}...")
 
-        case Git.status(repo_dir) do
+        case Git.status(repo_dir, path_limit: 300, output_limit_bytes: 512 * 1_024) do
           {:ok, status_res} ->
             on_progress.(100, "Git status retrieved")
 
@@ -574,16 +723,25 @@ defmodule IexCode.Tools do
             msg =
               """
               Branch: #{status_res.branch} (clean: #{status_res.clean?})
-              Staged (#{length(status_res.staged)}):
+              Staged retained (#{length(status_res.staged)}):
                 #{if staged_list == "", do: "(none)", else: staged_list}
-              Unstaged (#{length(status_res.unstaged)}):
+              Unstaged retained (#{length(status_res.unstaged)}):
                 #{if unstaged_list == "", do: "(none)", else: unstaged_list}
-              Untracked (#{length(status_res.untracked)}):
+              Untracked retained (#{length(status_res.untracked)}):
                 #{if untracked_list == "", do: "(none)", else: untracked_list}
               """
               |> String.trim()
 
-            {:ok, msg}
+            notice =
+              if status_res.truncated? do
+                "\n\n[git status truncated after retaining #{status_res.retained_paths} paths " <>
+                  "(path limit #{status_res.path_limit}, producer limit #{status_res.producer_limit_bytes} bytes). " <>
+                  "Use run_command with `git status --short -- <path>` to inspect a narrower area.]"
+              else
+                ""
+              end
+
+            {:ok, msg <> notice}
 
           {:error, reason} ->
             {:error, "Git status failed: #{inspect(reason)}"}
@@ -599,10 +757,18 @@ defmodule IexCode.Tools do
     paths = Map.get(args, "paths", [])
     on_progress.(30, "Fetching diff (staged: #{staged?})...")
 
-    case Git.diff(root_path, staged: staged?, paths: paths) do
-      {:ok, diff_text} ->
-        on_progress.(100, "Diff fetched (#{byte_size(diff_text)} bytes)")
-        {:ok, if(diff_text == "", do: "(No changes)", else: diff_text)}
+    case Git.diff_bounded(root_path, staged: staged?, paths: paths, max_bytes: 2 * 1_024 * 1_024) do
+      {:ok, %{content: diff_text, bytes: bytes, truncated?: truncated?}} ->
+        on_progress.(100, "Diff fetched (#{bytes} bytes)")
+
+        output =
+          cond do
+            diff_text == "" -> "(No changes)"
+            truncated? -> diff_text <> "\n\n[diff preview truncated at 2 MiB]"
+            true -> diff_text
+          end
+
+        {:ok, output}
 
       {:error, reason} ->
         {:error, "Git diff failed: #{inspect(reason)}"}
@@ -661,35 +827,22 @@ defmodule IexCode.Tools do
         if File.dir?(full_path) do
           recursive? = Map.get(args, "recursive", false) == true
 
-          entries =
-            if recursive? do
-              Path.wildcard(Path.join(full_path, "**/*"))
-              |> Enum.reject(fn p ->
-                p
-                |> Path.relative_to(full_path)
-                |> Path.split()
-                |> List.first()
-                |> excluded_dir?()
-              end)
-              |> Enum.take(200)
-              |> Enum.map(fn p ->
-                rel = Path.relative_to(p, full_path)
-                {type, size} = entry_type_and_size(p)
-                "#{type}\t#{size}\t#{rel}"
-              end)
+          offset = Map.get(args, "offset", 0)
+          limit = Map.get(args, "limit", if(recursive?, do: 200, else: 150))
+
+          {:ok, page} =
+            BoundedFiles.list(full_path, recursive: recursive?, offset: offset, limit: limit)
+
+          on_progress.(100, "Listed #{length(page.entries)} items")
+
+          notice =
+            if page.truncated? and is_integer(page.next_offset) do
+              "\n... [listing truncated; continue with offset=#{page.next_offset} and limit=#{page.limit}]"
             else
-              File.ls!(full_path)
-              |> Enum.reject(&excluded_dir?/1)
-              |> Enum.take(150)
-              |> Enum.map(fn item ->
-                p = Path.join(full_path, item)
-                {type, size} = entry_type_and_size(p)
-                "#{type}\t#{size}\t#{item}"
-              end)
+              ""
             end
 
-          on_progress.(100, "Listed #{length(entries)} items")
-          {:ok, Enum.join(entries, "\n")}
+          {:ok, Enum.join(page.entries, "\n") <> notice}
         else
           {:error, "Not a directory: #{sub_path}"}
         end
@@ -707,64 +860,32 @@ defmodule IexCode.Tools do
       {:ok, search_dir} ->
         on_progress.(30, "Scanning files in #{search_dir} for query '#{query}'...")
 
-        matcher = build_matcher(query, case_sensitive?)
+        {:ok, page} =
+          BoundedFiles.grep(search_dir, root_path, query,
+            case_sensitive: case_sensitive?,
+            offset: Map.get(args, "offset", 0)
+          )
 
-        results =
-          Path.wildcard(Path.join(search_dir, "**/*"))
-          |> Enum.reject(fn p ->
-            ext = Path.extname(p) |> String.downcase()
+        on_progress.(100, "Found #{length(page.matches)} matches")
 
-            File.dir?(p) or
-              ext in [
-                ".db",
-                ".db-wal",
-                ".db-shm",
-                ".beam",
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".ico",
-                ".svg",
-                ".lock",
-                ".dump",
-                ".gz",
-                ".zip"
-              ] or
-              String.contains?(p, "/_build/") or
-              String.contains?(p, "/deps/") or
-              String.contains?(p, "/.git/") or
-              String.contains?(p, "/node_modules/")
-          end)
-          |> Enum.take(500)
-          |> Enum.flat_map(fn file_path ->
-            case File.read(file_path) do
-              {:ok, content} ->
-                if String.valid?(content) do
-                  rel = Path.relative_to(file_path, root_path)
+        content =
+          if page.matches == [],
+            do: "No matches found for '#{query}'",
+            else: Enum.join(page.matches, "\n")
 
-                  content
-                  |> String.split("\n")
-                  |> Enum.with_index(1)
-                  |> Enum.filter(fn {line, _idx} ->
-                    line_matches?(line, matcher, case_sensitive?)
-                  end)
-                  |> Enum.take(10)
-                  |> Enum.map(fn {line, idx} -> "#{rel}:#{idx}: #{String.trim(line)}" end)
-                else
-                  []
-                end
+        notice =
+          if page.truncated? do
+            continuation =
+              if is_integer(page.next_offset),
+                do: " Continue with offset=#{page.next_offset}.",
+                else: ""
 
-              # Explicitly skip unreadable files (permissions, broken symlinks, races).
-              {:error, _reason} ->
-                []
-            end
-          end)
-          |> Enum.take(100)
+            "\n... [search truncated by bounded file, byte, line, or match limits.#{continuation} Narrow query/path for omitted matches]"
+          else
+            ""
+          end
 
-        on_progress.(100, "Found #{length(results)} matches")
-
-        {:ok,
-         if(results == [], do: "No matches found for '#{query}'", else: Enum.join(results, "\n"))}
+        {:ok, content <> notice}
 
       {:error, :outside_workspace} ->
         {:error, "Path escapes the workspace: #{sub_path}"}
@@ -781,12 +902,27 @@ defmodule IexCode.Tools do
 
     if session_id && session_id != "" do
       on_progress.(20, "Executing agent command in terminal: #{command}")
+      output_artifacts_config = Application.get_env(:iex_code, :output_artifacts, [])
 
       case TerminalServer.run_agent_command(session_id, command, agent_name,
              timeout_ms: timeout,
              op_id: op_id,
              workspace_path: root_path,
-             workspace_lock_identity: Map.get(args, "__workspace_lock_identity__", [])
+             workspace_lock_identity: Map.get(args, "__workspace_lock_identity__", []),
+             # Artifact policy is trusted application configuration. Tool-call
+             # extras must not disable disk spooling and move a large capture
+             # back into the BEAM heap.
+             output_artifact: Keyword.get(output_artifacts_config, :enabled, true),
+             output_artifact_attrs: %{
+               run_id: Keyword.get(Map.get(args, "__workspace_lock_identity__", []), :run_id),
+               session_id:
+                 Keyword.get(Map.get(args, "__workspace_lock_identity__", []), :session_id),
+               operation_id:
+                 trusted_operation_id(
+                   args,
+                   Map.get(args, "__workspace_lock_identity__", [])
+                 )
+             }
            ) do
         {:ok, %{exit_code: 0, output: output}} ->
           on_progress.(100, "Command exited successfully (0)")
@@ -807,30 +943,25 @@ defmodule IexCode.Tools do
     else
       on_progress.(20, "Starting command: #{command} in #{root_path}")
 
-      port =
-        Port.open(
-          {:spawn_executable, "/bin/sh"},
-          [
-            :binary,
-            :exit_status,
-            :stderr_to_stdout,
-            args: ["-c", command],
-            cd: root_path
-          ]
-        )
+      lock_identity = Map.get(args, "__workspace_lock_identity__", [])
+      output_artifacts_config = Application.get_env(:iex_code, :output_artifacts, [])
 
-      deadline = System.monotonic_time(:millisecond) + timeout
+      native_opts = [
+        timeout_ms: timeout,
+        run_id: Keyword.get(lock_identity, :run_id),
+        session_id: Keyword.get(lock_identity, :session_id),
+        operation_id: trusted_operation_id(args, lock_identity),
+        resource_run_key: Map.get(args, "run_id") || Map.get(args, :run_id) || op_id,
+        resource_priority: :background,
+        output_limit_bytes:
+          Keyword.get(output_artifacts_config, :artifact_limit_bytes, 256 * 1_048_576),
+        output_artifact: Keyword.get(output_artifacts_config, :enabled, true),
+        output_options: []
+      ]
 
-      case collect_port_output(port, deadline, {"", false}) do
-        {:done, exit_code, {output, truncated?}} ->
-          suffix =
-            if truncated? do
-              "\n\n[output truncated at #{@max_command_output} bytes]"
-            else
-              ""
-            end
-
-          output = IexCode.Sessions.sanitize_utf8(output) <> suffix
+      case NativeCommand.run(command, root_path, native_opts) do
+        {:ok, %{exit_code: exit_code, output: output}} ->
+          output = IexCode.Sessions.sanitize_utf8(output)
 
           if exit_code == 0 do
             on_progress.(100, "Command exited successfully (0)")
@@ -840,22 +971,23 @@ defmodule IexCode.Tools do
             {:ok, "Exit Code #{exit_code}:\n#{output}"}
           end
 
-        {:timeout, {output, truncated?}} ->
-          # Closing the port terminates the connected /bin/sh. Best-effort only:
-          # orphaned grandchildren spawned by the command may survive since we do
-          # not track the full OS process tree.
-          Port.close(port)
+        {:error, {:output_limit_exceeded, artifact_id}} ->
+          on_progress.(100, "Command stopped: output limit exceeded")
+          {:error, "output_limit_exceeded (artifact #{artifact_id})"}
+
+        {:error, {:timeout, artifact_id, output}} ->
           on_progress.(100, "Command timed out after #{requested_timeout}ms")
 
-          suffix =
-            if truncated? do
-              "\n\n[output truncated at #{@max_command_output} bytes]"
-            else
-              ""
-            end
-
           {:error,
-           "Command timed out after #{requested_timeout}ms. Partial output:\n#{IexCode.Sessions.sanitize_utf8(output)}#{suffix}"}
+           "Command timed out after #{requested_timeout}ms (artifact #{artifact_id}). Partial output:\n#{IexCode.Sessions.sanitize_utf8(output)}"}
+
+        {:error, :timeout} ->
+          on_progress.(100, "Command timed out after #{requested_timeout}ms")
+          {:error, "Command timed out after #{requested_timeout}ms"}
+
+        {:error, reason} ->
+          on_progress.(100, "Command failed: #{inspect(reason)}")
+          {:error, "Command failed: #{inspect(reason)}"}
       end
     end
   end
@@ -1181,6 +1313,32 @@ defmodule IexCode.Tools do
     }
   end
 
+  defp prepare_trusted_tool_args("read_output_artifact", args, root_path) when is_map(args) do
+    with {:ok, _project_or_root, identity_opts} <- resolve_lock_identity(root_path, args) do
+      operation_id = trusted_operation_id(args, identity_opts)
+
+      trusted_args =
+        args
+        |> Map.put("session_id", Keyword.get(identity_opts, :session_id))
+        |> Map.put("run_id", Keyword.get(identity_opts, :run_id))
+        |> Map.put("operation_id", operation_id)
+        |> Map.delete("op_id")
+
+      if Enum.any?(["session_id", "run_id", "operation_id"], fn key ->
+           is_binary(Map.get(trusted_args, key))
+         end) do
+        {:ok, trusted_args}
+      else
+        {:error, "Output artifact access requires a trusted session, run, or operation scope"}
+      end
+    end
+  end
+
+  defp prepare_trusted_tool_args("read_output_artifact", _args, _root_path),
+    do: {:error, "Invalid output artifact request"}
+
+  defp prepare_trusted_tool_args(_tool_name, args, _root_path), do: {:ok, args}
+
   defp arg_value(map, key, default \\ nil)
 
   defp arg_value(map, key, default) when is_map(map) and is_binary(key) do
@@ -1197,6 +1355,8 @@ defmodule IexCode.Tools do
   defp safe_existing_atom("project_id"), do: :project_id
   defp safe_existing_atom("run_id"), do: :run_id
   defp safe_existing_atom("session_id"), do: :session_id
+  defp safe_existing_atom("operation_id"), do: :operation_id
+  defp safe_existing_atom("op_id"), do: :op_id
   defp safe_existing_atom(_key), do: :__unknown_lock_arg__
 
   defp nonempty_binary(value) when is_binary(value) and value != "", do: value
@@ -1216,42 +1376,6 @@ defmodule IexCode.Tools do
 
   defp put_remaining_command_timeout(args, _tool_name, _remaining), do: args
 
-  defp excluded_dir?(name) when name in @excluded_dirs, do: true
-  defp excluded_dir?(_name), do: false
-
-  defp entry_type_and_size(path) do
-    if File.dir?(path) do
-      {"dir", "-"}
-    else
-      case File.stat(path) do
-        {:ok, stat} -> {"file", "#{stat.size}B"}
-        # Unreadable file or broken symlink — report without crashing.
-        {:error, _reason} -> {"file", "?"}
-      end
-    end
-  end
-
-  defp build_matcher(query, case_sensitive?) do
-    case Regex.compile(query, if(case_sensitive?, do: "", else: "i")) do
-      {:ok, regex} ->
-        {:regex, regex}
-
-      {:error, _invalid} ->
-        needle = if case_sensitive?, do: query, else: String.downcase(query)
-        {:text, needle}
-    end
-  end
-
-  defp line_matches?(line, {:regex, regex}, _case_sensitive?), do: Regex.match?(regex, line)
-
-  defp line_matches?(line, {:text, needle}, case_sensitive?) do
-    if case_sensitive? do
-      String.contains?(line, needle)
-    else
-      String.contains?(String.downcase(line), needle)
-    end
-  end
-
   # Writes content to a temp file next to the target, then renames it into
   # place so readers never observe a partially-written file.
   defp atomic_write(full_path, content) do
@@ -1264,48 +1388,6 @@ defmodule IexCode.Tools do
       {:error, reason} ->
         File.rm(tmp_path)
         {:error, reason}
-    end
-  end
-
-  defp collect_port_output(port, deadline, acc) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining <= 0 do
-      {:timeout, acc}
-    else
-      receive do
-        {^port, {:data, data}} ->
-          collect_port_output(port, deadline, append_capped(acc, data))
-
-        {^port, {:exit_status, status}} ->
-          {:done, status, drain_port(port, acc)}
-      after
-        remaining -> {:timeout, acc}
-      end
-    end
-  end
-
-  # Data can still be buffered after the exit status arrives; drain it
-  # without blocking.
-  defp drain_port(port, acc) do
-    receive do
-      {^port, {:data, data}} -> drain_port(port, append_capped(acc, data))
-    after
-      0 -> acc
-    end
-  end
-
-  defp append_capped({acc, truncated?}, data) do
-    cond do
-      truncated? ->
-        {acc, true}
-
-      byte_size(acc) + byte_size(data) <= @max_command_output ->
-        {acc <> data, false}
-
-      true ->
-        take = max(@max_command_output - byte_size(acc), 0)
-        {acc <> binary_part(data, 0, take), true}
     end
   end
 
@@ -1356,5 +1438,45 @@ defmodule IexCode.Tools do
       nil -> opts
       val -> Keyword.put(opts, opt_key, val)
     end
+  end
+
+  defp trusted_operation_id(args, identity_opts) do
+    operation_id = arg_value(args, "operation_id") || arg_value(args, "op_id")
+    session_id = Keyword.get(identity_opts, :session_id)
+
+    case Sessions.get_operation(operation_id) do
+      %{session_id: ^session_id} when is_binary(session_id) -> operation_id
+      _missing_or_foreign -> nil
+    end
+  rescue
+    _error -> nil
+  end
+
+  defp sanitize_artifact_chunk(data, max_bytes) do
+    data
+    |> String.replace_invalid()
+    |> truncate_valid_utf8(max_bytes)
+  end
+
+  defp sanitize_artifact_label(value) do
+    value
+    |> to_string()
+    |> String.replace_invalid()
+    |> String.replace(~r/[\x00-\x1F\x7F]+/u, " ")
+    |> String.slice(0, 200)
+  end
+
+  defp truncate_valid_utf8(data, max_bytes) when byte_size(data) <= max_bytes, do: data
+
+  defp truncate_valid_utf8(data, max_bytes) do
+    data
+    |> binary_part(0, max_bytes)
+    |> trim_invalid_utf8_suffix()
+  end
+
+  defp trim_invalid_utf8_suffix(data) do
+    if String.valid?(data),
+      do: data,
+      else: trim_invalid_utf8_suffix(binary_part(data, 0, byte_size(data) - 1))
   end
 end

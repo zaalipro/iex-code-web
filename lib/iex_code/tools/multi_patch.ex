@@ -102,34 +102,42 @@ defmodule IexCode.Tools.MultiPatch do
           | {:error, term()}
   def rollback(transaction_id) do
     case Snapshot.get_snapshot(transaction_id) do
-      {:ok, %{patches: patches, project_root: project_root}}
-      when is_binary(project_root) and project_root != "" ->
-        results = Enum.map(patches, &restore_scoped_patch(project_root, &1))
-
-        restored = for {:restored, path} <- results, do: path
-        skipped = for {:skipped, path} <- results, do: path
-        failed = for {:failed, path, _reason} <- results, do: path
-
-        if skipped == [] and failed == [] do
-          Snapshot.delete_snapshot(transaction_id)
-          {:ok, %{restored_files: restored, skipped_files: []}}
-        else
-          {:error,
-           {:partial,
-            %{
-              restored_files: restored,
-              skipped_files: skipped,
-              failed_files: failed
-            }}}
-        end
-
-      {:ok, _unscoped_snapshot} ->
-        {:error, :missing_workspace_scope}
-
-      {:error, :not_found} ->
-        {:error, {:transaction_not_found, transaction_id}}
+      {:ok, snapshot} -> rollback_snapshot(transaction_id, snapshot)
+      {:error, :not_found} -> {:error, {:transaction_not_found, transaction_id}}
     end
   end
+
+  @doc false
+  @spec rollback_snapshot(String.t(), map()) ::
+          {:ok, %{restored_files: [Path.t()], skipped_files: [Path.t()]}}
+          | {:error, term()}
+  def rollback_snapshot(
+        transaction_id,
+        %{patches: patches, project_root: project_root}
+      )
+      when is_binary(project_root) and project_root != "" do
+    results = Enum.map(patches, &restore_scoped_patch(project_root, &1))
+
+    restored = for {:restored, path} <- results, do: path
+    skipped = for {:skipped, path} <- results, do: path
+    failed = for {:failed, path, _reason} <- results, do: path
+
+    if skipped == [] and failed == [] do
+      Snapshot.delete_snapshot(transaction_id)
+      {:ok, %{restored_files: restored, skipped_files: []}}
+    else
+      {:error,
+       {:partial,
+        %{
+          restored_files: restored,
+          skipped_files: skipped,
+          failed_files: failed
+        }}}
+    end
+  end
+
+  def rollback_snapshot(_transaction_id, _unscoped_snapshot),
+    do: {:error, :missing_workspace_scope}
 
   defp restore_scoped_patch(project_root, patch) do
     case WorkspacePath.resolve(project_root, patch.path) do

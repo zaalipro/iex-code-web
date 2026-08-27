@@ -154,6 +154,47 @@ defmodule IexCode.Engine.AgentsTest do
 
       AgentSupervisor.stop_agent(session.id, :planner)
     end
+
+    test "large planner results are returned in full but retained as bounded summaries", %{
+      session: session,
+      project: project
+    } do
+      previous = Application.get_env(:iex_code, :agent_state_retention)
+
+      Application.put_env(:iex_code, :agent_state_retention,
+        inline_bytes: 128,
+        preview_bytes: 32,
+        history_items: 2,
+        history_bytes: 1_024
+      )
+
+      on_exit(fn ->
+        if is_nil(previous) do
+          Application.delete_env(:iex_code, :agent_state_retention)
+        else
+          Application.put_env(:iex_code, :agent_state_retention, previous)
+        end
+      end)
+
+      {:ok, pid} =
+        AgentSupervisor.start_agent(session.id, :planner,
+          project_root: project.root_path,
+          llm: IexCode.AgentRetentionLLMStub
+        )
+
+      Ecto.Adapters.SQL.Sandbox.allow(IexCode.Repo, self(), pid)
+
+      assert {:ok, result} = PlannerAgent.plan(pid, "Return a deliberately large plan")
+      assert byte_size(result) > 20_000
+
+      state = PlannerAgent.get_state(pid)
+      assert IexCode.Engine.AgentStateRetention.summary?(state.last_result)
+      assert [summary] = state.history
+      assert summary == state.last_result
+      assert :erlang.external_size(state.history) < 1_024
+
+      AgentSupervisor.stop_agent(session.id, :planner)
+    end
   end
 
   describe "ExplorerAgent GenServer" do

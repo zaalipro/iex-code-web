@@ -42,6 +42,54 @@ defmodule IexCode.SessionsTest do
     assert length(ops) == 1
   end
 
+  test "bounded message pages are chronological and walk backward without overlap" do
+    {:ok, project} =
+      Projects.create_project(%{name: "Paged messages", root_path: "/tmp/paged_messages"})
+
+    {:ok, session} =
+      Sessions.create_session(%{project_id: project.id, title: "Paged transcript"})
+
+    for index <- 1..7 do
+      assert {:ok, _message} =
+               Sessions.create_message(%{
+                 session_id: session.id,
+                 role: "user",
+                 content: "message-#{index}"
+               })
+    end
+
+    all = Sessions.list_messages(session.id)
+    newest = Sessions.list_messages(session.id, limit: 3)
+    older = Sessions.list_messages(session.id, limit: 3, before: List.first(newest))
+
+    assert newest == Enum.take(all, -3)
+    assert older == all |> Enum.drop(-3) |> Enum.take(-3)
+    assert MapSet.disjoint?(MapSet.new(newest, & &1.id), MapSet.new(older, & &1.id))
+  end
+
+  test "content-limited message queries never materialize the full durable body" do
+    {:ok, project} =
+      Projects.create_project(%{name: "Message previews", root_path: "/tmp/message_previews"})
+
+    {:ok, session} =
+      Sessions.create_session(%{project_id: project.id, title: "Preview transcript"})
+
+    body = String.duplicate("large", 100_000)
+
+    assert {:ok, durable} =
+             Sessions.create_message(%{session_id: session.id, role: "assistant", content: body})
+
+    assert [preview] = Sessions.list_messages(session.id, limit: 1, content_limit: 12_000)
+    assert String.length(preview.content) == 12_000
+    assert Sessions.get_message(session.id, durable.id).content == body
+  end
+
+  test "final-message lookup uses its unique durable identity" do
+    key = "run-final:#{Ecto.UUID.generate()}"
+
+    assert nil == Sessions.get_message_by_idempotency_key(key)
+  end
+
   test "message idempotency is atomic under concurrent identical requests" do
     {:ok, project} =
       Projects.create_project(%{

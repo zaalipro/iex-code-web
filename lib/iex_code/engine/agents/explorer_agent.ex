@@ -5,7 +5,7 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
   """
   use GenServer, restart: :transient
   require Logger
-  alias IexCode.Engine.{AgentRegistry, OperationManager}
+  alias IexCode.Engine.{AgentCancellation, AgentRegistry, AgentStateRetention, OperationManager}
   alias IexCode.Tools
   alias IexCode.Tools.ASTSearch
 
@@ -22,6 +22,7 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
       :session,
       :project_root,
       :control_token,
+      :cancel_token,
       status: :idle,
       current_op_id: nil,
       last_result: nil,
@@ -108,11 +109,12 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
       session: session,
       project_root: project_root,
       control_token: opts[:control_token],
+      cancel_token: if(is_binary(opts[:run_id]), do: nil, else: AgentCancellation.new()),
       status: :idle
     }
 
     unless is_binary(opts[:run_id]) do
-      set_cancelled?(session_id, false)
+      AgentCancellation.erase_legacy(__MODULE__, session_id)
       subscribe_steering(session_id)
     end
 
@@ -232,18 +234,25 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
 
     case explore_res do
       {:ok, summary} ->
+        {last_result, history} = AgentStateRetention.remember(state.history, summary)
+
         new_state = %State{
           state
           | status: :idle,
-            last_result: summary,
-            history: [summary | state.history]
+            last_result: last_result,
+            history: history
         }
 
-        {:reply, {:ok, summary}, new_state}
+        {:reply, {:ok, summary}, new_state, :hibernate}
 
       {:error, reason} ->
-        new_state = %State{state | status: :idle, last_result: {:error, reason}}
-        {:reply, {:error, reason}, new_state}
+        new_state = %State{
+          state
+          | status: :idle,
+            last_result: AgentStateRetention.retain({:error, reason})
+        }
+
+        {:reply, {:error, reason}, new_state, :hibernate}
     end
   end
 
@@ -251,14 +260,14 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
   def handle_call({:search_ast, query_map, opts}, _from, %State{} = state) do
     project_root = opts[:project_root] || state.project_root
     res = ASTSearch.search(project_root, query_map)
-    {:reply, res, state}
+    {:reply, res, state, :hibernate}
   end
 
   @impl true
   def handle_call({:grep, query, opts}, _from, %State{} = state) do
     project_root = opts[:project_root] || state.project_root
     res = Tools.execute("grep_search", %{"query" => query}, project_root, fn _, _ -> :ok end)
-    {:reply, res, state}
+    {:reply, res, state, :hibernate}
   end
 
   @impl true
@@ -281,12 +290,12 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
         Tools.execute("run_command", args, project_root, fn _, _ -> :ok end)
       end)
 
-    {:reply, res, state}
+    {:reply, res, state, :hibernate}
   end
 
   @impl true
   def handle_call(:get_state, _from, %State{} = state) do
-    {:reply, state, state}
+    {:reply, state, state, :hibernate}
   end
 
   defp trusted_project_id(state) do
@@ -335,12 +344,8 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
     Phoenix.PubSub.subscribe(IexCode.PubSub, "session:#{session_id}:steer")
   end
 
-  defp set_cancelled?(session_id, value) do
-    :persistent_term.put({__MODULE__, :cancelled?, session_id}, value)
-  end
-
-  defp cancelled_fun(%State{control_token: nil, session_id: session_id}) do
-    fn -> :persistent_term.get({__MODULE__, :cancelled?, session_id}, false) end
+  defp cancelled_fun(%State{control_token: nil, cancel_token: token}) do
+    fn -> AgentCancellation.cancelled?(token) end
   end
 
   defp cancelled_fun(%State{control_token: token}) do
@@ -348,40 +353,40 @@ defmodule IexCode.Engine.Agents.ExplorerAgent do
   end
 
   @impl true
-  def handle_info({:cancel, session_id, _opts}, state) do
-    set_cancelled?(session_id, true)
-    {:noreply, state}
+  def handle_info({:cancel, session_id, _opts}, %{session_id: session_id} = state) do
+    AgentCancellation.cancel(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
-  def handle_info({:pause, session_id}, state) do
-    set_cancelled?(session_id, true)
-    {:noreply, state}
+  def handle_info({:pause, session_id}, %{session_id: session_id} = state) do
+    AgentCancellation.cancel(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
-  def handle_info({:resume, session_id}, state) do
-    set_cancelled?(session_id, false)
-    {:noreply, state}
+  def handle_info({:resume, session_id}, %{session_id: session_id} = state) do
+    AgentCancellation.resume(state.cancel_token)
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({ref, _result}, state) when is_reference(ref) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info({:operation_task_done, _op_id, _result}, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 
   @impl true
   def handle_info(_msg, state) do
-    {:noreply, state}
+    {:noreply, state, :hibernate}
   end
 end

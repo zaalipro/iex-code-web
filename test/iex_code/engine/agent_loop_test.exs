@@ -197,6 +197,34 @@ defmodule IexCode.Engine.AgentLoopTest do
            end) == 1
   end
 
+  test "initial model history is queried with bounded count and content", context do
+    for index <- 1..30 do
+      assert {:ok, _message} =
+               Sessions.create_message(%{
+                 session_id: context.session.id,
+                 role: if(rem(index, 2) == 0, do: "assistant", else: "user"),
+                 content: "history-#{index}:" <> String.duplicate("x", 30_000)
+               })
+    end
+
+    run = running_run(context)
+
+    Process.put(:agent_loop_responses, [
+      {:ok, %{text: "Bounded history complete", tool_calls: [], usage: %{}}}
+    ])
+
+    assert {:ok, _result} = execute(run, context.root)
+    assert_receive {:agent_loop_llm_call, messages, _system, _policy}
+
+    # 20 historical rows plus the current objective; every historical content
+    # body was truncated in SQL before it reached the agent process.
+    assert length(messages) <= 21
+
+    assert Enum.all?(Enum.drop(messages, -1), fn message ->
+             String.length(message.content) <= 20_000
+           end)
+  end
+
   test "normalizes an OpenAI function-shaped tool call through the real loop", context do
     run = running_run(context, execution_policy: %{"allowed_tools" => ["read_file"]})
 

@@ -76,6 +76,55 @@ if config_env() == :prod do
   public_port = parse_integer.("PHX_PORT", public_port_default, 1..65_535)
   pool_size = parse_integer.("POOL_SIZE", 5, 1..50)
 
+  terminal_idle_timeout_ms =
+    parse_integer.("IEX_CODE_TERMINAL_IDLE_TIMEOUT_MS", 1_800_000, 1_000..86_400_000)
+
+  http_pool_size = parse_integer.("IEX_CODE_HTTP_POOL_SIZE", 8, 1..64)
+
+  http_pool_idle_ms =
+    parse_integer.("IEX_CODE_HTTP_POOL_IDLE_MS", 60_000, 1_000..3_600_000)
+
+  http_connection_idle_ms =
+    parse_integer.("IEX_CODE_HTTP_CONNECTION_IDLE_MS", 30_000, 1_000..3_600_000)
+
+  memory_limit_mib = parse_integer.("IEX_CODE_MEMORY_LIMIT_MIB", 2_048, 256..65_536)
+
+  resource_profile =
+    case System.get_env("IEX_CODE_RESOURCE_PROFILE", "balanced") do
+      "compact" ->
+        :compact
+
+      "balanced" ->
+        :balanced
+
+      "throughput" ->
+        :throughput
+
+      # A custom deployment keeps its explicit Docker envelope while choosing
+      # governor headroom from the nearest conservative preset. Treating every
+      # custom limit as balanced can make the 512 MiB build class impossible to
+      # admit on an otherwise healthy custom 1 GiB installation.
+      "custom" ->
+        cond do
+          memory_limit_mib <= 1_024 -> :compact
+          memory_limit_mib <= 2_048 -> :balanced
+          true -> :throughput
+        end
+
+      value ->
+        raise "IEX_CODE_RESOURCE_PROFILE is invalid: #{inspect(value)}"
+    end
+
+  sqlite_cache_kib = parse_integer.("SQLITE_CACHE_KIB", 16_384, 1_024..262_144)
+
+  sqlite_temp_store =
+    case System.get_env("SQLITE_TEMP_STORE", "file") |> String.downcase() do
+      "default" -> :default
+      "file" -> :file
+      "memory" -> :memory
+      value -> raise "SQLITE_TEMP_STORE must be default, file, or memory, got: #{inspect(value)}"
+    end
+
   bind_ip =
     case System.get_env("IEX_CODE_BIND") do
       value when value in [nil, ""] ->
@@ -136,11 +185,21 @@ if config_env() == :prod do
   config :iex_code,
     workspace_root: workspace_root,
     default_workspace_path: default_workspace,
+    terminal_idle_timeout_ms: terminal_idle_timeout_ms,
     dns_cluster_query: System.get_env("DNS_CLUSTER_QUERY")
+
+  config :iex_code, :resource_governor, profile: resource_profile
+
+  config :iex_code, :http_pool,
+    size: http_pool_size,
+    pool_max_idle_time: http_pool_idle_ms,
+    conn_max_idle_time: http_connection_idle_ms
 
   config :iex_code, IexCode.Repo,
     database: database_path,
     pool_size: pool_size,
+    cache_size: -sqlite_cache_kib,
+    temp_store: sqlite_temp_store,
     busy_timeout: 5_000,
     journal_mode: :wal
 

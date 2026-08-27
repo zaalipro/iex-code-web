@@ -22,6 +22,7 @@ defmodule IexCode.Execution.Policy do
   }
   @core_tools ~w(
     read_file
+    read_output_artifact
     write_file
     patch_file
     multi_patch

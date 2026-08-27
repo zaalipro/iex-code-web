@@ -940,6 +940,80 @@ body.phx-disconnected::after {
   background: #090d12;
 }
 
+.settings-policy-note {
+  border: 1px solid #29313a;
+  background: #0c1015;
+  padding: 1rem;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.settings-policy-note:hover {
+  border-color: #46515e;
+  transform: translateY(-1px);
+}
+
+.settings-policy-note span {
+  display: block;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.25rem;
+  font-weight: 650;
+}
+
+.settings-policy-note p {
+  margin-top: .35rem;
+  color: #9ca3af;
+  font-size: .78rem;
+}
+
+.settings-policy-note em,
+.settings-restart-badge {
+  display: inline-flex;
+  margin-top: .65rem;
+  border: 1px solid rgb(52 211 153 / .25);
+  background: rgb(52 211 153 / .07);
+  padding: .2rem .45rem;
+  color: #6ee7b7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .625rem;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.settings-restart-badge {
+  margin-top: 0;
+  border-color: rgb(251 191 36 / .25);
+  background: rgb(251 191 36 / .07);
+  color: #fcd34d;
+}
+
+.settings-advanced-disclosure {
+  border: 1px solid #29313a;
+  background: #10151b;
+}
+
+.settings-advanced-disclosure summary {
+  display: flex;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  color: #e5e7eb;
+}
+
+.settings-advanced-disclosure summary::-webkit-details-marker { display: none; }
+.settings-advanced-disclosure summary small { display: block; margin-top: .2rem; color: #6b7280; font-size: .72rem; font-weight: 400; }
+.settings-advanced-disclosure[open] summary svg { transform: rotate(180deg); }
+.settings-advanced-disclosure summary svg { transition: transform 160ms ease; }
+
+#settings-deployment-limits dl > div { background: #10151b; padding: .8rem; }
+#settings-deployment-limits dt { color: #6b7280; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .625rem; letter-spacing: .08em; text-transform: uppercase; }
+#settings-deployment-limits dd { margin-top: .35rem; color: #e5e7eb; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; font-weight: 650; overflow-wrap: anywhere; }
+
 .settings-runtime-overview {
   display: grid;
   gap: 1rem;

@@ -27,6 +27,7 @@ defmodule IexCode.Tools.PTYAdapter do
     :port,
     :mode,
     :os_pid,
+    :shim_pid,
     :cols,
     :rows,
     :cwd,
@@ -37,6 +38,7 @@ defmodule IexCode.Tools.PTYAdapter do
           port: port(),
           mode: mode(),
           os_pid: integer() | nil,
+          shim_pid: integer() | nil,
           cols: pos_integer(),
           rows: pos_integer(),
           cwd: String.t(),
@@ -163,6 +165,17 @@ defmodule IexCode.Tools.PTYAdapter do
 
   def send_signal(_target, _signal), do: {:error, :invalid_target}
 
+  @doc "Terminates an OS process group, falling back to its leader when necessary."
+  @spec terminate_process_group(pos_integer(), signal()) :: :ok
+  def terminate_process_group(os_pid, signal \\ :sigkill)
+
+  def terminate_process_group(os_pid, signal)
+      when is_integer(os_pid) and os_pid > 0 do
+    signal_os_pid(os_pid, signal)
+  end
+
+  def terminate_process_group(_os_pid, _signal), do: :ok
+
   @doc false
   @spec send_tracked_signal(t(), signal(), non_neg_integer()) :: :ok | {:error, term()}
   def send_tracked_signal(
@@ -191,20 +204,35 @@ defmodule IexCode.Tools.PTYAdapter do
   Closes the port and cleanly tears down child processes.
   """
   @spec close(adapter :: t()) :: :ok
-  def close(%__MODULE__{port: port, mode: :pty}) do
+  def close(%__MODULE__{port: port, mode: :pty, shim_pid: shim_pid, os_pid: shell_pid}) do
     if is_port(port) do
-      try do
-        # Opcode 4 = OP_CLOSE
-        Port.command(port, <<4>>)
-      rescue
-        _ -> :ok
-      end
+      shim_pid = shim_pid || port_os_pid(port)
 
-      try do
-        Port.close(port)
-      rescue
-        _ -> :ok
+      # Output backpressure can block the shim in stdout and prevent it from
+      # reading an OP_CLOSE control frame. SIGTERM invokes its teardown handler
+      # out-of-band, which kills foreground jobs, kills the shell group, and
+      # synchronously waitpid-reaps the shell before exiting.
+      if shim_pid, do: signal_single_pid(shim_pid, 15)
+
+      # Give the shim ownership of teardown: it terminates and waitpid-reaps
+      # the session leader before exiting. Do not consume Port exit messages
+      # here: they are delivered to the TerminalSession owner, while callers of
+      # close/1 may be different processes during supervised lifecycle churn.
+      wait_for_port_close(port, shim_pid, 1_000)
+
+      if Port.info(port) do
+        if shell_pid, do: kill_process_tree(shell_pid)
+        if shim_pid, do: signal_single_pid(shim_pid, 9)
+
+        try do
+          Port.close(port)
+        rescue
+          _ -> :ok
+        end
       end
+    else
+      if shell_pid, do: kill_process_tree(shell_pid)
+      if shim_pid, do: signal_single_pid(shim_pid, 9)
     end
 
     :ok
@@ -227,6 +255,74 @@ defmodule IexCode.Tools.PTYAdapter do
   end
 
   def close(_adapter), do: :ok
+
+  defp wait_for_port_close(_port, _shim_pid, remaining_ms) when remaining_ms <= 0, do: :timeout
+
+  defp wait_for_port_close(port, shim_pid, remaining_ms) do
+    if Port.info(port) do
+      case Port.info(port, :connected) do
+        {:connected, owner} when owner == self() ->
+          receive do
+            {^port, {:exit_status, _status}} -> :ok
+            {:EXIT, ^port, _reason} -> :ok
+          after
+            10 -> wait_for_port_close(port, shim_pid, remaining_ms - 10)
+          end
+
+        _different_owner ->
+          receive do
+          after
+            10 -> wait_for_port_close(port, shim_pid, remaining_ms - 10)
+          end
+      end
+    else
+      :ok
+    end
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp signal_single_pid(pid, signal) do
+    _ = System.cmd("kill", ["-#{signal}", to_string(pid)], stderr_to_stdout: true)
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp port_os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} when is_integer(pid) and pid > 0 -> pid
+      _other -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp kill_process_tree(pid) when is_integer(pid) and pid > 0 do
+    children =
+      case System.cmd("pgrep", ["-P", to_string(pid)], stderr_to_stdout: true) do
+        {output, 0} ->
+          output
+          |> String.split(~r/\s+/, trim: true)
+          |> Enum.flat_map(fn value ->
+            case Integer.parse(value) do
+              {child, ""} when child > 0 -> [child]
+              _invalid -> []
+            end
+          end)
+
+        _other ->
+          []
+      end
+
+    Enum.each(children, &kill_process_tree/1)
+    _ = signal_os_pid(pid, :sigkill)
+    :ok
+  end
+
+  defp kill_process_tree(_pid), do: :ok
 
   @doc """
   Processes a raw message from the Erlang Port.
@@ -342,6 +438,7 @@ defmodule IexCode.Tools.PTYAdapter do
            port: port,
            mode: :pty,
            os_pid: os_pid,
+           shim_pid: port_os_pid(port),
            cols: cols,
            rows: rows,
            cwd: cwd,

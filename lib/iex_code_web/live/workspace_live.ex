@@ -1,7 +1,18 @@
 defmodule IexCodeWeb.WorkspaceLive do
   use IexCodeWeb, :live_view
   require Logger
-  alias IexCode.{Projects, Runs, Sessions, Settings, Kanban, WorkspaceLocks, WorkspacePath}
+
+  alias IexCode.{
+    Projects,
+    Runs,
+    Sessions,
+    Settings,
+    Kanban,
+    WorkspaceFiles,
+    WorkspaceLocks,
+    WorkspacePath
+  }
+
   alias IexCode.Engine.SessionServer
   alias IexCode.Execution.{CommandError, CommandParser, Intent, Router}
   alias IexCode.Runs.{DagProjection, DagScheduler, RunDispatcher}
@@ -17,6 +28,14 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   # Terminal output is capped to the last N lines (ring buffer)
   @terminal_output_max_lines 500
+  @message_page_size 100
+  @message_retained_limit 500
+  @message_preview_chars 12_000
+  @message_retained_bytes 1_000_000
+  @operation_retained_limit 200
+  @file_page_size 500
+  @file_retained_limit 2_000
+  @diff_retained_bytes 2 * 1_024 * 1_024
   @max_prompt_with_research_bytes 90_000
   @max_dag_manifest_json_bytes 256_000
   @dag_manifest_sample Jason.encode_to_iodata!(
@@ -57,7 +76,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                          pretty: true
                        )
                        |> IO.iodata_to_binary()
-  @workspace_tabs ~w(kanban swarm research calendar changes tests ast chat files terminal)
+  @workspace_tabs ~w(kanban swarm research calendar changes chat files terminal)
 
   @impl true
   def mount(params, _session, socket) do
@@ -78,16 +97,19 @@ defmodule IexCodeWeb.WorkspaceLive do
       ResearchResults.subscribe_session(session.id)
       Settings.subscribe()
       SessionServer.ensure_started(session.id)
-      _ = TerminalServer.ensure_started(session.id, workspace_path: project.root_path)
     end
 
-    messages = Sessions.list_messages(session.id)
+    raw_messages =
+      session.id
+      |> Sessions.list_messages(limit: @message_page_size, content_limit: @message_preview_chars)
 
-    operations = Sessions.list_operations(session.id)
+    messages = bound_message_window(raw_messages, :newest)
+
+    operations = Sessions.list_operations(session.id, limit: @operation_retained_limit)
     durable_runs = Runs.list_runs(session_id: session.id, limit: 100)
     selected_run = List.first(durable_runs)
     run_events = if selected_run, do: Runs.list_latest_events(selected_run, limit: 500), else: []
-    run_steps = if selected_run, do: Runs.list_steps(selected_run), else: []
+    run_steps = if selected_run, do: Runs.list_step_summaries(selected_run), else: []
     run_approvals = if selected_run, do: Runs.list_approvals(selected_run), else: []
     run_controls = if selected_run, do: Runs.list_controls(selected_run), else: []
     pending_approval_count = Runs.count_pending_approvals(session.id)
@@ -97,7 +119,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     workspace_locks = Runs.list_workspace_locks(project_id: project.id, active: true)
     settings = Settings.get_settings()
     ready_research_results = ResearchResults.list_ready(session_id: session.id)
-    files = list_project_files(project.root_path)
+    files = []
     sessions = Sessions.list_sessions_for_project(project.id)
     tasks = Kanban.list_tasks(project.id)
 
@@ -109,7 +131,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         _ -> %{}
       end
 
-    terminal_status = Map.get(terminal_state, :status, :ready)
+    terminal_status = Map.get(terminal_state, :status, :idle)
     terminal_shell = Map.get(terminal_state, :shell, "zsh")
     terminal_cols = Map.get(terminal_state, :cols, 80)
     terminal_rows = Map.get(terminal_state, :rows, 24)
@@ -131,7 +153,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:sessions, sessions)
       |> assign(:all_sessions, sessions)
       |> assign(:messages, messages)
-      |> assign(:all_messages, messages)
+      |> assign(:messages_more?, length(raw_messages) == @message_page_size)
+      |> assign(:messages_newer?, false)
       |> assign(:operations, operations)
       |> assign(:selected_run, selected_run)
       |> assign(:run_steps, run_steps)
@@ -207,8 +230,12 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:is_dirty?, false)
       |> assign(:file_filter, "")
       |> assign(:expanded_folders, all_directory_paths(files))
+      |> assign(:files_loaded?, false)
+      |> assign(:files_more?, false)
+      |> assign(:file_limit, @file_page_size)
       # Interactive Diff assigns (real git state; populated by refresh_git_state below)
       |> assign(:diff_text, "")
+      |> assign(:diff_truncated?, false)
       |> assign(:diff_mode, "inline")
       |> assign(:diff_file_path, nil)
       |> assign(:diff_hunks, [])
@@ -221,7 +248,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:files, files)
       # Terminal assigns
       |> assign(:terminal_output, "")
-      |> assign(:terminal_running?, terminal_status in [:ready, :running])
+      |> assign(:terminal_running?, terminal_status in [:starting, :ready, :running])
       |> assign(:terminal_status, terminal_status)
       |> assign(:terminal_shell, terminal_shell)
       |> assign(:terminal_cols, terminal_cols)
@@ -265,6 +292,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:show_scheduled_task_modal, false)
       |> assign(:show_edit_scheduled_task_modal, false)
       |> assign(:expanded_message_id, nil)
+      |> assign(:expanded_message, nil)
       |> assign(:selected_scheduled_task, nil)
       |> assign(:selected_calendar_date, today_str)
       |> assign(:calendar_year, today.year)
@@ -331,30 +359,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:show_command_palette, false)
       |> assign(:command_palette_query, "")
       |> assign(:command_palette_category, "all")
-      |> assign(:command_palette_results, CommandPalette.search("", files, sessions, "all"))
+      |> assign(:command_palette_results, CommandPalette.search("", sessions, "all"))
       |> assign(:command_palette_selected_index, 0)
-      # Visual Test Studio & AutoFix assigns
-      |> assign(:test_runner_status, :idle)
-      |> assign(:test_runner_progress_pct, 0)
-      |> assign(:test_runner_progress_msg, "")
-      |> assign(:test_runner_result, nil)
-      |> assign(:test_runner_async_task, nil)
-      |> assign(:test_runner_task_token, nil)
-      |> assign(:show_autofix_modal, false)
-      |> assign(:autofix_status, :idle)
-      |> assign(:autofix_target_failure, nil)
-      |> assign(:autofix_proposals, [])
-      |> assign(:autofix_planned_patches, [])
-      |> assign(:autofix_diff, nil)
-      |> assign(:autofix_tx_id, nil)
-      # AST Query Explorer assigns
-      |> assign(:ast_query, "")
-      |> assign(:ast_type_filter, "all")
-      |> assign(:ast_visibility, "all")
-      |> assign(:ast_scope_path, "")
-      |> assign(:ast_results, [])
-      |> assign(:ast_searching?, false)
-      |> assign(:ast_total_count, 0)
       # Git Branch & Staging Hub assigns
       |> assign(:git_branches, [])
       |> assign(:current_branch, "main")
@@ -366,9 +372,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:unstaged_diffs, [])
       |> assign(:active_diff_scope, :unstaged)
       |> stream(:run_agents, run_agents, dom_id: &"run-agent-#{&1.id}")
-
-    # Initialize live git state if git is available
-    socket = refresh_git_state(socket)
 
     socket =
       if mount_error do
@@ -433,16 +436,22 @@ defmodule IexCodeWeb.WorkspaceLive do
                 end
 
                 SessionServer.ensure_started(new_session.id)
-
-                _ =
-                  TerminalServer.ensure_started(new_session.id, workspace_path: project.root_path)
               end
 
-              messages = Sessions.list_messages(new_session.id)
-              operations = Sessions.list_operations(new_session.id)
+              raw_messages =
+                new_session.id
+                |> Sessions.list_messages(
+                  limit: @message_page_size,
+                  content_limit: @message_preview_chars
+                )
+
+              messages = bound_message_window(raw_messages, :newest)
+
+              operations =
+                Sessions.list_operations(new_session.id, limit: @operation_retained_limit)
+
               projects = Projects.list_projects()
               sessions = Sessions.list_sessions_for_project(project.id)
-              files = list_project_files(project.root_path)
               tasks = Kanban.list_tasks(project.id)
 
               terminal_state =
@@ -451,11 +460,15 @@ defmodule IexCodeWeb.WorkspaceLive do
                   _ -> %{}
                 end
 
-              terminal_status = Map.get(terminal_state, :status, :ready)
+              terminal_status = Map.get(terminal_state, :status, :idle)
               terminal_shell = Map.get(terminal_state, :shell, "zsh")
               terminal_cols = Map.get(terminal_state, :cols, 80)
               terminal_rows = Map.get(terminal_state, :rows, 24)
               terminal_occupant = Map.get(terminal_state, :occupant, :user)
+
+              if socket.assigns.active_tab == "terminal" do
+                _ = TerminalServer.detach_viewer(old_id, self())
+              end
 
               socket =
                 socket
@@ -465,17 +478,25 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:all_projects, projects)
                 |> assign(:sessions, sessions)
                 |> assign(:all_sessions, sessions)
-                |> assign(:project_files, files)
+                |> assign(:project_files, [])
+                |> assign(:files, [])
+                |> assign(:files_loaded?, false)
+                |> assign(:files_more?, false)
+                |> assign(:file_limit, @file_page_size)
+                |> assign(:expanded_folders, MapSet.new())
                 |> assign(:tasks, tasks)
                 |> assign(:page_title, "#{new_session.title} · #{project.name}")
                 |> assign(:messages, messages)
-                |> assign(:all_messages, messages)
+                |> assign(:messages_more?, length(raw_messages) == @message_page_size)
+                |> assign(:messages_newer?, false)
+                |> assign(:expanded_message_id, nil)
+                |> assign(:expanded_message, nil)
                 |> assign(:workspace_search, "")
                 |> assign(:workspace_search_form, to_form(%{"query" => ""}))
                 |> assign(:file_filter, "")
                 |> assign(:file_filter_form, to_form(%{"filter" => ""}))
                 |> assign(:operations, operations)
-                |> assign(:terminal_running?, terminal_status in [:ready, :running])
+                |> assign(:terminal_running?, terminal_status in [:starting, :ready, :running])
                 |> assign(:terminal_status, terminal_status)
                 |> assign(:terminal_shell, terminal_shell)
                 |> assign(:terminal_cols, terminal_cols)
@@ -490,7 +511,34 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign_run_projection(new_session.id)
                 |> refresh_research_results()
                 |> clear_research_attachments()
-                |> refresh_git_state()
+
+              socket =
+                case socket.assigns.active_tab do
+                  "changes" -> refresh_git_state(socket)
+                  "files" -> load_workspace_files(socket, @file_page_size)
+                  _other -> socket
+                end
+
+              socket =
+                if socket.assigns.active_tab == "terminal" do
+                  case ensure_terminal_attached(socket) do
+                    {:ok, attached_socket} ->
+                      attached_socket
+                      |> push_event("terminal_reset", %{})
+                      |> push_event("terminal_history", %{
+                        history: TerminalServer.get_history(new_session.id)
+                      })
+
+                    {:error, reason, failed_socket} ->
+                      put_flash(
+                        failed_socket,
+                        :error,
+                        "Failed to start terminal: #{inspect(reason)}"
+                      )
+                  end
+                else
+                  socket
+                end
 
               {:noreply, socket}
           end
@@ -506,17 +554,15 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("switch_tab", %{"tab" => tab}, socket) when tab in @workspace_tabs do
+    previous_tab = socket.assigns.active_tab
     socket = assign(socket, :active_tab, tab)
 
     socket = if tab == "changes", do: refresh_git_state(socket), else: socket
-
-    socket =
-      if tab == "files",
-        do: assign(socket, :project_files, list_project_files(socket.assigns.project.root_path)),
-        else: socket
+    socket = if tab == "files", do: ensure_workspace_files_loaded(socket), else: socket
 
     socket = if tab == "swarm", do: refresh_run_fleet(socket), else: socket
     socket = if tab == "research", do: refresh_research_results(socket), else: socket
+    socket = update_terminal_viewer(socket, previous_tab, tab)
 
     socket =
       if socket.assigns.live_action == :research and tab != "research" do
@@ -532,17 +578,15 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   def handle_event("switch_tab", %{"sidebar_tab" => tab}, socket)
       when tab in @workspace_tabs do
+    previous_tab = socket.assigns.active_tab
     socket = assign(socket, :active_tab, tab)
 
     socket = if tab == "changes", do: refresh_git_state(socket), else: socket
-
-    socket =
-      if tab == "files",
-        do: assign(socket, :project_files, list_project_files(socket.assigns.project.root_path)),
-        else: socket
+    socket = if tab == "files", do: ensure_workspace_files_loaded(socket), else: socket
 
     socket = if tab == "swarm", do: refresh_run_fleet(socket), else: socket
     socket = if tab == "research", do: refresh_research_results(socket), else: socket
+    socket = update_terminal_viewer(socket, previous_tab, tab)
 
     socket =
       if socket.assigns.live_action == :research and tab != "research" do
@@ -625,12 +669,17 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("expand_message", %{"id" => id}, socket) do
-    {:noreply, assign(socket, :expanded_message_id, id)}
+    message = Sessions.get_message(socket.assigns.session.id, id)
+
+    {:noreply,
+     socket
+     |> assign(:expanded_message_id, if(message, do: id, else: nil))
+     |> assign(:expanded_message, message)}
   end
 
   @impl true
   def handle_event("close_expand_message", _params, socket) do
-    {:noreply, assign(socket, :expanded_message_id, nil)}
+    {:noreply, socket |> assign(:expanded_message_id, nil) |> assign(:expanded_message, nil)}
   end
 
   @impl true
@@ -1281,15 +1330,13 @@ defmodule IexCodeWeb.WorkspaceLive do
               end
             end)
 
-          files = list_project_files(socket.assigns.project.root_path)
-
           socket =
             socket
             |> assign(:file_content, content)
             |> assign(:dirty_content, content)
             |> assign(:is_dirty?, false)
             |> assign(:open_buffers, buffers)
-            |> assign(:project_files, files)
+            |> load_workspace_files(socket.assigns.file_limit)
             |> refresh_git_state()
 
           socket =
@@ -1386,18 +1433,71 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("refresh_files", _params, socket) do
-    files = list_project_files(socket.assigns.project.root_path)
+    {:noreply,
+     socket
+     |> assign(:file_limit, @file_page_size)
+     |> load_workspace_files(@file_page_size)}
+  end
 
-    new_expanded =
-      MapSet.union(
-        socket.assigns.expanded_folders || MapSet.new(),
-        all_directory_paths(files)
-      )
+  @impl true
+  def handle_event("load_more_files", _params, socket) do
+    next_limit = min(socket.assigns.file_limit + @file_page_size, @file_retained_limit)
+    {:noreply, load_workspace_files(socket, next_limit)}
+  end
+
+  @impl true
+  def handle_event("load_older_messages", _params, socket) do
+    first = List.first(socket.assigns.messages)
+
+    older =
+      if first,
+        do:
+          Sessions.list_messages(socket.assigns.session.id,
+            limit: @message_page_size,
+            before: first,
+            content_limit: @message_preview_chars
+          ),
+        else: []
+
+    combined = older ++ socket.assigns.messages
+    messages = combined |> Enum.take(@message_retained_limit) |> bound_message_window(:oldest)
+    reached_retained_limit? = length(combined) >= @message_retained_limit
 
     {:noreply,
      socket
-     |> assign(:project_files, files)
-     |> assign(:expanded_folders, new_expanded)}
+     |> assign(:messages, messages)
+     |> assign(
+       :messages_more?,
+       length(older) == @message_page_size
+     )
+     |> assign(:messages_newer?, socket.assigns.messages_newer? or reached_retained_limit?)}
+  end
+
+  @impl true
+  def handle_event("load_newer_messages", _params, socket) do
+    last = List.last(socket.assigns.messages)
+
+    newer =
+      if last,
+        do:
+          Sessions.list_messages(socket.assigns.session.id,
+            limit: @message_page_size,
+            after: last,
+            content_limit: @message_preview_chars
+          ),
+        else: []
+
+    combined = socket.assigns.messages ++ newer
+    shifted? = length(combined) > @message_retained_limit
+
+    {:noreply,
+     socket
+     |> assign(
+       :messages,
+       combined |> Enum.take(-@message_retained_limit) |> bound_message_window(:newest)
+     )
+     |> assign(:messages_more?, socket.assigns.messages_more? or shifted?)
+     |> assign(:messages_newer?, length(newer) == @message_page_size)}
   end
 
   # ============================================================================
@@ -1413,44 +1513,19 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("select_diff_file", params, socket) do
     file_path = params["file"] || params["path"]
     root = socket.assigns.project.root_path
+    scope = if(params["scope"] == "staged", do: :staged, else: :unstaged)
 
     if file_path do
-      # Find in parsed_diffs
-      matching_diff =
-        Enum.find(
-          socket.assigns.parsed_diffs,
-          &(&1.path == file_path or &1.new_path == file_path or &1.old_path == file_path)
-        )
-
-      {hunks, diff_text} =
-        if matching_diff do
-          formatted =
-            Enum.map_join(
-              matching_diff.hunks,
-              "\n",
-              &DiffParser.format_hunk_patch(matching_diff, &1)
-            )
-
-          {matching_diff.hunks, formatted}
-        else
-          case Git.diff(root, paths: [file_path], unified: 3) do
-            {:ok, raw} when is_binary(raw) and raw != "" ->
-              case DiffParser.parse(raw) do
-                {:ok, [fd | _]} -> {fd.hunks, raw}
-                _ -> {[], raw}
-              end
-
-            _ ->
-              {[], ""}
-          end
-        end
+      {hunks, diff_text, truncated?} = load_selected_diff(root, file_path, scope)
 
       {:noreply,
        socket
        |> assign(:selected_diff_file, file_path)
+       |> assign(:active_diff_scope, scope)
        |> assign(:diff_file_path, file_path)
        |> assign(:diff_hunks, hunks)
-       |> assign(:diff_text, diff_text)}
+       |> assign(:diff_text, diff_text)
+       |> assign(:diff_truncated?, truncated?)}
     else
       {:noreply, socket}
     end
@@ -1553,12 +1628,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("toggle_command_palette", _params, socket) do
     new_show = !socket.assigns.show_command_palette
     query = if new_show, do: "", else: socket.assigns.command_palette_query
-    files = socket.assigns[:project_files] || []
     sessions = socket.assigns[:all_sessions] || []
 
     results =
       if new_show,
-        do: CommandPalette.search("", files, sessions, socket.assigns.command_palette_category),
+        do: CommandPalette.search("", sessions, socket.assigns.command_palette_category),
         else: []
 
     socket =
@@ -1579,11 +1653,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("command_palette_search", %{"query" => query}, socket) do
-    files = socket.assigns[:project_files] || []
     sessions = socket.assigns[:all_sessions] || []
 
     results =
-      CommandPalette.search(query, files, sessions, socket.assigns.command_palette_category)
+      CommandPalette.search(query, sessions, socket.assigns.command_palette_category)
 
     {:noreply,
      socket
@@ -1594,11 +1667,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("command_palette_set_category", %{"category" => category}, socket) do
-    files = socket.assigns[:project_files] || []
     sessions = socket.assigns[:all_sessions] || []
 
     results =
-      CommandPalette.search(socket.assigns.command_palette_query, files, sessions, category)
+      CommandPalette.search(socket.assigns.command_palette_query, sessions, category)
 
     {:noreply,
      socket
@@ -1654,273 +1726,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     else
       {:noreply, assign(socket, :show_command_palette, false)}
     end
-  end
-
-  # ============================================================================
-  # Event Handlers: Visual Test Runner & 1-Click AutoFix Studio
-  # ============================================================================
-
-  @impl true
-  def handle_event("run_tests", params, socket) do
-    if socket.assigns.test_runner_async_task do
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         "A test run is already in progress. Wait for it to finish before retrying."
-       )}
-    else
-      start_test_runner(params, socket)
-    end
-  end
-
-  @impl true
-  def handle_event("autofix_failure", %{"index" => idx_str}, socket) do
-    idx = String.to_integer(idx_str)
-    result = socket.assigns.test_runner_result
-
-    failure =
-      if result do
-        Enum.find(result.failures, fn f -> f.index == idx end) ||
-          Enum.find(result.compilation_errors, fn ce -> to_string(ce.line) == idx_str end)
-      end
-
-    if is_nil(failure) do
-      {:noreply, put_flash(socket, :error, "Failure ##{idx} not found in current test results")}
-    else
-      project_root = socket.assigns.project.root_path
-
-      case IexCode.Tools.AutoFix.generate_patch_proposals(project_root, failure) do
-        {:ok, []} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "No heuristic AutoFix patch could be formulated for this error.")}
-
-        {:ok, proposals} ->
-          case IexCode.Tools.MultiPatch.preview_patches(project_root, proposals) do
-            {:ok, %{diff: diff_str, patches: planned}} ->
-              {:noreply,
-               socket
-               |> assign(:show_autofix_modal, true)
-               |> assign(:autofix_status, :proposal_ready)
-               |> assign(:autofix_target_failure, failure)
-               |> assign(:autofix_proposals, proposals)
-               |> assign(:autofix_planned_patches, planned)
-               |> assign(:autofix_diff, diff_str)
-               |> assign(:autofix_tx_id, nil)}
-
-            {:error, reason} ->
-              {:noreply, put_flash(socket, :error, "Preview error: #{inspect(reason)}")}
-          end
-
-        {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "AutoFix error: #{inspect(reason)}")}
-      end
-    end
-  end
-
-  @impl true
-  def handle_event("apply_autofix_patch", _params, socket) do
-    project_root = socket.assigns.project.root_path
-    planned = socket.assigns.autofix_planned_patches
-    proposals = socket.assigns.autofix_proposals
-    target_failure = socket.assigns.autofix_target_failure
-
-    if planned == [] do
-      {:noreply, socket |> assign(:show_autofix_modal, false)}
-    else
-      lock_opts = [
-        project_id: socket.assigns.project.id,
-        session_id: socket.assigns.session.id
-      ]
-
-      case IexCode.Tools.multi_patch(proposals, project_root, lock_opts) do
-        {:ok, %{applied: _count, transaction_id: tx_id}} ->
-          socket =
-            socket
-            |> assign(:show_autofix_modal, false)
-            |> assign(:autofix_status, :applied)
-            |> assign(:autofix_tx_id, tx_id)
-            |> refresh_git_state()
-
-          socket =
-            if target_failure && Map.get(target_failure, :file) do
-              file = Map.get(target_failure, :file)
-              line = Map.get(target_failure, :line)
-
-              {:noreply, s} =
-                handle_event(
-                  "run_tests",
-                  %{"mode" => "file", "file" => file, "line" => to_string(line)},
-                  socket
-                )
-
-              s
-            else
-              socket
-            end
-
-          {:noreply, socket |> put_flash(:info, "AutoFix patch applied successfully!")}
-
-        {:error, {:workspace_lock_waiting, _locks} = reason} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             "Failed to apply patch: #{ui_mutation_error(reason)}"
-           )}
-
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> assign(:autofix_status, :failed)
-           |> put_flash(:error, "Failed to apply patch: #{ui_mutation_error(reason)}")}
-      end
-    end
-  end
-
-  @impl true
-  def handle_event("rollback_autofix", _params, socket) do
-    tx_id = socket.assigns.autofix_tx_id
-
-    if tx_id do
-      lock_opts = [
-        project_id: socket.assigns.project.id,
-        session_id: socket.assigns.session.id
-      ]
-
-      case IexCode.Tools.rollback_multi_patch(tx_id, socket.assigns.project.root_path, lock_opts) do
-        {:ok, _} ->
-          socket =
-            socket
-            |> assign(:show_autofix_modal, false)
-            |> assign(:autofix_status, :rolled_back)
-            |> assign(:autofix_tx_id, nil)
-            |> refresh_git_state()
-
-          {:noreply, socket |> put_flash(:info, "AutoFix patch rolled back successfully.")}
-
-        {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "Rollback failed: #{ui_mutation_error(reason)}")}
-      end
-    else
-      {:noreply, assign(socket, :show_autofix_modal, false)}
-    end
-  end
-
-  @impl true
-  def handle_event("close_autofix_modal", _params, socket) do
-    {:noreply, assign(socket, :show_autofix_modal, false)}
-  end
-
-  # ============================================================================
-  # Event Handlers: AST Query Explorer & Symbol Navigator
-  # ============================================================================
-
-  @impl true
-  def handle_event("search_ast_symbols", %{"query" => query} = params, socket) do
-    root = socket.assigns.project.root_path
-    type_filter = params["type"] || socket.assigns.ast_type_filter
-    vis_filter = params["visibility"] || socket.assigns.ast_visibility
-
-    query_spec =
-      %{
-        query: query,
-        type: if(type_filter != "all", do: type_filter, else: nil),
-        visibility: if(vis_filter != "all", do: vis_filter, else: nil)
-      }
-      |> Enum.reject(fn {_, v} -> is_nil(v) end)
-      |> Map.new()
-
-    results =
-      case IexCode.Tools.ASTSearch.search(root, query_spec, limit: 100) do
-        {:ok, res} -> res
-        _ -> []
-      end
-
-    {:noreply,
-     socket
-     |> assign(:ast_query, query)
-     |> assign(:ast_results, results)
-     |> assign(:ast_total_count, length(results))}
-  end
-
-  @impl true
-  def handle_event("set_ast_type_filter", %{"type" => type_filter}, socket) do
-    root = socket.assigns.project.root_path
-    query = socket.assigns.ast_query
-    vis_filter = socket.assigns.ast_visibility
-
-    query_spec =
-      %{
-        query: query,
-        type: if(type_filter != "all", do: type_filter, else: nil),
-        visibility: if(vis_filter != "all", do: vis_filter, else: nil)
-      }
-      |> Enum.reject(fn {_, v} -> is_nil(v) end)
-      |> Map.new()
-
-    results =
-      case IexCode.Tools.ASTSearch.search(root, query_spec, limit: 100) do
-        {:ok, []} when is_binary(query) and query != "" ->
-          case IexCode.Tools.ASTSearch.search(root, Map.delete(query_spec, :query), limit: 100) do
-            {:ok, res} -> res
-            _ -> []
-          end
-
-        {:ok, res} ->
-          res
-
-        _ ->
-          []
-      end
-
-    {:noreply,
-     socket
-     |> assign(:ast_type_filter, type_filter)
-     |> assign(:ast_results, results)
-     |> assign(:ast_total_count, length(results))}
-  end
-
-  @impl true
-  def handle_event("set_ast_visibility", %{"visibility" => vis}, socket) do
-    root = socket.assigns.project.root_path
-    query = socket.assigns.ast_query
-    type_filter = socket.assigns.ast_type_filter
-
-    query_spec =
-      %{
-        query: query,
-        type: if(type_filter != "all", do: type_filter, else: nil),
-        visibility: if(vis != "all", do: vis, else: nil)
-      }
-      |> Enum.reject(fn {_, v} -> is_nil(v) end)
-      |> Map.new()
-
-    results =
-      case IexCode.Tools.ASTSearch.search(root, query_spec, limit: 100) do
-        {:ok, res} -> res
-        _ -> []
-      end
-
-    {:noreply,
-     socket
-     |> assign(:ast_visibility, vis)
-     |> assign(:ast_results, results)
-     |> assign(:ast_total_count, length(results))}
-  end
-
-  @impl true
-  def handle_event("jump_to_symbol", %{"path" => rel_path, "line" => line_str}, socket) do
-    line = String.to_integer(line_str)
-
-    socket =
-      socket
-      |> open_file_buffer(rel_path)
-      |> assign(:active_tab, "files")
-      |> push_event("jump_to_editor_line", %{line: line, file: rel_path})
-
-    {:noreply, socket}
   end
 
   # ============================================================================
@@ -3545,12 +3350,16 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("terminal_input", %{"data" => data}, socket) do
     session_id = socket.assigns.session.id
 
-    case TerminalServer.send_input(session_id, data) do
-      :ok ->
-        {:noreply, socket}
-
+    with {:ok, socket} <- ensure_terminal_attached(socket),
+         :ok <- TerminalServer.send_input(session_id, data) do
+      {:noreply, socket}
+    else
       {:error, :agent_occupied} ->
         {:noreply, put_flash(socket, :warning, "Terminal is locked by active agent.")}
+
+      {:error, reason, socket} ->
+        Logger.warning("[WorkspaceLive] Terminal startup error: #{inspect(reason)}")
+        {:noreply, socket}
 
       {:error, reason} ->
         Logger.warning("[WorkspaceLive] Terminal input error: #{inspect(reason)}")
@@ -3565,8 +3374,14 @@ defmodule IexCodeWeb.WorkspaceLive do
     rows = parse_terminal_dimension(params["rows"] || params[:rows], socket.assigns.terminal_rows)
 
     if cols > 0 and rows > 0 do
-      _ = TerminalServer.resize(session_id, cols, rows)
-      {:noreply, socket |> assign(:terminal_cols, cols) |> assign(:terminal_rows, rows)}
+      case ensure_terminal_attached(socket) do
+        {:ok, socket} ->
+          _ = TerminalServer.resize(session_id, cols, rows)
+          {:noreply, socket |> assign(:terminal_cols, cols) |> assign(:terminal_rows, rows)}
+
+        {:error, _reason, socket} ->
+          {:noreply, socket}
+      end
     else
       {:noreply, socket}
     end
@@ -3578,7 +3393,11 @@ defmodule IexCodeWeb.WorkspaceLive do
     session_id = socket.assigns.session.id
 
     if String.trim(cmd) != "" do
-      command_result = TerminalServer.run_command_with_id(session_id, cmd)
+      {command_result, socket} =
+        case ensure_terminal_attached(socket) do
+          {:ok, socket} -> {TerminalServer.run_command_with_id(session_id, cmd), socket}
+          {:error, reason, socket} -> {{:error, reason}, socket}
+        end
 
       public_cmd = TerminalSession.command_summary(cmd)
 
@@ -3636,6 +3455,8 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     case TerminalServer.restart(session_id, workspace_path: root, cols: cols, rows: rows) do
       {:ok, _pid} ->
+        _ = TerminalSession.attach_viewer(session_id, self())
+
         {:noreply,
          socket
          |> assign(:terminal_running?, true)
@@ -3675,9 +3496,20 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("request_terminal_history", _params, socket) do
-    session_id = socket.assigns.session.id
-    history = TerminalServer.get_history(session_id)
-    {:noreply, push_event(socket, "terminal_history", %{history: history})}
+    if socket.assigns.active_tab == "terminal" do
+      session_id = socket.assigns.session.id
+
+      case ensure_terminal_attached(socket) do
+        {:ok, socket} ->
+          history = TerminalServer.get_history(session_id)
+          {:noreply, push_event(socket, "terminal_history", %{history: history})}
+
+        {:error, _reason, socket} ->
+          {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
   end
 
   # ============================================================================
@@ -3814,12 +3646,25 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:message_created, message}, socket) do
-    all_messages = socket.assigns.all_messages ++ [message]
+    if socket.assigns.messages_newer? do
+      {:noreply, assign(socket, :messages_newer?, true)}
+    else
+      combined =
+        socket.assigns.messages
+        |> Enum.reject(&(&1.id == message.id))
+        |> Kernel.++([project_message_for_ui(message)])
 
-    {:noreply,
-     socket
-     |> assign(:all_messages, all_messages)
-     |> assign(:messages, all_messages)}
+      {:noreply,
+       socket
+       |> assign(
+         :messages,
+         combined |> Enum.take(-@message_retained_limit) |> bound_message_window(:newest)
+       )
+       |> assign(
+         :messages_more?,
+         socket.assigns.messages_more? or length(combined) > @message_retained_limit
+       )}
+    end
   end
 
   @impl true
@@ -3842,7 +3687,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:operation_started, op}, socket) do
-    operations = [op | Enum.reject(socket.assigns.operations, &(&1.id == op.id))]
+    operations = retain_operations(op, socket.assigns.operations)
 
     {:noreply,
      socket
@@ -3853,7 +3698,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:operation_created, op}, socket) do
-    operations = [op | Enum.reject(socket.assigns.operations, &(&1.id == op.id))]
+    operations = retain_operations(op, socket.assigns.operations)
     {:noreply, assign(socket, :operations, operations)}
   end
 
@@ -4217,104 +4062,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
-  @impl true
-  def handle_info(
-        {:test_runner_progress, token, pct, msg},
-        %{assigns: %{test_runner_task_token: token}} = socket
-      ) do
-    {:noreply, apply_test_runner_progress(socket, pct, msg)}
-  end
-
-  @impl true
-  def handle_info({:test_runner_progress, _stale_token, _pct, _msg}, socket) do
-    {:noreply, socket}
-  end
-
-  # Keep the legacy shape for tests and older local producers, while applying
-  # the same monotonic rule so a delayed "starting" callback cannot overwrite
-  # newer progress already visible to the user.
-  @impl true
-  def handle_info({:test_runner_progress, pct, msg}, socket) do
-    {:noreply, apply_test_runner_progress(socket, pct, msg)}
-  end
-
-  @impl true
-  def handle_info({:test_runner_result, result}, socket) do
-    {:noreply,
-     socket
-     |> assign(:test_runner_status, result.status)
-     |> assign(:test_runner_result, result)
-     |> assign(:test_runner_progress_pct, 100)
-     |> assign(
-       :test_runner_progress_msg,
-       "Tests completed (#{result.passed}/#{result.total} passed)"
-     )
-     |> assign(:test_runner_async_task, nil)
-     |> assign(:test_runner_task_token, nil)}
-  end
-
-  @impl true
-  def handle_info(
-        {ref, {:ok, %IexCode.Tools.TestRunner.Result{} = result}},
-        %{assigns: %{test_runner_async_task: %Task{ref: ref}}} = socket
-      ) do
-    Process.demonitor(ref, [:flush])
-
-    {:noreply,
-     socket
-     |> assign(:test_runner_status, result.status)
-     |> assign(:test_runner_result, result)
-     |> assign(:test_runner_progress_pct, 100)
-     |> assign(
-       :test_runner_progress_msg,
-       "Tests completed (#{result.passed}/#{result.total} passed)"
-     )
-     |> assign(:test_runner_async_task, nil)
-     |> assign(:test_runner_task_token, nil)}
-  end
-
-  @impl true
-  def handle_info(
-        {ref, {:error, reason}},
-        %{assigns: %{test_runner_async_task: %Task{ref: ref}}} = socket
-      ) do
-    Process.demonitor(ref, [:flush])
-
-    error_msg =
-      case reason do
-        :timeout -> "Test execution timed out after 60s"
-        {:workspace_lock_waiting, _locks} -> "Test runner failed: #{ui_mutation_error(reason)}"
-        _ -> "Test runner failed: #{inspect(reason)}"
-      end
-
-    {:noreply,
-     socket
-     |> assign(:test_runner_status, :error)
-     |> assign(:test_runner_progress_pct, 100)
-     |> assign(:test_runner_progress_msg, error_msg)
-     |> assign(:test_runner_async_task, nil)
-     |> assign(:test_runner_task_token, nil)
-     |> put_flash(:error, error_msg)}
-  end
-
-  @impl true
-  def handle_info(
-        {:DOWN, ref, :process, _pid, reason},
-        %{assigns: %{test_runner_async_task: %Task{ref: ref}}} = socket
-      ) do
-    if reason in [:normal, :noproc] do
-      {:noreply, socket}
-    else
-      {:noreply,
-       socket
-       |> assign(:test_runner_status, :error)
-       |> assign(:test_runner_progress_pct, 100)
-       |> assign(:test_runner_progress_msg, "Test task exited abnormally: #{inspect(reason)}")
-       |> assign(:test_runner_async_task, nil)
-       |> assign(:test_runner_task_token, nil)}
-    end
-  end
-
   # Durable run updates are broadcast only after their transaction commits.
   # Refreshing from the database here makes PubSub a low-latency hint while the
   # journal remains the source of truth after reconnects or missed messages.
@@ -4559,73 +4306,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
-  defp start_test_runner(params, socket) do
-    mode = Map.get(params, "mode", "all")
-    file_path = Map.get(params, "file")
-    line = Map.get(params, "line")
-
-    opts =
-      case mode do
-        "failed" ->
-          [failed: true]
-
-        "stale" ->
-          [stale: true]
-
-        "file" when is_binary(file_path) and file_path != "" ->
-          l = if line && line != "", do: String.to_integer(line), else: nil
-          [paths: [file_path], line: l]
-
-        _ ->
-          []
-      end
-
-    project_root = socket.assigns.project.root_path
-    lv_pid = self()
-    task_token = make_ref()
-
-    on_progress = fn pct, msg ->
-      send(lv_pid, {:test_runner_progress, task_token, pct, msg})
-    end
-
-    opts =
-      opts
-      |> Keyword.put(:project_root, project_root)
-      |> Keyword.put(:project_id, socket.assigns.project.id)
-      |> Keyword.put(:session_id, socket.assigns.session.id)
-      |> Keyword.put(:on_progress, on_progress)
-      |> Keyword.put(:timeout_ms, 60_000)
-
-    task =
-      Task.Supervisor.async_nolink(IexCode.TaskSupervisor, fn ->
-        IexCode.Tools.run_tests(opts)
-      end)
-
-    {:noreply,
-     socket
-     |> assign(:test_runner_status, :running)
-     |> assign(:test_runner_progress_pct, 10)
-     |> assign(:test_runner_progress_msg, "Starting ExUnit test suite...")
-     |> assign(:test_runner_async_task, task)
-     |> assign(:test_runner_task_token, task_token)
-     |> assign(:active_tab, "tests")}
-  end
-
-  defp apply_test_runner_progress(socket, pct, msg)
-       when is_number(pct) and is_binary(msg) do
-    current = socket.assigns.test_runner_progress_pct || 0
-
-    if pct >= current do
-      socket
-      |> assign(:test_runner_progress_pct, pct)
-      |> assign(:test_runner_progress_msg, msg)
-    else
-      socket
-    end
-  end
-
-  defp apply_test_runner_progress(socket, _pct, _msg), do: socket
-
   # Editor writes intentionally use the low-level gateway form so the lock can
   # be asserted at the last possible moment before the atomic filesystem effect
   # and still be released from `after` on every success or failure path.
@@ -4766,16 +4446,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       :view ->
         {:noreply, assign(socket, :active_tab, item.tab)}
 
-      :file ->
-        path = item.path
-
-        socket =
-          socket
-          |> open_file_buffer(path)
-          |> assign(:active_tab, "files")
-
-        {:noreply, socket}
-
       :session ->
         {:noreply,
          push_patch(socket,
@@ -4784,24 +4454,8 @@ defmodule IexCodeWeb.WorkspaceLive do
 
       :action ->
         case item.id do
-          "run_all_tests" ->
-            handle_event("run_tests", %{"mode" => "all"}, socket)
-
-          "run_failed_tests" ->
-            handle_event("run_tests", %{"mode" => "failed"}, socket)
-
-          "run_stale_tests" ->
-            handle_event("run_tests", %{"mode" => "stale"}, socket)
-
           "start_goal" ->
             handle_event("open_goal_modal", %{}, socket)
-
-          "trigger_autofix" ->
-            {:noreply,
-             socket |> assign(:active_tab, "tests") |> assign(:show_autofix_modal, true)}
-
-          "ast_search" ->
-            {:noreply, assign(socket, :active_tab, "ast")}
 
           "new_task" ->
             handle_event("toggle_new_task_modal", %{}, socket)
@@ -4828,6 +4482,71 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp append_terminal_output(socket, text) do
     assign(socket, :terminal_output, cap_terminal_output(terminal_base(socket) <> text))
+  end
+
+  defp update_terminal_viewer(socket, previous_tab, "terminal")
+       when previous_tab != "terminal" do
+    case ensure_terminal_attached(socket) do
+      {:ok, socket} ->
+        history = TerminalServer.get_history(socket.assigns.session.id)
+
+        socket
+        |> push_event("terminal_history", %{history: history})
+        |> push_event("terminal_fit", %{})
+
+      {:error, reason, socket} ->
+        put_flash(socket, :error, "Failed to start terminal: #{inspect(reason)}")
+    end
+  end
+
+  defp update_terminal_viewer(socket, "terminal", next_tab) when next_tab != "terminal" do
+    _ = TerminalServer.detach_viewer(socket.assigns.session.id, self())
+    socket
+  end
+
+  defp update_terminal_viewer(socket, _previous_tab, _next_tab), do: socket
+
+  defp ensure_terminal_attached(socket) do
+    session_id = socket.assigns.session.id
+
+    starter =
+      if socket.assigns.active_tab == "terminal" do
+        fn opts -> TerminalServer.attach_viewer(session_id, self(), opts) end
+      else
+        fn opts -> TerminalServer.ensure_started(session_id, opts) end
+      end
+
+    case starter.(
+           workspace_path: socket.assigns.project.root_path,
+           cols: socket.assigns.terminal_cols,
+           rows: socket.assigns.terminal_rows
+         ) do
+      {:ok, _pid} ->
+        terminal_state =
+          case TerminalServer.get_state(session_id) do
+            {:ok, state} -> state
+            _unavailable -> %{}
+          end
+
+        command_history =
+          terminal_state
+          |> Map.get(:command_history, [])
+          |> Enum.map(&Map.get(&1, :command))
+          |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+
+        {:ok,
+         socket
+         |> assign(:terminal_running?, true)
+         |> assign(:terminal_status, Map.get(terminal_state, :status, :starting))
+         |> assign(:terminal_shell, Map.get(terminal_state, :shell, "zsh"))
+         |> assign(:terminal_cols, Map.get(terminal_state, :cols, socket.assigns.terminal_cols))
+         |> assign(:terminal_rows, Map.get(terminal_state, :rows, socket.assigns.terminal_rows))
+         |> assign(:terminal_occupant, Map.get(terminal_state, :occupant, :user))
+         |> assign(:terminal_history, command_history)}
+
+      {:error, reason} ->
+        {:error, reason, socket}
+    end
   end
 
   defp terminal_base(socket) do
@@ -4974,7 +4693,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp refresh_git_state(socket) do
     root = socket.assigns.project.root_path
 
-    with {:ok, status} <- Git.status(root) do
+    with {:ok, status} <- Git.status(root, path_limit: 500, output_limit_bytes: 1 * 1_024 * 1_024) do
       branches =
         case Git.branches(root) do
           {:ok, b} -> b
@@ -4987,20 +4706,8 @@ defmodule IexCodeWeb.WorkspaceLive do
           _ -> "main"
         end
 
-      unstaged_diff_raw =
-        case Git.diff(root, unified: 3) do
-          {:ok, d} -> d || ""
-          _ -> ""
-        end
-
-      staged_diff_raw =
-        case Git.diff(root, staged: true, unified: 3) do
-          {:ok, d} -> d || ""
-          _ -> ""
-        end
-
-      unstaged_diffs = DiffParser.parse!(unstaged_diff_raw)
-      staged_diffs = DiffParser.parse!(staged_diff_raw)
+      unstaged_diffs = Enum.map(status.unstaged, &git_status_file_diff/1)
+      staged_diffs = Enum.map(status.staged, &git_status_file_diff/1)
       parsed_diffs = unstaged_diffs ++ staged_diffs
 
       scope = socket.assigns[:active_diff_scope] || :unstaged
@@ -5019,32 +4726,12 @@ defmodule IexCodeWeb.WorkspaceLive do
              (List.first(parsed_diffs).path || List.first(parsed_diffs).new_path)) ||
           socket.assigns[:diff_file_path]
 
-      selected_file_diff =
-        Enum.find(
-          if(active_list != [], do: active_list, else: parsed_diffs),
-          &(&1.path == selected_diff_file or &1.new_path == selected_diff_file or
-              &1.old_path == selected_diff_file)
-        )
-
-      diff_hunks = if selected_file_diff, do: selected_file_diff.hunks, else: []
-
-      diff_text =
-        cond do
-          selected_file_diff && selected_file_diff.hunks != [] ->
-            Enum.map_join(
-              selected_file_diff.hunks,
-              "\n",
-              &DiffParser.format_hunk_patch(selected_file_diff, &1)
-            )
-
-          scope == :staged and staged_diff_raw != "" ->
-            staged_diff_raw
-
-          true ->
-            unstaged_diff_raw
+      {diff_hunks, diff_text, truncated?} =
+        if selected_diff_file do
+          load_selected_diff(root, selected_diff_file, scope)
+        else
+          {[], "", false}
         end
-
-      files = list_project_files(root)
 
       socket
       |> assign(:git_status, status)
@@ -5057,7 +4744,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:diff_file_path, selected_diff_file || socket.assigns[:diff_file_path])
       |> assign(:diff_hunks, diff_hunks)
       |> assign(:diff_text, diff_text)
-      |> assign(:project_files, files)
+      |> assign(:diff_truncated?, truncated?)
       |> assign(:git_error, nil)
     else
       {:error, reason} ->
@@ -5111,30 +4798,33 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
-  defp list_project_files(root_path) do
-    if File.dir?(root_path) do
-      root_path
-      |> Path.join("**/*")
-      |> Path.wildcard()
-      |> Enum.filter(&File.regular?/1)
-      |> Enum.map(&Path.relative_to(&1, root_path))
-      |> Enum.reject(&generated_or_sensitive_workspace_file?/1)
-      |> Enum.sort()
-    else
-      []
+  defp load_selected_diff(root, file_path, scope) do
+    opts = [paths: [file_path], unified: 3, max_bytes: @diff_retained_bytes]
+    opts = if scope == :staged, do: Keyword.put(opts, :staged, true), else: opts
+
+    case Git.diff_bounded(root, opts) do
+      {:ok, %{content: raw, truncated?: false}} when raw != "" ->
+        case DiffParser.parse(raw) do
+          {:ok, [file_diff | _]} -> {file_diff.hunks, raw, false}
+          _ -> {[], raw, false}
+        end
+
+      {:ok, %{content: raw, truncated?: true}} ->
+        {[], raw, true}
+
+      _ ->
+        {[], "", false}
     end
   end
 
-  defp generated_or_sensitive_workspace_file?(relative_path) do
-    excluded_directories =
-      MapSet.new(["_build", "deps", ".git", ".elixir_ls", ".agents", "node_modules", "tmp"])
-
-    segments = Path.split(relative_path)
-    basename = Path.basename(relative_path)
-
-    Enum.any?(segments, &MapSet.member?(excluded_directories, &1)) or
-      basename == "erl_crash.dump" or
-      Regex.match?(~r/\.(?:db|sqlite|sqlite3)(?:-(?:wal|shm))?\z/i, basename)
+  defp git_status_file_diff(entry) do
+    %DiffParser.FileDiff{
+      path: Map.get(entry, :path),
+      old_path: Map.get(entry, :old_path),
+      new_path: Map.get(entry, :path),
+      status: Map.get(entry, :status, :modified),
+      hunks: []
+    }
   end
 
   # Durable asynchronous run projection. Runs and their journal are loaded from
@@ -5145,7 +4835,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     approvals = if selected, do: Runs.list_approvals(selected), else: []
     pending_approval_count = Runs.count_pending_approvals(session_id)
     agents = if selected, do: Runs.list_run_agents(selected, limit: 100), else: []
-    steps = if(selected, do: Runs.list_steps(selected), else: [])
+    steps = if(selected, do: Runs.list_step_summaries(selected), else: [])
 
     socket
     |> assign(:selected_run, selected)
@@ -5177,7 +4867,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     session_runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
     pending_approval_count = Runs.count_pending_approvals(socket.assigns.session.id)
     agents = Runs.list_run_agents(run, limit: 100)
-    steps = Runs.list_steps(run)
+    steps = Runs.list_step_summaries(run)
 
     agent_guidance =
       case socket.assigns.selected_run do
@@ -6359,7 +6049,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp enabled_tools(active_tools) do
     core =
-      ~w(read_file write_file patch_file multi_patch list_dir grep_search run_tests run_command git_status git_diff git_stage git_commit git_generate_commit)
+      ~w(read_file read_output_artifact write_file patch_file multi_patch list_dir grep_search run_tests run_command git_status git_diff git_stage git_commit git_generate_commit)
 
     optional =
       active_tools
@@ -6428,4 +6118,62 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp all_directory_paths(_), do: MapSet.new()
+
+  defp ensure_workspace_files_loaded(%{assigns: %{files_loaded?: true}} = socket), do: socket
+  defp ensure_workspace_files_loaded(socket), do: load_workspace_files(socket, @file_page_size)
+
+  defp load_workspace_files(socket, requested_limit) do
+    limit = requested_limit |> max(@file_page_size) |> min(@file_retained_limit)
+    page = WorkspaceFiles.page(socket.assigns.project.root_path, limit: limit)
+
+    expanded =
+      MapSet.union(
+        socket.assigns[:expanded_folders] || MapSet.new(),
+        all_directory_paths(page.files)
+      )
+
+    socket
+    |> assign(:project_files, page.files)
+    |> assign(:files, page.files)
+    |> assign(:files_loaded?, true)
+    |> assign(:files_more?, page.more? and limit < @file_retained_limit)
+    |> assign(:file_limit, limit)
+    |> assign(:expanded_folders, expanded)
+  end
+
+  defp retain_operations(operation, operations) do
+    [operation | Enum.reject(operations, &(&1.id == operation.id))]
+    |> Enum.take(@operation_retained_limit)
+  end
+
+  # UI projection only: durable messages remain complete in SQLite and the
+  # inspector fetches one full row on demand. Each LiveView keeps both a count
+  # ceiling and a total content-byte ceiling.
+  defp bound_message_window(messages, direction) do
+    source = if direction == :oldest, do: messages, else: Enum.reverse(messages)
+
+    {selected, _bytes} =
+      Enum.reduce_while(source, {[], 0}, fn message, {selected, bytes} ->
+        projected = project_message_for_ui(message)
+        projected_bytes = byte_size(projected.content || "")
+
+        if selected != [] and bytes + projected_bytes > @message_retained_bytes do
+          {:halt, {selected, bytes}}
+        else
+          {:cont, {[projected | selected], bytes + projected_bytes}}
+        end
+      end)
+
+    if direction == :oldest, do: Enum.reverse(selected), else: selected
+  end
+
+  defp project_message_for_ui(message) do
+    content = message.content || ""
+
+    if String.length(content) > @message_preview_chars do
+      %{message | content: String.slice(content, 0, @message_preview_chars)}
+    else
+      message
+    end
+  end
 end

@@ -24,6 +24,7 @@ defmodule IexCodeWeb.SettingsLive do
     {"providers", "Providers"},
     {"editor", "Editor"},
     {"usage", "Usage"},
+    {"resources", "Resources"},
     {"runtime", "Runtime"}
   ]
 
@@ -512,6 +513,46 @@ defmodule IexCodeWeb.SettingsLive do
   def runtime_beam_memory_value(beam),
     do: format_runtime_bytes(map_value(beam, :memory_total_bytes, nil))
 
+  def runtime_peak_memory_value(container),
+    do: format_runtime_bytes(map_value(container, :memory_peak_bytes, nil))
+
+  def runtime_pids_value(container) do
+    current = runtime_count(container, :pids_current)
+    limit = runtime_limit_count(map_value(container, :pids_limit, nil))
+    if "Unavailable" in [current, limit], do: "Unavailable", else: "#{current} / #{limit}"
+  end
+
+  def runtime_oom_value(container) do
+    oom = runtime_count(container, :oom_events)
+    kills = runtime_count(container, :oom_kill_events)
+    if "Unavailable" in [oom, kills], do: "Unavailable", else: "#{oom} events · #{kills} kills"
+  end
+
+  def runtime_governor_value(governor) do
+    active = runtime_count(governor, :active_tickets)
+    interactive = runtime_count(governor, :queued_interactive)
+    background = runtime_count(governor, :queued_background)
+
+    if "Unavailable" in [active, interactive, background],
+      do: "Unavailable",
+      else: "#{active} active · #{interactive} interactive · #{background} background queued"
+  end
+
+  def runtime_governor_state(governor) do
+    case map_value(governor, :state, :unavailable) do
+      state when state in [:normal, :pressure, :critical] -> Atom.to_string(state)
+      _ -> "unavailable"
+    end
+  end
+
+  def deployment_value(deployment, key, suffix \\ "") do
+    case map_value(deployment, key, nil) do
+      value when is_integer(value) and value >= 0 -> "#{value}#{suffix}"
+      value when is_binary(value) and value != "" -> value
+      _ -> "Unavailable"
+    end
+  end
+
   def runtime_ports_value(beam) do
     count = runtime_count(beam, :port_count)
     limit = runtime_count(beam, :port_limit)
@@ -898,6 +939,13 @@ defmodule IexCodeWeb.SettingsLive do
   end
 
   defp format_runtime_bytes(_bytes), do: "Unavailable"
+
+  defp runtime_limit_count(:unlimited), do: "Unlimited"
+
+  defp runtime_limit_count(value) when is_integer(value) and value >= 0,
+    do: Integer.to_string(value)
+
+  defp runtime_limit_count(_value), do: "Unavailable"
 
   defp format_runtime_unit(value, unit) do
     precision = if value >= 10, do: 0, else: 1

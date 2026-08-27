@@ -5,83 +5,7 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
   alias IexCode.Tools.Git
 
   # ============================================================================
-  # 1. AST Query Explorer UI & Symbol Navigator
-  # ============================================================================
-  describe "AST Query Explorer" do
-    setup %{workspace_path: path} do
-      sample_file = "lib/math.ex"
-
-      workspace_write_file(path, sample_file, """
-      defmodule IexCode.Math do
-        @moduledoc "Math utility library"
-
-        @doc "Adds two numbers"
-        @spec add(number(), number()) :: number()
-        def add(a, b) do
-          a + b
-        end
-
-        defp validate_input(val) do
-          is_number(val)
-        end
-      end
-      """)
-
-      {:ok, %{sample_file: sample_file}}
-    end
-
-    test "renders AST query explorer tab, searches symbols, and filters by type", %{
-      conn: conn,
-      workspace_path: path
-    } do
-      project = create_project_fixture(%{root_path: path})
-      session = create_session_fixture(project)
-      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-
-      # Switch to AST Explorer tab
-      render_click(view, "switch_tab", %{"tab" => "ast"})
-
-      html = render(view)
-      assert html =~ "AST Query Explorer" or html =~ "Symbol Navigator" or html =~ "ast"
-
-      # Search for "add"
-      render_change(view, "search_ast_symbols", %{"query" => "add"})
-      html_searched = render(view)
-      assert html_searched =~ "add" or html_searched =~ "Math"
-
-      # Filter by symbol type (functions)
-      render_click(view, "set_ast_type_filter", %{"type" => "function"})
-      html_func = render(view)
-      assert html_func =~ "add"
-
-      # Filter by module
-      render_click(view, "set_ast_type_filter", %{"type" => "module"})
-      html_mod = render(view)
-      assert html_mod =~ "IexCode.Math"
-    end
-
-    test "jumping to symbol switches to files tab and loads editor buffer", %{
-      conn: conn,
-      workspace_path: path,
-      sample_file: sample_file
-    } do
-      project = create_project_fixture(%{root_path: path})
-      session = create_session_fixture(project)
-      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-
-      render_click(view, "switch_tab", %{"tab" => "ast"})
-
-      # Jump to symbol at line 7
-      render_click(view, "jump_to_symbol", %{"path" => sample_file, "line" => "7"})
-
-      html = render(view)
-      assert html =~ sample_file
-      assert html =~ "def add(a, b)"
-    end
-  end
-
-  # ============================================================================
-  # 2. Git Branch Switching & Remote Synchronization
+  # Git Branch Switching & Remote Synchronization
   # ============================================================================
   describe "Git Branch Hub & Remote Sync" do
     setup %{workspace_path: path} do
@@ -148,7 +72,7 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
   end
 
   # ============================================================================
-  # 3. 3-Tier Multi-File Staging Hub
+  # 2. 3-Tier Multi-File Staging Hub
   # ============================================================================
   describe "3-Tier Multi-File Staging Hub" do
     setup %{workspace_path: path} do
@@ -198,7 +122,7 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
   end
 
   # ============================================================================
-  # 4. AI Commit Message Generation & Direct Commits
+  # 3. AI Commit Message Generation & Direct Commits
   # ============================================================================
   describe "Commit Message Composer & Commit Execution" do
     setup %{workspace_path: path} do

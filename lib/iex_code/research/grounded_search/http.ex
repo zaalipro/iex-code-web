@@ -1,6 +1,8 @@
 defmodule IexCode.Research.GroundedSearch.HTTP do
   @moduledoc false
 
+  alias IexCode.Execution.ResourceGovernor
+
   @max_body_bytes 2_000_000
   @official_origins %{
     openai_responses: {"api.openai.com", 443},
@@ -9,9 +11,17 @@ defmodule IexCode.Research.GroundedSearch.HTTP do
   }
 
   def post(provider, url, api_key, request_opts, opts) do
+    permit_opts = ResourceGovernor.admission_opts(opts, priority: :background)
+
+    ResourceGovernor.with_permit(:research_fetch, permit_opts, fn ->
+      do_post(provider, url, api_key, request_opts, opts)
+    end)
+  end
+
+  defp do_post(provider, url, api_key, request_opts, opts) do
     with :ok <- official_origin(provider, url),
          :ok <- cancellation_status(opts) do
-      request = opts[:request] || (&Req.request/1)
+      request = opts[:request] || (&IexCode.HTTP.request/1)
 
       req_opts =
         request_opts

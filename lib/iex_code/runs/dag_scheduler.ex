@@ -25,6 +25,10 @@ defmodule IexCode.Runs.DagScheduler do
 
   @default_lease_ms 30_000
   @max_lease_ms 300_000
+  # A manifest has at most 32 direct dependencies and every registered handler
+  # is capped at 256 KiB. This is the absolute per-claim dependency envelope;
+  # callers can request lazy hydration so queued work retains none of it.
+  @max_dependency_result_bytes 32 * 256_000
   @terminal_step_statuses ~w(completed failed cancelled skipped)
 
   def initialize(run_or_id, lease_owner, run_generation)
@@ -48,6 +52,7 @@ defmodule IexCode.Runs.DagScheduler do
       when is_binary(lease_owner) and lease_owner != "" and is_integer(run_generation) and
              is_list(opts) do
     lease_ms = opts |> Keyword.get(:lease_ms, @default_lease_ms) |> max(1) |> min(@max_lease_ms)
+    load_dependencies? = Keyword.get(opts, :load_dependencies?, true) == true
 
     transaction(fn ->
       run = load_run!(run_or_id)
@@ -68,7 +73,7 @@ defmodule IexCode.Runs.DagScheduler do
       if is_nil(candidate) do
         {:none, []}
       else
-        claim_step!(run, candidate, lease_owner, lease_ms)
+        claim_step!(run, candidate, lease_owner, lease_ms, load_dependencies?)
       end
     end)
     |> publish_result()
@@ -76,6 +81,28 @@ defmodule IexCode.Runs.DagScheduler do
 
   def claim_ready(_run_or_id, _lease_owner, _run_generation, _opts),
     do: {:error, :invalid_step_claim}
+
+  @doc """
+  Hydrates the direct dependency payloads for an already fenced active claim.
+
+  `DagRunner` calls this only after ResourceGovernor admission, preventing queued
+  tasks from retaining up to the full bounded fan-in envelope.
+  """
+  def load_dependency_results(attempt_or_id, lease_owner, run_generation, generation)
+      when is_binary(lease_owner) and is_integer(run_generation) and is_integer(generation) do
+    transaction(fn ->
+      {run, step, _attempt} =
+        load_active_authority!(attempt_or_id, lease_owner, run_generation, generation)
+
+      results = fetch_dependency_results(run.id, step.depends_on)
+      assert_dependency_results_bounded!(results)
+      {{:ok, results}, []}
+    end)
+    |> publish_result()
+  end
+
+  def load_dependency_results(_attempt, _owner, _run_generation, _generation),
+    do: {:error, :invalid_dependency_load}
 
   def heartbeat(
         attempt_or_id,
@@ -601,7 +628,7 @@ defmodule IexCode.Runs.DagScheduler do
     end)
   end
 
-  defp claim_step!(run, step, raw_owner, lease_ms) do
+  defp claim_step!(run, step, raw_owner, lease_ms, load_dependencies?) do
     descriptor = assert_descriptor!(step)
     owner_hash = owner_hash(raw_owner)
     attempt_number = step.attempt + 1
@@ -651,7 +678,14 @@ defmodule IexCode.Runs.DagScheduler do
       })
       |> insert!()
 
-    dependencies = dependency_results(run.id, step.depends_on)
+    dependencies =
+      if load_dependencies? do
+        results = fetch_dependency_results(run.id, step.depends_on)
+        assert_dependency_results_bounded!(results)
+        results
+      else
+        %{}
+      end
 
     event =
       event!(run, "run.step_claimed", %{
@@ -661,8 +695,12 @@ defmodule IexCode.Runs.DagScheduler do
       })
 
     {{:ok,
-      %{attempt: attempt, step: Repo.get!(RunStep, step.id), dependency_results: dependencies}},
-     [event]}
+      %{
+        attempt: attempt,
+        step: Repo.get!(RunStep, step.id),
+        dependency_results: dependencies,
+        dependency_results_loaded?: load_dependencies? or step.depends_on == []
+      }}, [event]}
   end
 
   defp load_active_authority!(attempt_or_id, lease_owner, run_generation, generation) do
@@ -1045,14 +1083,28 @@ defmodule IexCode.Runs.DagScheduler do
     )
   end
 
-  defp dependency_results(_run_id, []), do: %{}
+  defp fetch_dependency_results(_run_id, []), do: %{}
 
-  defp dependency_results(run_id, keys) do
+  defp fetch_dependency_results(run_id, keys) do
     RunStep
     |> where([step], step.run_id == ^run_id and step.key in ^keys and step.status == "completed")
     |> select([step], {step.key, step.result})
     |> Repo.all()
     |> Map.new()
+  end
+
+  defp assert_dependency_results_bounded!(results) do
+    total_bytes =
+      Enum.reduce(results, 0, fn {_key, result}, total ->
+        case DagPayload.canonical_json(result) do
+          {:ok, encoded} -> total + byte_size(encoded)
+          {:error, reason} -> Repo.rollback({:invalid_dependency_result, reason})
+        end
+      end)
+
+    if total_bytes > @max_dependency_result_bytes,
+      do: Repo.rollback({:dependency_results_too_large, @max_dependency_result_bytes}),
+      else: :ok
   end
 
   defp readiness_reason(%RunStep{status: "ready"}, _statuses), do: :ready
@@ -1173,7 +1225,35 @@ defmodule IexCode.Runs.DagScheduler do
       Repo.all(
         from step in RunStep,
           where: step.run_id == ^run_id,
-          order_by: [asc: step.position, asc: step.key]
+          order_by: [asc: step.position, asc: step.key],
+          # Scheduler authority needs manifest/lifecycle metadata, never prior
+          # result bodies. Dependency payloads cross only the explicit bounded
+          # loader above.
+          select:
+            struct(step, [
+              :id,
+              :run_id,
+              :parent_step_id,
+              :key,
+              :kind,
+              :title,
+              :status,
+              :position,
+              :progress,
+              :attempt,
+              :max_attempts,
+              :depends_on,
+              :params,
+              :handler_version,
+              :effect_class,
+              :replay_policy,
+              :resource_spec,
+              :timeout_ms,
+              :error_message,
+              :started_at,
+              :heartbeat_at,
+              :completed_at
+            ])
       )
 
   defp assert_running!(%Run{status: "running"}), do: :ok

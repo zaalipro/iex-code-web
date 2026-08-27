@@ -51,7 +51,7 @@ APP_ID=$(sudo docker ps \
   --filter label=com.docker.compose.service=app --quiet | head -n1)
 sudo docker stats --no-stream "$APP_ID"
 sudo docker inspect --format \
-  'hard={{.HostConfig.Memory}} reservation={{.HostConfig.MemoryReservation}} ulimits={{json .HostConfig.Ulimits}}' \
+  'hard={{.HostConfig.Memory}} reservation={{.HostConfig.MemoryReservation}} pids={{.HostConfig.PidsLimit}} ulimits={{json .HostConfig.Ulimits}}' \
   "$APP_ID"
 sudo docker exec "$APP_ID" sh -lc \
   'ulimit -n; cat /sys/fs/cgroup/memory.current; cat /sys/fs/cgroup/memory.max; cat /sys/fs/cgroup/memory.events'
@@ -59,10 +59,10 @@ sudo docker exec "$APP_ID" /opt/iex-code/bin/iex_code rpc \
   'IO.inspect(%{memory: :erlang.memory(:total), port_limit: :erlang.system_info(:port_limit)})'
 ```
 
-With the default configuration, the hard limit is `1073741824` bytes, the
-reservation is `536870912` bytes, and `ulimit -n` is `65536`. During a verified
-idle period, container memory should normally stay below 600 MiB and BEAM memory
-below 300 MiB. Investigate active/queued work, terminals, and logs before
+With the default Balanced profile, the hard limit is `2147483648` bytes, the
+reservation is `536870912` bytes, the process limit is `1024`, and `ulimit -n`
+is `65536`. During a verified idle period, container memory should normally stay
+below 600 MiB and BEAM memory below 300 MiB. Investigate active/queued work, terminals, and logs before
 attributing higher usage to an idle baseline. Any non-zero `oom` or `oom_kill`
 counter in `memory.events` needs investigation.
 
@@ -72,6 +72,23 @@ release RPC above for five continuous minutes. With default limits, every idle
 sample must remain below 600 MiB of container memory and 300 MiB of BEAM memory,
 the reported BEAM port limit must remain `65536`, and `memory.events` must show
 `oom 0` and `oom_kill 0`.
+
+### Admission governor
+
+The hard Docker limit is the final boundary; normal concurrency is regulated
+earlier by the memory-aware governor. Its default pressure/critical thresholds
+are 70%/85%. It assigns conservative weights to model calls, AST scans,
+research fetches, DAG steps, native commands, and build/test work, then queues a
+new producer if admitting it would consume safety headroom. Existing work is not
+cancelled, and its reasoning settings, swarm topology, and research depth are
+not reduced.
+
+Interactive work is considered first and has profile-specific reserved
+headroom. Background work rotates by durable run, preventing one swarm or DAG
+from monopolizing capacity. **Settings → Runtime** reports the memory state,
+active permits, and interactive/background queue depths. **Settings →
+Resources** changes the thresholds live. Raising a Docker profile increases the
+envelope but does not preallocate memory or bypass admission.
 
 ## Update
 
@@ -95,9 +112,15 @@ sudo iex-code-web backup
 sudo iex-code-web backup <DESTINATION>
 ```
 
-A manager backup contains a transactionally consistent SQLite database and the
-research outputs below `/var/lib/iex-code-web`. Repositories below `/srv/iex-code-workspaces`
+A manager backup contains a transactionally consistent SQLite database, the
+research outputs, and bounded command/test output artifacts below
+`/var/lib/iex-code-web`. Repositories below `/srv/iex-code-workspaces`
 are separate: push commits to a remote and back up uncommitted work independently.
+
+To keep file artifacts aligned with their SQLite metadata, the manager briefly
+stops only the application container while capturing the archive and starts it
+again on both success and failure. The proxy remains running; expect a short
+maintenance window rather than an inconsistent mixed-time backup.
 
 Never copy only a live `.db` file: recent committed pages can still be in the
 `-wal` file. Use the manager backup, an online SQLite backup, or stop all writers
@@ -120,6 +143,13 @@ Restoration is destructive to current application state. The manager validates
 its own archive structure, but you should still make an additional backup first
 and verify version compatibility. Do not combine database files from different
 snapshots.
+
+The manager extracts into a private staging directory, stops the application
+writer, creates a safety backup, and swaps the database, research data, and
+output artifacts together. If the swap is interrupted it restores the previous
+state before returning an error. An application that was running before restore
+is restarted on success or failure; an application that was already stopped is
+left stopped.
 
 After restore, verify the operator login, Settings, research report downloads,
 and one harmless workspace read before permitting autonomous work.
@@ -146,15 +176,25 @@ Show a redacted configuration summary:
 sudo iex-code-web config
 ```
 
-The summary includes the configured hard memory limit, soft reservation, and
-file-descriptor/BEAM-port limit. To change them, rerun the installed, inspected
-installer in update mode; the reservation must not exceed the hard limit:
+The summary includes the resource profile, hard memory limit, soft reservation,
+process limit, and file-descriptor/BEAM-port limit. To change them, rerun the
+installed, inspected installer in update mode. Presets are the preferred path:
+
+```bash
+sudo iex-code-web update --resource-profile throughput
+```
+
+The Throughput profile raises the hard ceiling to 2,560 MiB while retaining the
+512 MiB reservation and the existing port/process safety limits. It does not
+reserve 2.5 GiB at idle. For custom limits, the reservation must not exceed the
+hard limit:
 
 ```bash
 sudo /opt/iex-code-web/source/install.sh --update-only \
   --memory-limit-mib 1024 \
   --memory-reservation-mib 512 \
-  --nofile-limit 65536
+  --nofile-limit 65536 \
+  --pids-limit 1024
 ```
 
 Do not lower the hard limit while work is active: Docker can terminate the app
@@ -186,8 +226,50 @@ Common Phoenix/runtime values include:
 | `POOL_SIZE` | SQLite connection pool size |
 | `IEX_CODE_BIND` | Explicit listener address override |
 | `IEX_CODE_ALLOW_REMOTE` | Enables non-loopback app access; not authentication by itself |
+| `IEX_CODE_TERMINAL_IDLE_TIMEOUT_MS` | Reaps unattached, inactive terminal PTYs after this interval (default `1800000`, range 1 second–24 hours) |
+| `IEX_CODE_HTTP_POOL_SIZE` | Per-origin HTTP/1 connection ceiling (default `8`, range `1..64`; restart required) |
+| `IEX_CODE_HTTP_POOL_IDLE_MS` | Reaps an idle per-origin pool (default `60000`, range 1 second–1 hour; restart required) |
+| `IEX_CODE_HTTP_CONNECTION_IDLE_MS` | Discards idle HTTP/1 connections (default `30000`, range 1 second–1 hour; restart required) |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | Optional environment-backed OpenAI-compatible defaults |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | Optional environment-backed Anthropic defaults |
+
+Verbose command and test output is written to the protected `outputs/`
+directory beside the SQLite database (host path
+`/var/lib/iex-code-web/outputs`). Each producer is capped (256 MiB by default),
+keeps only a bounded head/tail preview in BEAM memory, and exposes the complete
+file through reads of at most 64 KiB. Reaching the cap fails explicitly with
+`output_limit_exceeded`; it is not presented as successful truncated output.
+The default spool quota is 2 GiB with seven-day retention; active-run artifacts
+are not expired. Ensure at least 5 GiB of free filesystem space before starting
+new artifacts. Manager backup and restore include both the artifact files and
+their SQLite metadata so they remain consistent. The producer cap, quota, and
+retention are configurable under **Settings → Resources**.
+
+### Shared HTTP pool
+
+Application-owned model and research requests use one supervised Finch instance
+with bounded HTTP/1 pools. The default pool has one shard, eight connection
+slots, a 60-second pool idle timeout, and a 30-second connection idle timeout.
+SSRF-protected fetches use an opaque tag derived from the validated TLS hostname
+and a pool keyed by the already pinned address; those per-destination pools are
+also removed after the idle timeout. This prevents provider and research traffic
+from leaving an unbounded pool per origin resident in the BEAM.
+
+The checked-in application configuration is:
+
+```elixir
+config :iex_code, :http_pool,
+  size: 8,
+  pool_max_idle_time: 60_000,
+  conn_max_idle_time: 30_000
+```
+
+The equivalent `IEX_CODE_HTTP_POOL_SIZE`, `IEX_CODE_HTTP_POOL_IDLE_MS`, and
+`IEX_CODE_HTTP_CONNECTION_IDLE_MS` values can be set in the protected
+`app.env`; they are validated at boot and require an application restart. Keep
+the single shard and HTTP/1 protocol pinning unchanged; raise the pool size only
+after observing real request queue pressure. The shared pool does not alter
+model/research admission limits or response-size bounds.
 
 Research provider variables include `TAVILY_API_KEY`, `BRAVE_SEARCH_API_KEY`,
 `EXA_API_KEY`, `PERPLEXITY_API_KEY`, `FIRECRAWL_API_KEY`, `LINKUP_API_KEY`,

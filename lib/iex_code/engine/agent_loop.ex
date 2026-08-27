@@ -422,7 +422,9 @@ defmodule IexCode.Engine.AgentLoop do
       cancelled?: cancelled?,
       allowed_tools: state.allowed_tools,
       temperature: state.session.temperature,
-      max_tokens: state.max_tokens
+      max_tokens: state.max_tokens,
+      resource_priority: :background,
+      resource_run_key: state.run.id
     ]
 
     opts = if state.llm == IexCode.LLM, do: Keyword.put(opts, :resolved_route, route), else: opts
@@ -621,9 +623,7 @@ defmodule IexCode.Engine.AgentLoop do
   # receipt so a retry does not repeat provider usage or create a second answer.
   defp replay_final_message(state) do
     with :ok <- checkpoint(state.run.id, state.authority) do
-      state.session.id
-      |> Sessions.list_messages()
-      |> Enum.find(&final_run_message?(&1, state.run.id))
+      Sessions.get_message_by_idempotency_key("run-final:#{state.run.id}")
       |> case do
         nil ->
           {:ok, nil}
@@ -631,19 +631,23 @@ defmodule IexCode.Engine.AgentLoop do
         message ->
           metadata = message.metadata || %{}
 
-          {:ok,
-           %{
-             message_id: message.id,
-             content: bounded_text(message.content, 20_000),
-             turns: nonnegative_integer(value(metadata, "turns")),
-             tool_calls: nonnegative_integer(value(metadata, "tool_calls")),
-             usage: %{
-               input_tokens: nonnegative_integer(message.input_tokens),
-               output_tokens: nonnegative_integer(message.output_tokens),
-               cost_cents: nonnegative_integer(message.cost_cents)
-             },
-             replayed?: true
-           }}
+          if final_run_message?(message, state.run.id) do
+            {:ok,
+             %{
+               message_id: message.id,
+               content: bounded_text(message.content, 20_000),
+               turns: nonnegative_integer(value(metadata, "turns")),
+               tool_calls: nonnegative_integer(value(metadata, "tool_calls")),
+               usage: %{
+                 input_tokens: nonnegative_integer(message.input_tokens),
+                 output_tokens: nonnegative_integer(message.output_tokens),
+                 cost_cents: nonnegative_integer(message.cost_cents)
+               },
+               replayed?: true
+             }}
+          else
+            {:error, :final_message_idempotency_conflict}
+          end
       end
     end
   end
@@ -722,8 +726,7 @@ defmodule IexCode.Engine.AgentLoop do
   defp initial_messages(run, session_id) do
     history =
       session_id
-      |> Sessions.list_messages()
-      |> Enum.take(-@history_limit)
+      |> Sessions.list_messages(limit: @history_limit, content_limit: 20_000)
       |> Enum.filter(&(&1.role in ["user", "assistant"] and not run_message?(&1, run.id)))
       |> Enum.map(&%{role: &1.role, content: bounded_text(&1.content, 20_000)})
 

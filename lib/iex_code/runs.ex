@@ -1560,6 +1560,44 @@ defmodule IexCode.Runs do
     end
   end
 
+  @doc "Lists lightweight step lifecycle rows without params, results, or error payloads."
+  def list_step_summaries(run_or_id) do
+    with %Run{} = run <- resolve_run(run_or_id) do
+      RunStep
+      |> where([s], s.run_id == ^run.id)
+      |> order_by([s], asc: s.position, asc: s.inserted_at, asc: s.id)
+      |> select(
+        [s],
+        struct(s, [
+          :id,
+          :run_id,
+          :parent_step_id,
+          :key,
+          :kind,
+          :title,
+          :status,
+          :position,
+          :progress,
+          :attempt,
+          :max_attempts,
+          :depends_on,
+          :handler_version,
+          :effect_class,
+          :replay_policy,
+          :timeout_ms,
+          :started_at,
+          :heartbeat_at,
+          :completed_at,
+          :inserted_at,
+          :updated_at
+        ])
+      )
+      |> Repo.all()
+    else
+      nil -> []
+    end
+  end
+
   def transition_step(step_or_id, new_status, attrs \\ %{})
 
   def transition_step(%RunStep{} = step, new_status, attrs),
