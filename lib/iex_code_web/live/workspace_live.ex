@@ -4712,10 +4712,18 @@ defmodule IexCodeWeb.WorkspaceLive do
     Enum.any?(assigns.operations, fn op ->
       op.id == op_id and operation_in_session?(op, assigns.session.id)
     end) or
-      case Sessions.get_operation(op_id) do
-        op when is_map(op) -> operation_in_session?(op, assigns.session.id)
-        _ -> false
-      end
+      safe_get_operation_session?(op_id, assigns.session.id)
+  rescue
+    _ -> false
+  end
+
+  defp safe_get_operation_session?(op_id, session_id) do
+    case Sessions.get_operation(op_id) do
+      op when is_map(op) -> operation_in_session?(op, session_id)
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   defp refresh_run_summary_facts(socket, runs, ready_results) do

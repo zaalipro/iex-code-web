@@ -322,6 +322,7 @@ defmodule IexCodeWeb.WorkspaceLiveInstrumentSummariesTest do
     send(view.pid, {:operation_created, stale})
     send(view.pid, {:operation_updated, %{stale | status: "completed", duration_ms: 1}})
     send(view.pid, {:operation_progress, stale.id, 99, "stale"})
+    send(view.pid, {:operation_progress, "malformed-operation-id", 99, "malformed"})
     send(view.pid, {:operation_completed, stale})
     send(view.pid, {:operation_failed, stale})
     send(view.pid, :operations_cleared)
