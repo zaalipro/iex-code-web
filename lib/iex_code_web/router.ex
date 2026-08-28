@@ -5,6 +5,7 @@ defmodule IexCodeWeb.Router do
     plug :accepts, ["html"]
     plug IexCodeWeb.Plugs.LocalAccess
     plug :fetch_session
+    plug IexCodeWeb.Plugs.Theme
     plug :fetch_live_flash
     plug :put_root_layout, html: {IexCodeWeb.Layouts, :root}
     plug :protect_from_forgery
