@@ -42,6 +42,10 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
     assert has_element?(session_view, "#mission-strip")
     assert has_element?(session_view, "#instrument-deck")
 
+    for surface <- ~w(swarm kanban research calendar changes chat files terminal) do
+      assert has_element?(session_view, "#instrument-card-#{surface}")
+    end
+
     assert has_element?(
              session_view,
              "#instrument-card-research[href='/sessions/#{session.id}/research']"
@@ -61,20 +65,29 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
     {:ok, view, _html} = live(conn, base)
 
     destinations = [
-      {"swarm", "#{base}?view=swarm", "#async-run-control"},
-      {"kanban", "#{base}?view=kanban", "#kanban-board"},
-      {"calendar", "#{base}?view=calendar", "#calendar-grid"},
-      {"changes", "#{base}?view=changes", "#changes-layout"},
-      {"chat", "#{base}?view=chat", "#chat-viewport"},
-      {"files", "#{base}?view=files", "#file-explorer-container"},
-      {"terminal", "#{base}?view=terminal", "#terminal-session-container"}
+      {"swarm", "#{base}?view=swarm",
+       ["#async-run-control", "#operation-tree-root", "#subagent-cards-grid"]},
+      {"kanban", "#{base}?view=kanban", ["#kanban-board"]},
+      {"calendar", "#{base}?view=calendar", ["#calendar-grid"]},
+      {"changes", "#{base}?view=changes", ["#changes-layout"]},
+      {"chat", "#{base}?view=chat", ["#chat-viewport"]},
+      {"files", "#{base}?view=files", ["#file-explorer-container"]},
+      {"terminal", "#{base}?view=terminal",
+       [
+         "#terminal-session-container",
+         "#terminal-xterm-container[phx-hook='TerminalHook'][phx-update='ignore']"
+       ]}
     ]
 
-    for {surface, destination, anchor} <- destinations do
+    for {surface, destination, anchors} <- destinations do
       view |> element("#instrument-card-#{surface}") |> render_click()
       assert_push_patch(view, destination)
       render_patch(view, destination)
-      assert has_element?(view, anchor)
+
+      for anchor <- anchors do
+        assert has_element?(view, anchor)
+      end
+
       refute has_element?(view, "#instrument-deck")
       render_patch(view, base)
       assert has_element?(view, "#instrument-deck")
@@ -86,6 +99,41 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
     assert has_element?(view, "#deep-research-page")
     assert has_element?(view, "#deep-research-form")
     refute has_element?(view, "#instrument-deck")
+  end
+
+  test "instrument cards open canonical root workbenches", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    _session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, "/")
+
+    destinations = [
+      {"swarm", "/?view=swarm", "#async-run-control"},
+      {"kanban", "/?view=kanban", "#kanban-board"},
+      {"calendar", "/?view=calendar", "#calendar-grid"},
+      {"changes", "/?view=changes", "#changes-layout"},
+      {"chat", "/?view=chat", "#chat-viewport"},
+      {"files", "/?view=files", "#file-explorer-container"},
+      {"terminal", "/?view=terminal", "#terminal-session-container"}
+    ]
+
+    for {surface, destination, anchor} <- destinations do
+      view |> element("#instrument-card-#{surface}") |> render_click()
+      assert_push_patch(view, destination)
+      render_patch(view, destination)
+      assert has_element?(view, anchor)
+      refute has_element?(view, "#instrument-deck")
+      render_patch(view, "/")
+      assert has_element?(view, "#instrument-deck")
+    end
+
+    view |> element("a#instrument-card-research") |> render_click()
+    assert_patch(view, "/research")
+    render_patch(view, "/research")
+    assert has_element?(view, "#deep-research-page")
+    assert has_element?(view, "#deep-research-form")
   end
 
   for view_name <- ~w(kanban swarm calendar changes chat files terminal) do

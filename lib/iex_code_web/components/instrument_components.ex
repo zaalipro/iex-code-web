@@ -30,32 +30,61 @@ defmodule IexCodeWeb.InstrumentComponents do
         <div class="sf-deck-grid">
           <%= for surface <- deck_surfaces() do %>
             <% summary = summary_for(@summaries, surface) %>
-            <%= if surface == "research" do %>
-              <.link
-                id="instrument-card-research"
-                patch={summary.destination}
-                data-instrument-surface={surface}
-                data-status={status_key(summary.status)}
-                aria-current={if(@active_view == surface, do: "page", else: "false")}
-                aria-label={accessible_card_name(summary)}
-                class={card_classes(surface)}
-              >
-                <.instrument_face summary={summary} surface={surface} />
-              </.link>
-            <% else %>
-              <button
-                id={"instrument-card-#{surface}"}
-                type="button"
-                phx-click="switch_tab"
-                phx-value-tab={surface}
-                data-instrument-surface={surface}
-                data-status={status_key(summary.status)}
-                aria-pressed={to_string(@active_view == surface)}
-                aria-label={accessible_card_name(summary)}
-                class={card_classes(surface)}
-              >
-                <.instrument_face summary={summary} surface={surface} />
-              </button>
+            <%= cond do %>
+              <% surface == "research" and summary.navigable? -> %>
+                <.link
+                  id="instrument-card-research"
+                  patch={summary.destination}
+                  data-instrument-surface={surface}
+                  data-status={status_key(summary.status)}
+                  aria-current={if(@active_view == surface, do: "page", else: "false")}
+                  aria-label={accessible_card_name(summary)}
+                  class={card_classes(surface)}
+                >
+                  <.instrument_face summary={summary} surface={surface} />
+                </.link>
+              <% surface == "research" -> %>
+                <button
+                  id="instrument-card-research"
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  data-instrument-surface={surface}
+                  data-status={status_key(summary.status)}
+                  aria-current={if(@active_view == surface, do: "page", else: "false")}
+                  aria-label={accessible_card_name(summary)}
+                  class={card_classes(surface)}
+                >
+                  <.instrument_face summary={summary} surface={surface} />
+                </button>
+              <% summary.navigable? -> %>
+                <button
+                  id={"instrument-card-#{surface}"}
+                  type="button"
+                  phx-click="switch_tab"
+                  phx-value-tab={surface}
+                  data-instrument-surface={surface}
+                  data-status={status_key(summary.status)}
+                  aria-pressed={to_string(@active_view == surface)}
+                  aria-label={accessible_card_name(summary)}
+                  class={card_classes(surface)}
+                >
+                  <.instrument_face summary={summary} surface={surface} />
+                </button>
+              <% true -> %>
+                <button
+                  id={"instrument-card-#{surface}"}
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  data-instrument-surface={surface}
+                  data-status={status_key(summary.status)}
+                  aria-pressed={to_string(@active_view == surface)}
+                  aria-label={accessible_card_name(summary)}
+                  class={card_classes(surface)}
+                >
+                  <.instrument_face summary={summary} surface={surface} />
+                </button>
             <% end %>
           <% end %>
         </div>
@@ -76,12 +105,17 @@ defmodule IexCodeWeb.InstrumentComponents do
             <span class="sf-display text-[1.25rem] tracking-[0.1em]">{surface_index(@surface)}</span>
             <span class="truncate">{@summary.title}</span>
           </div>
-          <div class="mt-3 flex items-center gap-2">
+          <div class="mt-3 flex min-w-0 items-start gap-2">
             <span
               aria-hidden="true"
-              class={["h-2 w-2 shrink-0 rounded-full", status_mark_class(@summary.status)]}
+              class={["mt-1.5 h-2 w-2 shrink-0 rounded-full", status_mark_class(@summary.status)]}
             ></span>
-            <span class="sf-body-copy text-sm font-medium">{primary_text(@summary)}</span>
+            <span
+              data-summary-primary
+              class="sf-body-copy min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm font-medium"
+            >
+              {primary_text(@summary)}
+            </span>
           </div>
         </div>
         <span class="sf-metadata shrink-0">{status_label(@summary.status)}</span>
@@ -89,14 +123,25 @@ defmodule IexCodeWeb.InstrumentComponents do
 
       <div class="mt-4 min-w-0 space-y-2">
         <div class="flex min-w-0 flex-wrap gap-x-4 gap-y-1">
-          <%= for fact <- bounded_secondary(@summary.secondary) do %>
-            <span class="sf-body-copy text-xs">
-              <span class="sf-metadata mr-1">{fact.label}</span>{fact.value}
+          <%= for fact <- bounded_secondary(@surface, @summary.secondary) do %>
+            <span
+              data-summary-fact
+              class="sf-body-copy min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-xs"
+            >
+              <span class="sf-metadata mr-1">{fact.label}</span><span
+                data-summary-fact-value
+                class="min-w-0 max-w-full break-words [overflow-wrap:anywhere]"
+              >{fact.value}</span>
             </span>
           <% end %>
         </div>
         <%= if nonblank?(@summary.detail) do %>
-          <p class="sf-body-copy max-w-[48ch] text-sm">{@summary.detail}</p>
+          <p
+            data-summary-detail
+            class="sf-body-copy min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm md:max-w-[48ch]"
+          >
+            {@summary.detail}
+          </p>
         <% end %>
         <%= if match?(%DateTime{}, @summary.updated_at) do %>
           <time class="sf-metadata block" datetime={DateTime.to_iso8601(@summary.updated_at)}>
@@ -315,11 +360,15 @@ defmodule IexCodeWeb.InstrumentComponents do
   slot :primary_action, required: true
 
   def mission_strip(assigns) do
-    assigns = assign(assigns, :primary_action, Enum.take(assigns.primary_action, 1))
+    assigns =
+      assigns
+      |> assign(:primary_action, Enum.take(assigns.primary_action, 1))
+      |> assign(:dispatcher_summary, dispatcher_text(assigns.runtime))
 
     ~H"""
     <header
       id="mission-strip"
+      data-active-view={@active_view}
       class="flex min-w-0 flex-wrap items-center gap-3 border-b border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-4 py-3 text-[var(--sf-text-primary)] md:gap-4 md:px-6"
     >
       <button
@@ -350,9 +399,11 @@ defmodule IexCodeWeb.InstrumentComponents do
       </div>
 
       <div class="min-w-0">
-        <div class="sf-body-copy text-sm font-semibold">{runtime_label(@runtime)}</div>
-        <%= if dispatcher_text(@runtime) do %>
-          <div class="sf-metadata mt-1">{dispatcher_text(@runtime)}</div>
+        <div data-runtime-label class="sf-body-copy text-sm font-semibold">
+          {runtime_label(@runtime)}
+        </div>
+        <%= if @dispatcher_summary do %>
+          <div data-dispatcher-summary class="sf-metadata mt-1">{@dispatcher_summary}</div>
         <% end %>
       </div>
 
@@ -400,26 +451,18 @@ defmodule IexCodeWeb.InstrumentComponents do
   defp summary_for(summaries, surface) do
     summary = if is_map(summaries), do: Map.get(summaries, surface), else: nil
 
-    if is_map(summary) do
+    if valid_summary?(summary, surface) do
       %{
-        surface:
-          if(is_binary(Map.get(summary, :surface)), do: Map.get(summary, :surface), else: surface),
-        title:
-          if(nonblank?(Map.get(summary, :title)),
-            do: Map.get(summary, :title),
-            else: canonical_title(surface)
-          ),
+        surface: surface,
+        title: canonical_title(surface),
         status: normalize_status(Map.get(summary, :status)),
         primary: Map.get(summary, :primary),
         secondary: Map.get(summary, :secondary),
         detail: Map.get(summary, :detail),
-        destination:
-          if(is_binary(Map.get(summary, :destination)),
-            do: Map.get(summary, :destination),
-            else: "#"
-          ),
+        destination: Map.get(summary, :destination),
         updated_at: Map.get(summary, :updated_at),
-        attention?: Map.get(summary, :attention?) == true
+        attention?: Map.get(summary, :attention?) == true,
+        navigable?: true
       }
     else
       %{
@@ -429,12 +472,25 @@ defmodule IexCodeWeb.InstrumentComponents do
         primary: nil,
         secondary: [],
         detail: nil,
-        destination: "#",
+        destination: nil,
         updated_at: nil,
-        attention?: false
+        attention?: false,
+        navigable?: false
       }
     end
   end
+
+  defp valid_summary?(summary, surface) when is_map(summary) do
+    Map.get(summary, :surface) == surface and valid_destination?(Map.get(summary, :destination))
+  end
+
+  defp valid_summary?(_summary, _surface), do: false
+
+  defp valid_destination?(destination) when is_binary(destination) do
+    String.starts_with?(destination, "/") and not String.contains?(destination, ["\n", "\r"])
+  end
+
+  defp valid_destination?(_destination), do: false
 
   defp canonical_title("swarm"), do: "Active Mission"
   defp canonical_title("kanban"), do: "Mission Board"
@@ -482,30 +538,104 @@ defmodule IexCodeWeb.InstrumentComponents do
   defp status_mark_class(_), do: "border border-[var(--sf-topology-text)]"
 
   defp primary_text(summary) do
-    if nonblank?(summary.primary), do: summary.primary, else: status_fallback(summary)
+    if nonblank?(summary.primary),
+      do: summary.primary,
+      else: status_fallback(summary.surface, summary.status)
   end
 
-  defp status_fallback(%{surface: "swarm"}), do: "No active run"
-  defp status_fallback(%{surface: "kanban"}), do: "Board unavailable"
-  defp status_fallback(%{surface: "research"}), do: "No research runs"
-  defp status_fallback(%{surface: "calendar"}), do: "Schedule unavailable"
-  defp status_fallback(%{surface: "changes"}), do: "Warming · checking Git"
-  defp status_fallback(%{surface: "chat"}), do: "No messages yet"
-  defp status_fallback(%{surface: "files"}), do: "Standby · files not loaded"
-  defp status_fallback(%{surface: "terminal"}), do: "Terminal unavailable"
-  defp status_fallback(_), do: "No data"
+  defp status_fallback("swarm", :empty), do: "No active run"
+  defp status_fallback("swarm", :active), do: "Mission active"
+  defp status_fallback("swarm", :attention), do: "Mission needs attention"
+  defp status_fallback("swarm", :ready), do: "Mission ready"
+  defp status_fallback("swarm", :standby), do: "Mission standby"
+  defp status_fallback("swarm", _status), do: "Mission unavailable"
 
-  defp bounded_secondary(secondary) when is_list(secondary) do
-    secondary
-    |> Enum.filter(&is_map/1)
-    |> Enum.map(fn fact ->
-      %{label: bounded_value(Map.get(fact, :label)), value: bounded_value(Map.get(fact, :value))}
-    end)
-    |> Enum.reject(fn fact -> fact.label == "" and fact.value == "" end)
-    |> Enum.take(3)
+  defp status_fallback("kanban", :empty), do: "No tasks yet"
+  defp status_fallback("kanban", :error), do: "Board unavailable"
+  defp status_fallback("kanban", :standby), do: "Board unavailable"
+  defp status_fallback("kanban", status), do: "Board #{status_label(status) |> String.downcase()}"
+
+  defp status_fallback("research", :empty), do: "No research runs"
+  defp status_fallback("research", :active), do: "Research active"
+  defp status_fallback("research", :attention), do: "Research needs attention"
+  defp status_fallback("research", :ready), do: "Research ready"
+  defp status_fallback("research", _status), do: "Research pending"
+
+  defp status_fallback("calendar", :empty), do: "No scheduled actions"
+  defp status_fallback("calendar", :error), do: "Schedule unavailable"
+  defp status_fallback("calendar", :standby), do: "Schedule unavailable"
+
+  defp status_fallback("calendar", status),
+    do: "Schedule #{status_label(status) |> String.downcase()}"
+
+  defp status_fallback("changes", :standby), do: "Warming · checking Git"
+  defp status_fallback("changes", :error), do: "Git unavailable"
+  defp status_fallback("changes", :ready), do: "No changes"
+  defp status_fallback("changes", :attention), do: "Changes need attention"
+  defp status_fallback("changes", :active), do: "Changes detected"
+  defp status_fallback("changes", _status), do: "Git unavailable"
+
+  defp status_fallback("chat", :empty), do: "No messages yet"
+  defp status_fallback("chat", :ready), do: "Latest message available"
+
+  defp status_fallback("chat", status),
+    do: "Conversation #{status_label(status) |> String.downcase()}"
+
+  defp status_fallback("files", :empty), do: "No files discovered"
+  defp status_fallback("files", :standby), do: "Standby · files not loaded"
+  defp status_fallback("files", :error), do: "Files unavailable"
+  defp status_fallback("files", :attention), do: "Files need attention"
+  defp status_fallback("files", _status), do: "Files indexed"
+
+  defp status_fallback("terminal", :error), do: "Terminal unavailable"
+  defp status_fallback("terminal", :active), do: "Command active"
+  defp status_fallback("terminal", :standby), do: "Terminal stopped"
+  defp status_fallback("terminal", :attention), do: "Terminal needs attention"
+  defp status_fallback("terminal", _status), do: "No command yet"
+  defp status_fallback(_surface, status), do: status_label(status)
+
+  defp bounded_secondary(surface, secondary) when is_list(secondary) do
+    facts =
+      secondary
+      |> Enum.filter(&is_map/1)
+      |> Enum.map(fn fact ->
+        %{
+          label: bounded_value(Map.get(fact, :label)),
+          value: bounded_value(Map.get(fact, :value))
+        }
+      end)
+      |> Enum.reject(fn fact -> fact.label == "" and fact.value == "" end)
+
+    select_secondary(surface, facts)
   end
 
-  defp bounded_secondary(_), do: []
+  defp bounded_secondary(_surface, _secondary), do: []
+
+  defp select_secondary("research", facts) do
+    select_named_facts(facts, ["Level", "Round", "Sources", "Result"], 4)
+  end
+
+  defp select_secondary("changes", facts) do
+    select_named_facts(
+      facts,
+      ["Branch", "Conflicts", "Latest test operation", "Tests"],
+      3,
+      required: ["Latest test operation", "Tests"]
+    )
+  end
+
+  defp select_secondary(_surface, facts), do: Enum.take(facts, 3)
+
+  defp select_named_facts(facts, labels, limit, opts \\ []) do
+    selected = Enum.filter(facts, &(&1.label in labels))
+    required_labels = Keyword.get(opts, :required, [])
+    required = Enum.filter(selected, &(&1.label in required_labels))
+    optional = Enum.reject(selected, &(&1.label in required_labels))
+
+    optional
+    |> Enum.take(max(limit - length(required), 0))
+    |> Kernel.++(Enum.take(required, limit))
+  end
 
   defp bounded_value(value) when is_binary(value), do: String.slice(value, 0, 160)
   defp bounded_value(value) when is_integer(value), do: Integer.to_string(value)
