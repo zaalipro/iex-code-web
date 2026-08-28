@@ -432,6 +432,10 @@ defmodule IexCodeWeb.WorkspaceLive do
               {:noreply, put_flash(socket, :error, "Project for this session was not found")}
 
             project ->
+              if previous_view == "terminal" do
+                _ = TerminalServer.detach_viewer(old_id, self())
+              end
+
               if connected?(socket) do
                 PubSub.unsubscribe(IexCode.PubSub, "session:#{old_id}")
                 PubSub.unsubscribe(IexCode.PubSub, "session:#{old_id}:terminal")
@@ -484,10 +488,6 @@ defmodule IexCodeWeb.WorkspaceLive do
               terminal_cols = Map.get(terminal_state, :cols, 80)
               terminal_rows = Map.get(terminal_state, :rows, 24)
               terminal_occupant = Map.get(terminal_state, :occupant, :user)
-
-              if socket.assigns.active_tab == "terminal" do
-                _ = TerminalServer.detach_viewer(old_id, self())
-              end
 
               socket =
                 socket

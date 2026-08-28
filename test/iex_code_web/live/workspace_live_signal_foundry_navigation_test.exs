@@ -173,6 +173,25 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
     assert {:ok, %{viewer_count: 0}} = TerminalServer.get_state(session.id)
   end
 
+  test "cross-session terminal to non-terminal navigation releases the old viewer", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    first_session = create_session_fixture(project)
+    second_session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{first_session.id}")
+
+    render_patch(view, "/sessions/#{first_session.id}?view=terminal")
+
+    assert {:ok, %{viewer_count: 1}} = TerminalServer.get_state(first_session.id)
+
+    render_patch(view, "/sessions/#{second_session.id}?view=files")
+    assert :sys.get_state(view.pid).socket.assigns.session.id == second_session.id
+    assert {:ok, %{viewer_count: 0}} = TerminalServer.get_state(first_session.id)
+    assert :sys.get_state(view.pid).socket.assigns.files_loaded?
+  end
+
   test "switch_tab payloads patch exact workspace URLs", %{conn: conn, workspace_path: path} do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
