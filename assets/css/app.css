@@ -1433,7 +1433,7 @@ body.phx-disconnected::after {
   --sf-code-text: #202321;
   --sf-ambient-glow: rgba(255, 253, 247, 0.68);
   --sf-inset-highlight: rgba(255, 255, 255, 0.88);
-  --sf-shadow: rgba(91, 70, 44, 0.17);
+  --sf-shadow: rgba(0, 0, 0, 0.16);
   --sf-focus-ring: #202321;
 }
 
@@ -1482,7 +1482,7 @@ body.phx-disconnected::after {
     --sf-code-text: #202321;
     --sf-ambient-glow: rgba(255, 253, 247, 0.68);
     --sf-inset-highlight: rgba(255, 255, 255, 0.88);
-    --sf-shadow: rgba(91, 70, 44, 0.17);
+    --sf-shadow: rgba(0, 0, 0, 0.16);
     --sf-focus-ring: #202321;
   }
 }
@@ -1646,6 +1646,14 @@ body.phx-disconnected::after {
 .sf-command-dock :focus-visible {
   outline: 2px solid var(--sf-focus-ring);
   outline-offset: 3px;
+}
+
+/* SF controls opt into the neutral focus treatment without weakening the
+   legacy global focus ring used by unmigrated workspace controls. */
+:where(.sf-instrument, .sf-pill, .sf-control, .sf-command-dock, .sf-focus-surface, .sf-chassis):is(button, a, input, textarea, select, [role="button"]):focus-visible,
+:where(.sf-instrument, .sf-pill, .sf-control, .sf-command-dock, .sf-focus-surface, .sf-chassis) :where(button, a, input, textarea, select, [role="button"]):focus-visible {
+  outline: 2px solid var(--sf-focus-ring) !important;
+  outline-offset: 3px !important;
 }
 
 .sf-deck-grid {

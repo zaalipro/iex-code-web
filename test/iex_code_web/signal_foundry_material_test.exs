@@ -50,42 +50,74 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
   end
 
   test "defines explicit and system-default Signal Foundry theme tokens", %{css: css} do
-    assert css =~ ~s(:root[data-theme="dark"])
-    assert css =~ ~s(:root[data-theme="light"])
+    dark_tokens = css_block(css, ~s|:root[data-theme="dark"]|)
+    light_tokens = css_block(css, ~s|:root[data-theme="light"]|)
 
-    for value <- [
-          "#171514",
-          "#101214",
-          "#0B0E10",
-          "#151616",
-          "#1D1F20",
-          "#F4EFE7",
-          "#918B84",
-          "rgba(255, 255, 255, 0.10)",
-          "#F6532E",
-          "#9EBDA7",
-          "#9DAEC2",
-          "#EAE5DC",
-          "#F3EEE5",
-          "#FBF8F2",
-          "#EEE8DF",
-          "#202321",
-          "#655F58",
-          "rgba(23, 25, 26, 0.14)",
-          "#D74628",
-          "#A8321F",
-          "#60836E",
-          "#42624F",
-          "#4E6170"
+    for declaration <- [
+          "--sf-canvas-ambient: #171514",
+          "--sf-canvas-deep: #101214",
+          "--sf-instrument: #0B0E10",
+          "--sf-instrument-raised: #151616",
+          "--sf-raised-control: #1D1F20",
+          "--sf-text-primary: #F4EFE7",
+          "--sf-text-secondary: #918B84",
+          "--sf-hairline: rgba(255, 255, 255, 0.10)",
+          "--sf-live-mark: #F6532E",
+          "--sf-live-text: #F6532E",
+          "--sf-success-mark: #9EBDA7",
+          "--sf-success-text: #9EBDA7",
+          "--sf-topology-text: #9DAEC2",
+          "--sf-code-surface: #101214",
+          "--sf-code-text: #F4EFE7",
+          "--sf-ambient-glow: rgba(244, 239, 231, 0.055)",
+          "--sf-inset-highlight: rgba(255, 255, 255, 0.075)",
+          "--sf-shadow: rgba(0, 0, 0, 0.46)",
+          "--sf-focus-ring: #F4EFE7"
         ] do
-      assert css =~ value, "expected the approved theme value #{value}"
+      assert dark_tokens =~ declaration, "expected dark token #{declaration}"
     end
 
-    assert css =~
-             ~r/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{/s
+    for declaration <- [
+          "--sf-canvas-ambient: #EAE5DC",
+          "--sf-canvas-deep: #EAE5DC",
+          "--sf-instrument: #F3EEE5",
+          "--sf-instrument-raised: #FBF8F2",
+          "--sf-raised-control: #EEE8DF",
+          "--sf-text-primary: #202321",
+          "--sf-text-secondary: #655F58",
+          "--sf-hairline: rgba(23, 25, 26, 0.14)",
+          "--sf-live-mark: #D74628",
+          "--sf-live-text: #A8321F",
+          "--sf-success-mark: #60836E",
+          "--sf-success-text: #42624F",
+          "--sf-topology-text: #4E6170",
+          "--sf-code-surface: #E4DED5",
+          "--sf-code-text: #202321",
+          "--sf-ambient-glow: rgba(255, 253, 247, 0.68)",
+          "--sf-inset-highlight: rgba(255, 255, 255, 0.88)",
+          "--sf-shadow: rgba(0, 0, 0, 0.16)",
+          "--sf-focus-ring: #202321"
+        ] do
+      assert light_tokens =~ declaration, "expected light token #{declaration}"
+    end
 
-    assert css =~
-             ~r/@media\s*\(prefers-color-scheme:\s*light\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{/s
+    refute light_tokens =~ "rgba(91, 70, 44"
+
+    for {scheme, explicit_tokens} <- [{"dark", dark_tokens}, {"light", light_tokens}] do
+      media_block =
+        css
+        |> at_rule_blocks("@media (prefers-color-scheme: #{scheme})")
+        |> Enum.find(&String.contains?(&1, ":root:not([data-theme])"))
+
+      assert media_block, "missing no-theme #{scheme} media default"
+
+      default_tokens = css_block(media_block, ":root:not([data-theme])")
+
+      for declaration <- Regex.scan(~r/--sf-[^;]+/, explicit_tokens) |> List.flatten() do
+        assert default_tokens =~ declaration,
+               "expected no-theme #{scheme} default to mirror #{declaration}"
+      end
+    end
   end
 
   test "exposes solid tactile materials with accessible type and geometry", %{css: css} do
@@ -120,10 +152,29 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
     assert rule(css, ".sf-body-copy") =~ "font-size: 0.875rem"
     assert rule(css, ".sf-metadata") =~ "font-size: 0.75rem"
     assert rule(css, ".sf-code-surface") =~ ~r/overflow:\s*auto/
-    assert css =~ ~r/:focus-visible\s*\{[^}]*outline:/s
     assert rule(css, ".sf-command-dock") =~ "safe-area-inset-bottom"
 
-    assert length(Regex.scan(~r/radial-gradient\(/, signal_foundry_section(css))) == 1
+    ambient_rule = rule(css, ".sf-ambient-field")
+    assert length(Regex.scan(~r/radial-gradient\(/, ambient_rule)) == 1
+
+    for material <- [".sf-instrument", ".sf-chassis", ".sf-focus-surface", ".sf-command-dock"] do
+      assert rule(css, material) =~ "var(--sf-shadow)",
+             "expected #{material} to consume the neutral shared shadow"
+    end
+  end
+
+  test "Signal Foundry focus rings win the legacy cascade on real controls", %{css: css} do
+    focus_rule =
+      css_block(
+        css,
+        ~s|:where(.sf-instrument, .sf-pill, .sf-control, .sf-command-dock, .sf-focus-surface, .sf-chassis):is(button, a, input, textarea, select, [role="button"]):focus-visible|
+      )
+
+    assert focus_rule =~ "outline: 2px solid var(--sf-focus-ring) !important"
+    assert focus_rule =~ "outline-offset: 3px !important"
+
+    assert css =~
+             ~s|:where(.sf-instrument, .sf-pill, .sf-control, .sf-command-dock, .sf-focus-surface, .sf-chassis) :where(button, a, input, textarea, select, [role="button"]):focus-visible|
   end
 
   test "lays out the featured instrument across the approved responsive units", %{css: css} do
@@ -158,21 +209,35 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
 
     reduced_motion =
       css
-      |> String.split("@media (prefers-reduced-motion: reduce)")
-      |> List.last()
+      |> at_rule_blocks("@media (prefers-reduced-motion: reduce)")
+      |> Enum.find(&String.contains?(&1, ".sf-workbench-enter"))
 
-    assert reduced_motion =~ ".sf-instrument"
-    assert reduced_motion =~ ".sf-workbench-enter"
-    assert reduced_motion =~ ".sf-waveform-travel"
-    assert reduced_motion =~ "scroll-behavior: auto"
-    assert reduced_motion =~ "transform: none"
-    assert reduced_motion =~ "animation: none"
-    assert reduced_motion =~ "transition: none"
+    assert reduced_motion, "missing Signal Foundry reduced-motion block"
+    assert css_block(reduced_motion, ".sf-deck-grid") =~ "perspective: none"
+
+    reduced_instrument = css_block(reduced_motion, ".sf-instrument,")
+    assert reduced_instrument =~ "transform: none"
+    assert reduced_instrument =~ "transition: none"
+
+    reduced_entry = css_block(reduced_motion, ".sf-workbench-enter,")
+    assert reduced_entry =~ "animation: none"
+    assert reduced_entry =~ "transition: none"
+
+    reduced_scroll = css_block(reduced_motion, ".sf-smooth-scroll,")
+    assert reduced_scroll =~ "scroll-behavior: auto"
   end
 
   test "raises Signal Foundry touch targets to 44px on coarse pointers", %{css: css} do
-    assert css =~
-             ~r/@media\s*\(pointer:\s*coarse\)\s*\{.*?min-width:\s*44px;.*?min-height:\s*44px;/s
+    [coarse_pointer] = at_rule_blocks(css, "@media (pointer: coarse)")
+
+    target_rule =
+      css_block(
+        coarse_pointer,
+        ~s|:where(.sf-instrument:is(a, button, [role="button"]), .sf-control, .sf-pill, .sf-command-dock :is(a, button, input, textarea, select), .sf-focus-surface :is(a, button, input, textarea, select))|
+      )
+
+    assert target_rule =~ "min-width: 44px"
+    assert target_rule =~ "min-height: 44px"
   end
 
   defp sha256(path) do
@@ -191,8 +256,24 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
     end
   end
 
-  defp signal_foundry_section(css) do
-    [_legacy, section] = String.split(css, "Signal Foundry material system", parts: 2)
-    section
+  defp at_rule_blocks(css, prelude) do
+    escaped_prelude = Regex.escape(prelude)
+
+    ~r/^#{escaped_prelude}\s*\{(.*?)^\}/ms
+    |> Regex.scan(css, capture: :all_but_first)
+    |> List.flatten()
+  end
+
+  defp css_block(css, prelude) do
+    case String.split(css, prelude, parts: 2) do
+      [_before, after_prelude] ->
+        case Regex.run(~r/\{([^}]*)\}/s, after_prelude, capture: :all_but_first) do
+          [declarations] -> declarations
+          nil -> flunk("missing declarations for CSS block #{prelude}")
+        end
+
+      [_all_css] ->
+        flunk("missing CSS block for #{prelude}")
+    end
   end
 end
