@@ -369,8 +369,27 @@
       class="flex-1 flex flex-col h-full min-w-0 bg-[#0a0d12] relative overflow-hidden"
     >
       <h1 class="sr-only">IexCode workspace: {@project.name}</h1>
-      <!-- Top Navigation Bar & Tab Switchers -->
-      <header
+      <%= if @active_view == "deck" do %>
+        <.mission_strip
+          project={@project}
+          session={@session}
+          runtime={@runtime_status}
+          active_view={@active_view}
+        >
+          <:primary_action>
+            <button
+              id="new-mission-button"
+              type="button"
+              phx-click="open_goal_modal"
+              class="sf-control min-h-11 px-4 text-sm font-semibold"
+            >
+              New mission
+            </button>
+          </:primary_action>
+        </.mission_strip>
+      <% else %>
+        <!-- Top Navigation Bar & Tab Switchers -->
+        <header
         id="workspace-header"
         class="h-14 border-b border-[#21262d] bg-[#11151c] flex items-center justify-between gap-2 px-3 md:px-4 xl:px-5 shrink-0"
       >
@@ -615,11 +634,15 @@
             </div>
           </div>
         </div>
-      </header>
+        </header>
+      <% end %>
 
       <!-- View Containers -->
       <div id="workspace-views" class="relative flex-1 flex min-w-0 overflow-hidden">
-        <!-- TAB 1: KANBAN BOARD -->
+        <%= if @active_view == "deck" do %>
+          <.instrument_deck summaries={@instrument_summaries} active_view={@active_view} />
+        <% else %>
+          <!-- TAB 1: KANBAN BOARD -->
         <%= if @active_tab == "kanban" do %>
           <div class="flex-1 flex flex-col h-full min-w-0 overflow-hidden p-3 md:p-5">
             <!-- Header & Filter Bar -->
@@ -3146,6 +3169,7 @@
               </div>
             </div>
           </aside>
+          <% end %>
         <% end %>
       </div>
 

@@ -18,18 +18,74 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
 
     assert assigns.active_view == "deck"
     assert assigns.active_tab == "kanban"
-    assert has_element?(view, "#sidebar-tab-research[href='/research']")
-    assert has_element?(view, "#tab-btn-research[href='/research']")
+    assert has_element?(view, "#mission-strip")
+    assert has_element?(view, "#instrument-deck")
+
+    for surface <- ~w(swarm kanban research calendar changes chat files terminal) do
+      assert has_element?(view, "#instrument-card-#{surface}")
+    end
+
+    assert has_element?(
+             view,
+             "a#instrument-card-research[href='/research'][data-phx-link='patch']"
+           )
+
+    assert has_element?(view, "#new-mission-button")
+    refute has_element?(view, "#workspace-header")
+    refute has_element?(view, "#kanban-board")
 
     {:ok, session_view, _html} = live(conn, ~p"/sessions/#{session.id}")
     session_assigns = :sys.get_state(session_view.pid).socket.assigns
     assert session_assigns.active_view == "deck"
     assert session_assigns.active_tab == "kanban"
 
+    assert has_element?(session_view, "#mission-strip")
+    assert has_element?(session_view, "#instrument-deck")
+
     assert has_element?(
              session_view,
-             "#sidebar-tab-research[href='/sessions/#{session.id}/research']"
+             "#instrument-card-research[href='/sessions/#{session.id}/research']"
            )
+
+    refute has_element?(session_view, "#workspace-header")
+    refute has_element?(session_view, "#kanban-board")
+  end
+
+  test "instrument cards open canonical session workbenches and deck can be restored", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    base = "/sessions/#{session.id}"
+    {:ok, view, _html} = live(conn, base)
+
+    destinations = [
+      {"swarm", "#{base}?view=swarm", "#async-run-control"},
+      {"kanban", "#{base}?view=kanban", "#kanban-board"},
+      {"calendar", "#{base}?view=calendar", "#calendar-grid"},
+      {"changes", "#{base}?view=changes", "#changes-layout"},
+      {"chat", "#{base}?view=chat", "#chat-viewport"},
+      {"files", "#{base}?view=files", "#file-explorer-container"},
+      {"terminal", "#{base}?view=terminal", "#terminal-session-container"}
+    ]
+
+    for {surface, destination, anchor} <- destinations do
+      view |> element("#instrument-card-#{surface}") |> render_click()
+      assert_push_patch(view, destination)
+      render_patch(view, destination)
+      assert has_element?(view, anchor)
+      refute has_element?(view, "#instrument-deck")
+      render_patch(view, base)
+      assert has_element?(view, "#instrument-deck")
+    end
+
+    view |> element("a#instrument-card-research") |> render_click()
+    assert_patch(view, "#{base}/research")
+    render_patch(view, "#{base}/research")
+    assert has_element?(view, "#deep-research-page")
+    assert has_element?(view, "#deep-research-form")
+    refute has_element?(view, "#instrument-deck")
   end
 
   for view_name <- ~w(kanban swarm calendar changes chat files terminal) do
@@ -44,6 +100,8 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
       assigns = :sys.get_state(view.pid).socket.assigns
       assert assigns.active_view == unquote(view_name)
       assert assigns.active_tab == unquote(view_name)
+      refute has_element?(view, "#instrument-deck")
+      assert has_element?(view, "#workspace-header")
     end
   end
 

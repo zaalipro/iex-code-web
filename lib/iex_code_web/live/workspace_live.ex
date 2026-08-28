@@ -25,6 +25,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   alias IexCodeWeb.CommandPalette
   alias IexCodeWeb.InstrumentSummary
   alias Phoenix.PubSub
+  import IexCodeWeb.InstrumentComponents
   import IexCodeWeb.WorkspaceComponents
   import IexCodeWeb.RunComponents
 
