@@ -130,7 +130,7 @@ defmodule IexCodeWeb.InstrumentComponentsTest do
   end
 
   test "uses active_view for every card's pressed or current state" do
-    for active_view <- @surfaces do
+    for active_view <- ["deck" | @surfaces] do
       document = render_deck(%{}, active_view)
 
       for surface <- @surfaces -- ["research"] do
@@ -305,6 +305,59 @@ defmodule IexCodeWeb.InstrumentComponentsTest do
            )
 
     assert Enum.empty?(LazyHTML.query(document, "a#instrument-card-research"))
+  end
+
+  test "destination validation accepts canonical root and session shapes" do
+    session_id = "0c47c96c-81f0-4fd3-b722-4e76f3f80db4"
+    assert LazyHTML.query(render_deck(), "#instrument-card-kanban[phx-click='switch_tab']")
+
+    overrides =
+      Map.new(@surfaces, fn surface ->
+        destination =
+          if surface == "research",
+            do: "/sessions/#{session_id}/research",
+            else: "/sessions/#{session_id}?view=#{surface}"
+
+        {surface, %{destination: destination}}
+      end)
+
+    document = render_deck(overrides)
+
+    for surface <- @surfaces -- ["research"] do
+      assert LazyHTML.query(document, "#instrument-card-#{surface}[phx-click='switch_tab']")
+    end
+
+    assert LazyHTML.query(
+             document,
+             "a#instrument-card-research[href='/sessions/#{session_id}/research']"
+           )
+  end
+
+  test "invalid destinations disable cards without links or events" do
+    cases = [
+      {"research", "/wrong"},
+      {"research", "//host/research"},
+      {"research", "/research?extra=1"},
+      {"research", "/research#fragment"},
+      {"kanban", "/?view=files"},
+      {"kanban", "/?view=kanban&extra=1"},
+      {"kanban", "/?view=kanban#fragment"},
+      {"kanban", "/sessions/id?view=kanban&extra=1"},
+      {"kanban", "/sessions//?view=kanban"}
+    ]
+
+    for {surface, destination} <- cases do
+      document = render_deck(%{surface => %{destination: destination}})
+
+      assert LazyHTML.query(
+               document,
+               "button#instrument-card-#{surface}[disabled][aria-disabled='true']"
+             )
+
+      assert Enum.empty?(LazyHTML.query(document, "a#instrument-card-#{surface}"))
+      assert Enum.empty?(LazyHTML.query(document, "#instrument-card-#{surface}[phx-click]"))
+      assert Enum.empty?(LazyHTML.query(document, "#instrument-card-#{surface}[phx-value-tab]"))
+    end
   end
 
   test "mission strip exposes exact controls, context, and only the first primary slot" do

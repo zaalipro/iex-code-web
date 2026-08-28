@@ -481,16 +481,30 @@ defmodule IexCodeWeb.InstrumentComponents do
   end
 
   defp valid_summary?(summary, surface) when is_map(summary) do
-    Map.get(summary, :surface) == surface and valid_destination?(Map.get(summary, :destination))
+    Map.get(summary, :surface) == surface and
+      valid_destination?(Map.get(summary, :destination), surface)
   end
 
   defp valid_summary?(_summary, _surface), do: false
 
-  defp valid_destination?(destination) when is_binary(destination) do
-    String.starts_with?(destination, "/") and not String.contains?(destination, ["\n", "\r"])
+  defp valid_destination?(destination, "research") when is_binary(destination) do
+    canonical_path?(destination, ~r|^/research$|) or
+      canonical_path?(destination, ~r|^/sessions/[A-Za-z0-9._~-]+/research$|)
   end
 
-  defp valid_destination?(_destination), do: false
+  defp valid_destination?(destination, surface) when is_binary(destination) do
+    canonical_path?(destination, Regex.compile!("^/\\?view=" <> Regex.escape(surface) <> "$")) or
+      canonical_path?(
+        destination,
+        Regex.compile!("^/sessions/[A-Za-z0-9._~-]+\\?view=" <> Regex.escape(surface) <> "$")
+      )
+  end
+
+  defp valid_destination?(_destination, _surface), do: false
+
+  defp canonical_path?(destination, regex) do
+    Regex.match?(regex, destination) and not String.starts_with?(destination, "//")
+  end
 
   defp canonical_title("swarm"), do: "Active Mission"
   defp canonical_title("kanban"), do: "Mission Board"
