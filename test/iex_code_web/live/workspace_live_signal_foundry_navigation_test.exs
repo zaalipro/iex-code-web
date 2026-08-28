@@ -1,6 +1,8 @@
 defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
   use IexCode.E2E.Case, async: false
 
+  alias IexCode.Tools.TerminalServer
+
   test "canonical workspace defaults mount deck with compatibility tab", %{
     conn: conn,
     workspace_path: path
@@ -60,10 +62,10 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
     assert session_assigns.active_tab == "research"
 
     render_patch(root_research, "/research?view=terminal")
-    assert_patch(root_research, "/research")
+    assert_replace_patch(root_research, "/research")
 
     render_patch(session_research, "/sessions/#{session.id}/research?view=terminal")
-    assert_patch(session_research, "/sessions/#{session.id}/research")
+    assert_replace_patch(session_research, "/sessions/#{session.id}/research")
   end
 
   test "research query values and malformed values replace to canonical paths", %{
@@ -111,6 +113,66 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
              live(conn, "/sessions/#{session.id}?view=research")
   end
 
+  test "id query keys never become session route context", %{conn: conn, workspace_path: path} do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, root_view, _html} = live(conn, ~p"/")
+    root_session_id = :sys.get_state(root_view.pid).socket.assigns.session.id
+
+    render_patch(root_view, "/?id=#{session.id}")
+    assert_replace_patch(root_view, "/")
+    root_assigns = :sys.get_state(root_view.pid).socket.assigns
+    assert root_assigns.workspace_route == :root
+    assert root_assigns.session.id == root_session_id
+
+    {:ok, research_view, _html} = live(conn, ~p"/research")
+    render_patch(research_view, "/research?id=#{session.id}")
+    assert_replace_patch(research_view, "/research")
+    assert :sys.get_state(research_view.pid).socket.assigns.workspace_route == :root
+
+    {:ok, session_view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_patch(session_view, "/sessions/#{session.id}?id=query-value")
+    assert_replace_patch(session_view, "/sessions/#{session.id}")
+
+    session_assigns = :sys.get_state(session_view.pid).socket.assigns
+    assert session_assigns.workspace_route == {:session, session.id}
+    assert session_assigns.session.id == session.id
+  end
+
+  test "direct Files and Changes URLs run their activation lifecycles", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    workspace_write_file(path, "lib/url_activation.ex", "defmodule UrlActivation, do: :ok\n")
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, files_view, _html} = live(conn, ~p"/sessions/#{session.id}?view=files")
+    files_assigns = :sys.get_state(files_view.pid).socket.assigns
+    assert files_assigns.files_loaded?
+    assert "lib/url_activation.ex" in files_assigns.project_files
+
+    {:ok, changes_view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+    changes_assigns = :sys.get_state(changes_view.pid).socket.assigns
+    assert changes_assigns.git_status || is_binary(changes_assigns.git_error)
+  end
+
+  test "URL terminal activation attaches and transitioning away detaches the viewer", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+    render_patch(view, "/sessions/#{session.id}?view=terminal")
+    assert :sys.get_state(view.pid).socket.assigns.terminal_running?
+    assert {:ok, %{viewer_count: 1}} = TerminalServer.get_state(session.id)
+
+    render_patch(view, "/sessions/#{session.id}")
+    assert {:ok, %{viewer_count: 0}} = TerminalServer.get_state(session.id)
+  end
+
   test "switch_tab payloads patch exact workspace URLs", %{conn: conn, workspace_path: path} do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
@@ -120,10 +182,10 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
     assert_push_patch(view, "/sessions/#{session.id}?view=terminal")
 
     render_click(view, "switch_tab", %{"sidebar_tab" => "calendar"})
-    assert_patch(view, "/sessions/#{session.id}?view=calendar")
+    assert_push_patch(view, "/sessions/#{session.id}?view=calendar")
 
     render_click(view, "switch_tab", %{"tab" => "research"})
-    assert_patch(view, "/sessions/#{session.id}/research")
+    assert_push_patch(view, "/sessions/#{session.id}/research")
 
     assigns = :sys.get_state(view.pid).socket.assigns
     assert assigns.active_view == "research"

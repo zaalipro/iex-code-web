@@ -82,7 +82,8 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def mount(params, _session, socket) do
     # 1. Resolve session and project consistently (never raise on bad client params)
-    {session, project, mount_error} = resolve_mount_context(params)
+    mount_params = mount_context_params(params, socket.assigns.live_action)
+    {session, project, mount_error} = resolve_mount_context(mount_params)
 
     today = Date.utc_today()
     today_str = Date.to_iso8601(today)
@@ -213,7 +214,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         :active_view,
         if(socket.assigns.live_action == :research, do: "research", else: "deck")
       )
-      |> assign(:workspace_route, workspace_route_from_params(params))
+      |> assign(:workspace_route, mount_workspace_route(mount_params, socket.assigns.live_action))
       |> assign(:expanded_column, "running")
       |> assign(:tasks, tasks)
       |> assign(:selected_task, selected_task)
@@ -391,13 +392,20 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_params(params, _uri, socket) do
-    case normalize_workspace_view(params, socket.assigns.live_action) do
+  def handle_params(_params, uri, socket) do
+    route_context = workspace_route_from_uri(uri)
+    query_params = workspace_query_params(uri)
+    path_params = workspace_path_params(route_context)
+
+    case normalize_workspace_view(query_params, socket.assigns.live_action, route_context) do
       {:replace, path} ->
-        {:noreply, push_patch(socket, to: path, replace: true)}
+        {:noreply,
+         socket
+         |> assign(:workspace_route, route_context)
+         |> push_patch(to: path, replace: true)}
 
       {:ok, active_view} ->
-        route_context = workspace_route_from_params(params)
+        previous_view = socket.assigns.active_view
 
         socket =
           socket
@@ -405,18 +413,11 @@ defmodule IexCodeWeb.WorkspaceLive do
           |> assign(:active_view, active_view)
           |> maybe_assign_active_tab(active_view)
 
-        socket =
-          if socket.assigns.live_action == :research do
-            refresh_research_results(socket)
-          else
-            socket
-          end
-
-        handle_workspace_params(params, socket)
+        handle_workspace_params(path_params, socket, previous_view)
     end
   end
 
-  defp handle_workspace_params(params, socket) do
+  defp handle_workspace_params(params, socket, previous_view) do
     if params["id"] && params["id"] != socket.assigns.session.id do
       old_id = socket.assigns.session.id
       old_project_id = socket.assigns.project.id
@@ -530,38 +531,19 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> refresh_research_results()
                 |> clear_research_attachments()
 
-              socket =
-                case socket.assigns.active_tab do
-                  "changes" -> refresh_git_state(socket)
-                  "files" -> load_workspace_files(socket, @file_page_size)
-                  _other -> socket
-                end
-
-              socket =
-                if socket.assigns.active_tab == "terminal" do
-                  case ensure_terminal_attached(socket) do
-                    {:ok, attached_socket} ->
-                      attached_socket
-                      |> push_event("terminal_reset", %{})
-                      |> push_event("terminal_history", %{
-                        history: TerminalServer.get_history(new_session.id)
-                      })
-
-                    {:error, reason, failed_socket} ->
-                      put_flash(
-                        failed_socket,
-                        :error,
-                        "Failed to start terminal: #{inspect(reason)}"
-                      )
-                  end
-                else
-                  socket
-                end
+              socket = activate_workspace_view_for_session(socket)
 
               {:noreply, socket}
           end
       end
     else
+      socket =
+        if previous_view == socket.assigns.active_view do
+          socket
+        else
+          activate_workspace_view_change(socket, previous_view, socket.assigns.active_view)
+        end
+
       {:noreply, socket}
     end
   end
@@ -4160,29 +4142,25 @@ defmodule IexCodeWeb.WorkspaceLive do
   # Helpers & Seeders
   # ============================================================================
 
-  @spec normalize_workspace_view(map(), atom()) ::
+  @spec normalize_workspace_view(map(), atom(), :root | {:session, String.t()}) ::
           {:ok, String.t()} | {:replace, String.t()}
-  defp normalize_workspace_view(params, :research) do
-    route_context = workspace_route_from_params(params)
-
-    case Map.drop(params, ["id"]) do
+  defp normalize_workspace_view(query_params, :research, route_context) do
+    case query_params do
       query when map_size(query) == 0 -> {:ok, "research"}
       _query -> {:replace, workspace_path(route_context, "research")}
     end
   end
 
-  defp normalize_workspace_view(params, _live_action) do
-    route_context = workspace_route_from_params(params)
-
-    case params["view"] do
+  defp normalize_workspace_view(query_params, _live_action, route_context) do
+    case query_params["view"] do
       nil ->
-        case Map.drop(params, ["id"]) do
+        case query_params do
           query when map_size(query) == 0 -> {:ok, "deck"}
           _query -> {:replace, workspace_path(route_context, "deck")}
         end
 
       view when view in @workspace_views and view not in ["deck", "research"] ->
-        case Map.drop(params, ["id"]) do
+        case query_params do
           %{"view" => ^view} = query when map_size(query) == 1 -> {:ok, view}
           _query -> {:replace, workspace_path(route_context, "deck")}
         end
@@ -4203,10 +4181,35 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp workspace_path({:session, id}, "research"), do: ~p"/sessions/#{id}/research"
   defp workspace_path({:session, id}, view), do: ~p"/sessions/#{id}?view=#{view}"
 
-  defp workspace_route_from_params(%{"id" => id}) when is_binary(id) and id != "",
+  defp workspace_route_from_uri(uri) when is_binary(uri) do
+    case uri |> URI.parse() |> Map.get(:path) |> to_string() |> String.split("/", trim: true) do
+      ["sessions", id] when id != "" -> {:session, URI.decode(id)}
+      ["sessions", id, "research"] when id != "" -> {:session, URI.decode(id)}
+      _root_path -> :root
+    end
+  end
+
+  defp workspace_route_from_uri(_uri), do: :root
+
+  defp workspace_query_params(uri) do
+    case URI.parse(uri).query do
+      nil -> %{}
+      query -> URI.decode_query(query)
+    end
+  rescue
+    ArgumentError -> %{"__malformed_query__" => "true"}
+  end
+
+  defp workspace_path_params(:root), do: %{}
+  defp workspace_path_params({:session, id}), do: %{"id" => id}
+
+  defp mount_context_params(params, :show), do: Map.take(params, ["id"])
+  defp mount_context_params(_params, _live_action), do: %{}
+
+  defp mount_workspace_route(%{"id" => id}, :show) when is_binary(id) and id != "",
     do: {:session, id}
 
-  defp workspace_route_from_params(_params), do: :root
+  defp mount_workspace_route(_params, _live_action), do: :root
 
   defp maybe_assign_active_tab(%{assigns: %{active_tab: "research"}} = socket, "deck"),
     do: assign(socket, :active_tab, "kanban")
@@ -4219,21 +4222,48 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp navigate_workspace_socket(socket, view) do
-    previous_tab = socket.assigns.active_tab
+    socket
+    |> activate_workspace_view(view)
+    |> push_patch(to: workspace_path(socket.assigns.workspace_route, view))
+  end
 
-    socket =
-      socket
-      |> assign(:active_view, view)
-      |> assign(:active_tab, view)
+  defp activate_workspace_view(socket, view) do
+    previous_view = socket.assigns.active_view
 
+    socket
+    |> assign(:active_view, view)
+    |> maybe_assign_active_tab(view)
+    |> activate_workspace_view_change(previous_view, view)
+  end
+
+  defp activate_workspace_view_change(socket, view, view), do: socket
+
+  defp activate_workspace_view_change(socket, previous_view, view) do
     socket = if view == "changes", do: refresh_git_state(socket), else: socket
     socket = if view == "files", do: ensure_workspace_files_loaded(socket), else: socket
     socket = if view == "swarm", do: refresh_run_fleet(socket), else: socket
     socket = if view == "research", do: refresh_research_results(socket), else: socket
+    update_terminal_viewer(socket, previous_view, view)
+  end
 
-    socket
-    |> update_terminal_viewer(previous_tab, view)
-    |> push_patch(to: workspace_path(socket.assigns.workspace_route, view))
+  defp activate_workspace_view_for_session(socket) do
+    case socket.assigns.active_view do
+      "terminal" ->
+        case ensure_terminal_attached(socket) do
+          {:ok, attached_socket} ->
+            attached_socket
+            |> push_event("terminal_reset", %{})
+            |> push_event("terminal_history", %{
+              history: TerminalServer.get_history(socket.assigns.session.id)
+            })
+
+          {:error, reason, failed_socket} ->
+            put_flash(failed_socket, :error, "Failed to start terminal: #{inspect(reason)}")
+        end
+
+      view ->
+        activate_workspace_view_change(socket, "deck", view)
+    end
   end
 
   # -- Safe fetches (client params must never raise) ---------------------------
