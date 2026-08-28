@@ -47,6 +47,7 @@ npm-debug.log
 
 # Subagent scratch logs
 /.agents/
+/.worktrees/
 .DS_Store
 
 
