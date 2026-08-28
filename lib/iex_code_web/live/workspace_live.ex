@@ -16,12 +16,14 @@ defmodule IexCodeWeb.WorkspaceLive do
   alias IexCode.Engine.SessionServer
   alias IexCode.Execution.{CommandError, CommandParser, Intent, Router}
   alias IexCode.Runs.{DagProjection, DagScheduler, RunDispatcher}
+  alias IexCode.Observability.RuntimeStatus
   alias IexCode.Research.Results, as: ResearchResults
   alias IexCode.Research.Registry, as: SearchRegistry
   alias IexCode.Tools.Git
   alias IexCode.Tools.Git.{DiffParser, HunkOps}
   alias IexCode.Tools.{TerminalServer, TerminalSession}
   alias IexCodeWeb.CommandPalette
+  alias IexCodeWeb.InstrumentSummary
   alias Phoenix.PubSub
   import IexCodeWeb.WorkspaceComponents
   import IexCodeWeb.RunComponents
@@ -78,6 +80,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                        |> IO.iodata_to_binary()
   @workspace_tabs ~w(kanban swarm research calendar changes chat files terminal)
   @workspace_views ~w(deck kanban swarm research calendar changes chat files terminal)
+  @runtime_refresh_interval 5_000
 
   @impl true
   def mount(params, _session, socket) do
@@ -121,16 +124,24 @@ defmodule IexCodeWeb.WorkspaceLive do
     workspace_locks = Runs.list_workspace_locks(project_id: project.id, active: true)
     settings = Settings.get_settings()
     ready_research_results = ResearchResults.list_ready(session_id: session.id)
+    latest_message = List.first(Sessions.list_messages(session.id, limit: 1, content_limit: 160))
     files = []
     sessions = Sessions.list_sessions_for_project(project.id)
     tasks = Kanban.list_tasks(project.id)
 
+    {kanban_summary, kanban_summary_error?} =
+      case safe_kanban_summary(project.id) do
+        {:ok, summary} -> {summary, false}
+        {:error, :unavailable} -> {nil, true}
+      end
+
     selected_task = List.first(tasks)
 
-    terminal_state =
+    {terminal_available?, terminal_error_reason, terminal_state} =
       case TerminalServer.get_state(session.id) do
-        {:ok, st} -> st
-        _ -> %{}
+        {:ok, st} -> {true, nil, st}
+        {:error, reason} -> {false, reason, %{}}
+        other -> {false, other, %{}}
       end
 
     terminal_status = Map.get(terminal_state, :status, :idle)
@@ -138,6 +149,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     terminal_cols = Map.get(terminal_state, :cols, 80)
     terminal_rows = Map.get(terminal_state, :rows, 24)
     terminal_occupant = Map.get(terminal_state, :occupant, :user)
+    terminal_active_cmd = terminal_command(terminal_state)
 
     terminal_history =
       terminal_state
@@ -157,6 +169,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:messages, messages)
       |> assign(:messages_more?, length(raw_messages) == @message_page_size)
       |> assign(:messages_newer?, false)
+      |> assign(:latest_message_summary, latest_message)
       |> assign(:operations, operations)
       |> assign(:selected_run, selected_run)
       |> assign(:run_steps, run_steps)
@@ -251,6 +264,23 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:selected_diff_file, nil)
       |> assign(:git_status, nil)
       |> assign(:git_error, nil)
+      |> assign(:runtime_status, %{state: :unavailable})
+      |> assign(:runtime_refresh_pending?, false)
+      |> assign(:deck_git_generation, 0)
+      |> assign(:deck_git_in_flight, nil)
+      |> assign(:deck_git_queued_project_id, nil)
+      |> assign(:terminal_available?, terminal_available?)
+      |> assign(:terminal_error_reason, terminal_error_reason)
+      |> assign(:kanban_summary, kanban_summary)
+      |> assign(:kanban_summary_error?, kanban_summary_error?)
+      |> assign(:research_summary_steps, [])
+      |> assign(:summary_mission_run, nil)
+      |> assign(:summary_mission_phase, nil)
+      |> assign(:summary_pending_approvals, pending_approval_count)
+      |> assign(:summary_research_run, nil)
+      |> assign(:summary_research_result, nil)
+      |> assign(:summary_research_level, nil)
+      |> assign(:instrument_summaries, %{})
       |> assign(:changes_subtab, "changes")
       |> assign(:project_files, files)
       |> assign(:files, files)
@@ -262,7 +292,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:terminal_cols, terminal_cols)
       |> assign(:terminal_rows, terminal_rows)
       |> assign(:terminal_occupant, terminal_occupant)
-      |> assign(:terminal_active_cmd, nil)
+      |> assign(:terminal_active_cmd, terminal_active_cmd)
       |> assign(:terminal_port, nil)
       |> assign(:terminal_history, terminal_history)
       |> assign(:terminal_form, to_form(%{"command" => ""}))
@@ -382,6 +412,13 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> stream(:run_agents, run_agents, dom_id: &"run-agent-#{&1.id}")
 
     socket =
+      socket
+      |> refresh_run_summary_facts(durable_runs, ready_research_results)
+      |> rebuild_instrument_summaries()
+      |> request_runtime_refresh()
+      |> request_deck_git_refresh()
+
+    socket =
       if mount_error do
         put_flash(socket, :error, mount_error)
       else
@@ -477,10 +514,11 @@ defmodule IexCodeWeb.WorkspaceLive do
               sessions = Sessions.list_sessions_for_project(project.id)
               tasks = Kanban.list_tasks(project.id)
 
-              terminal_state =
+              {terminal_available?, terminal_error_reason, terminal_state} =
                 case TerminalServer.get_state(new_session.id) do
-                  {:ok, st} -> st
-                  _ -> %{}
+                  {:ok, st} -> {true, nil, st}
+                  {:error, reason} -> {false, reason, %{}}
+                  other -> {false, other, %{}}
                 end
 
               terminal_status = Map.get(terminal_state, :status, :idle)
@@ -488,6 +526,7 @@ defmodule IexCodeWeb.WorkspaceLive do
               terminal_cols = Map.get(terminal_state, :cols, 80)
               terminal_rows = Map.get(terminal_state, :rows, 24)
               terminal_occupant = Map.get(terminal_state, :occupant, :user)
+              terminal_active_cmd = terminal_command(terminal_state)
 
               socket =
                 socket
@@ -508,6 +547,10 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:messages, messages)
                 |> assign(:messages_more?, length(raw_messages) == @message_page_size)
                 |> assign(:messages_newer?, false)
+                |> assign(
+                  :latest_message_summary,
+                  List.first(Sessions.list_messages(new_session.id, limit: 1, content_limit: 160))
+                )
                 |> assign(:expanded_message_id, nil)
                 |> assign(:expanded_message, nil)
                 |> assign(:workspace_search, "")
@@ -521,8 +564,25 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:terminal_cols, terminal_cols)
                 |> assign(:terminal_rows, terminal_rows)
                 |> assign(:terminal_occupant, terminal_occupant)
-                |> assign(:terminal_active_cmd, nil)
+                |> assign(:terminal_active_cmd, terminal_active_cmd)
                 |> assign(:terminal_output, "")
+                |> assign(:terminal_available?, terminal_available?)
+                |> assign(:terminal_error_reason, terminal_error_reason)
+                |> assign(
+                  :git_status,
+                  if(new_session.project_id != old_project_id,
+                    do: nil,
+                    else: socket.assigns.git_status
+                  )
+                )
+                |> assign(:git_error, nil)
+                |> assign(
+                  :current_branch,
+                  if(new_session.project_id != old_project_id,
+                    do: "main",
+                    else: socket.assigns.current_branch
+                  )
+                )
                 |> assign(
                   :workspace_locks,
                   Runs.list_workspace_locks(project_id: project.id, active: true)
@@ -530,6 +590,23 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign_run_projection(new_session.id)
                 |> refresh_research_results()
                 |> clear_research_attachments()
+
+              {kanban_summary, kanban_error?} =
+                case safe_kanban_summary(project.id) do
+                  {:ok, value} -> {value, false}
+                  {:error, :unavailable} -> {nil, true}
+                end
+
+              socket =
+                socket
+                |> assign(:kanban_summary, kanban_summary)
+                |> assign(:kanban_summary_error?, kanban_error?)
+                |> refresh_run_summary_facts(
+                  Runs.list_runs(session_id: new_session.id, limit: 100),
+                  ResearchResults.list_ready(session_id: new_session.id)
+                )
+                |> rebuild_instrument_summaries()
+                |> request_deck_git_refresh()
 
               socket = activate_workspace_view_for_session(socket)
 
@@ -1209,6 +1286,7 @@ defmodule IexCodeWeb.WorkspaceLive do
        |> assign(:dirty_content, new_text)
        |> assign(:is_dirty?, true)
        |> assign(:open_buffers, buffers)
+       |> rebuild_instrument_summaries()
        |> put_flash(:info, "Inserted snippet into #{file_path}")}
     else
       {:noreply,
@@ -1244,6 +1322,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       socket
       |> open_file_buffer(rel_path)
       |> assign(:active_tab, "files")
+      |> rebuild_instrument_summaries()
 
     {:noreply, socket}
   end
@@ -1267,7 +1346,8 @@ defmodule IexCodeWeb.WorkspaceLive do
      socket
      |> assign(:dirty_content, new_text)
      |> assign(:is_dirty?, is_dirty)
-     |> assign(:open_buffers, buffers)}
+     |> assign(:open_buffers, buffers)
+     |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -1304,6 +1384,7 @@ defmodule IexCodeWeb.WorkspaceLive do
             |> assign(:open_buffers, buffers)
             |> load_workspace_files(socket.assigns.file_limit)
             |> refresh_git_state()
+            |> rebuild_instrument_summaries()
 
           socket =
             if params["autosave"] in [true, "true", "1"],
@@ -1367,6 +1448,7 @@ defmodule IexCodeWeb.WorkspaceLive do
      |> assign(:dirty_content, orig)
      |> assign(:is_dirty?, false)
      |> assign(:open_buffers, buffers)
+     |> rebuild_instrument_summaries()
      |> put_flash(:info, "Reverted unsaved edits in #{file_path}")}
   end
 
@@ -1394,7 +1476,8 @@ defmodule IexCodeWeb.WorkspaceLive do
      |> assign(:selected_file, selected)
      |> assign(:file_content, content)
      |> assign(:dirty_content, dirty_content)
-     |> assign(:is_dirty?, is_dirty)}
+     |> assign(:is_dirty?, is_dirty)
+     |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -1402,13 +1485,14 @@ defmodule IexCodeWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(:file_limit, @file_page_size)
-     |> load_workspace_files(@file_page_size)}
+     |> load_workspace_files(@file_page_size)
+     |> rebuild_instrument_summaries()}
   end
 
   @impl true
   def handle_event("load_more_files", _params, socket) do
     next_limit = min(socket.assigns.file_limit + @file_page_size, @file_retained_limit)
-    {:noreply, load_workspace_files(socket, next_limit)}
+    {:noreply, load_workspace_files(socket, next_limit) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -1436,7 +1520,8 @@ defmodule IexCodeWeb.WorkspaceLive do
        :messages_more?,
        length(older) == @message_page_size
      )
-     |> assign(:messages_newer?, socket.assigns.messages_newer? or reached_retained_limit?)}
+     |> assign(:messages_newer?, socket.assigns.messages_newer? or reached_retained_limit?)
+     |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -1463,7 +1548,8 @@ defmodule IexCodeWeb.WorkspaceLive do
        combined |> Enum.take(-@message_retained_limit) |> bound_message_window(:newest)
      )
      |> assign(:messages_more?, socket.assigns.messages_more? or shifted?)
-     |> assign(:messages_newer?, length(newer) == @message_page_size)}
+     |> assign(:messages_newer?, length(newer) == @message_page_size)
+     |> rebuild_instrument_summaries()}
   end
 
   # ============================================================================
@@ -2274,6 +2360,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                |> assign(:tasks, tasks)
                |> assign(:selected_task, task)
                |> assign(:show_new_task_modal, false)
+               |> refresh_kanban_summary()
                |> put_flash(:info, "Task created")}
 
             {:error, changeset} ->
@@ -2329,7 +2416,8 @@ defmodule IexCodeWeb.WorkspaceLive do
              socket
              |> assign(:tasks, tasks)
              |> assign(:selected_task, selected)
-             |> assign(:expanded_column, status)}
+             |> assign(:expanded_column, status)
+             |> refresh_kanban_summary()}
 
           {:error, _reason} ->
             {:noreply, put_flash(socket, :error, "Invalid task status")}
@@ -2531,6 +2619,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                socket
                |> assign(:tasks, tasks)
                |> assign(:selected_task, updated)
+               |> refresh_kanban_summary()
                |> put_flash(:info, "Task updated")}
 
             {:error, _reason} ->
@@ -2558,6 +2647,7 @@ defmodule IexCodeWeb.WorkspaceLive do
              |> assign(:tasks, tasks)
              |> assign(:selected_task, nil)
              |> assign(:show_task_drawer, false)
+             |> refresh_kanban_summary()
              |> put_flash(:info, "Task deleted")}
 
           {:error, reason} ->
@@ -3600,6 +3690,17 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("refresh_git_summary", _params, socket) do
+    {:noreply, request_deck_git_refresh(socket)}
+  end
+
+  def handle_event("refresh_git", params, socket),
+    do: handle_event("refresh_git_summary", params, socket)
+
+  def handle_event("refresh_git_state", params, socket),
+    do: handle_event("refresh_git_summary", params, socket)
+
+  @impl true
   def handle_event(_event, _params, socket) do
     {:noreply, socket}
   end
@@ -3610,24 +3711,38 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:message_created, message}, socket) do
-    if socket.assigns.messages_newer? do
-      {:noreply, assign(socket, :messages_newer?, true)}
+    if Map.get(message, :session_id) != socket.assigns.session.id do
+      {:noreply, socket}
     else
-      combined =
-        socket.assigns.messages
-        |> Enum.reject(&(&1.id == message.id))
-        |> Kernel.++([project_message_for_ui(message)])
+      socket =
+        assign(
+          socket,
+          :latest_message_summary,
+          List.first(
+            Sessions.list_messages(socket.assigns.session.id, limit: 1, content_limit: 160)
+          )
+        )
 
-      {:noreply,
-       socket
-       |> assign(
-         :messages,
-         combined |> Enum.take(-@message_retained_limit) |> bound_message_window(:newest)
-       )
-       |> assign(
-         :messages_more?,
-         socket.assigns.messages_more? or length(combined) > @message_retained_limit
-       )}
+      if socket.assigns.messages_newer? do
+        {:noreply, rebuild_instrument_summaries(socket)}
+      else
+        combined =
+          socket.assigns.messages
+          |> Enum.reject(&(&1.id == message.id))
+          |> Kernel.++([project_message_for_ui(message)])
+
+        {:noreply,
+         socket
+         |> assign(
+           :messages,
+           combined |> Enum.take(-@message_retained_limit) |> bound_message_window(:newest)
+         )
+         |> assign(
+           :messages_more?,
+           socket.assigns.messages_more? or length(combined) > @message_retained_limit
+         )
+         |> rebuild_instrument_summaries()}
+      end
     end
   end
 
@@ -3636,7 +3751,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         {:research_result_updated, %{result: %{session_id: session_id}}},
         %{assigns: %{session: %{id: session_id}}} = socket
       ) do
-    {:noreply, refresh_research_results(socket)}
+    {:noreply, socket |> refresh_research_results() |> refresh_run_summaries()}
   end
 
   @impl true
@@ -3657,13 +3772,14 @@ defmodule IexCodeWeb.WorkspaceLive do
      socket
      |> assign(:operations, operations)
      |> assign(:active_agent, op.agent_name)
-     |> assign(:active_worker_pid, op.pid_str || socket.assigns.active_worker_pid)}
+     |> assign(:active_worker_pid, op.pid_str || socket.assigns.active_worker_pid)
+     |> rebuild_instrument_summaries()}
   end
 
   @impl true
   def handle_info({:operation_created, op}, socket) do
     operations = retain_operations(op, socket.assigns.operations)
-    {:noreply, assign(socket, :operations, operations)}
+    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -3673,7 +3789,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         if op.id == updated_op.id, do: updated_op, else: op
       end)
 
-    {:noreply, assign(socket, :operations, operations)}
+    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -3687,7 +3803,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         end
       end)
 
-    {:noreply, assign(socket, :operations, operations)}
+    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -3719,7 +3835,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         socket
       end
 
-    {:noreply, assign(socket, :operations, operations)}
+    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -3815,7 +3931,10 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:noreply,
        socket
        |> append_terminal_output(data)
-       |> push_event("terminal_output", %{data: data})}
+       |> assign(:terminal_available?, true)
+       |> assign(:terminal_error_reason, nil)
+       |> push_event("terminal_output", %{data: data})
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3828,7 +3947,10 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:noreply,
        socket
        |> append_terminal_output(data)
-       |> push_event("terminal_output", %{data: data})}
+       |> assign(:terminal_available?, true)
+       |> assign(:terminal_error_reason, nil)
+       |> push_event("terminal_output", %{data: data})
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3850,7 +3972,10 @@ defmodule IexCodeWeb.WorkspaceLive do
        |> assign(:terminal_status, status)
        |> assign(:terminal_shell, shell)
        |> assign(:terminal_occupant, occupant)
-       |> assign(:terminal_running?, status in [:ready, :running])}
+       |> assign(:terminal_running?, status in [:ready, :running])
+       |> assign(:terminal_available?, true)
+       |> assign(:terminal_error_reason, nil)
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3859,7 +3984,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({:terminal_occupant, %{session_id: sid, occupant: occupant}}, socket) do
     if sid == socket.assigns.session.id do
-      {:noreply, assign(socket, :terminal_occupant, occupant)}
+      {:noreply,
+       socket
+       |> assign(:terminal_occupant, occupant)
+       |> assign(:terminal_available?, true)
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3878,7 +4007,9 @@ defmodule IexCodeWeb.WorkspaceLive do
        socket
        |> append_terminal_output(exit_msg)
        |> assign(:terminal_active_cmd, nil)
-       |> push_event("terminal_output", %{data: exit_msg})}
+       |> push_event("terminal_output", %{data: exit_msg})
+       |> assign(:terminal_available?, true)
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3887,7 +4018,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({:terminal_command_started, %{session_id: sid, command: command}}, socket) do
     if sid == socket.assigns.session.id do
-      {:noreply, assign(socket, :terminal_active_cmd, command)}
+      {:noreply,
+       socket
+       |> assign(:terminal_active_cmd, command)
+       |> assign(:terminal_available?, true)
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3904,7 +4039,9 @@ defmodule IexCodeWeb.WorkspaceLive do
        |> assign(:terminal_status, :stopped)
        |> assign(:terminal_active_cmd, nil)
        |> append_terminal_output(exit_msg)
-       |> push_event("terminal_output", %{data: exit_msg})}
+       |> push_event("terminal_output", %{data: exit_msg})
+       |> assign(:terminal_available?, true)
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3916,7 +4053,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:noreply,
        socket
        |> assign(:terminal_output, "")
-       |> push_event("terminal_clear", %{})}
+       |> push_event("terminal_clear", %{})
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3928,7 +4066,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:noreply,
        socket
        |> assign(:terminal_cols, cols)
-       |> assign(:terminal_rows, rows)}
+       |> assign(:terminal_rows, rows)
+       |> rebuild_instrument_summaries()}
     else
       {:noreply, socket}
     end
@@ -3937,7 +4076,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({port, {:data, text}}, %{assigns: %{terminal_port: port}} = socket)
       when is_port(port) and is_binary(text) do
-    {:noreply, append_terminal_output(socket, text)}
+    {:noreply,
+     socket
+     |> append_terminal_output(text)
+     |> assign(:terminal_available?, true)
+     |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -3947,7 +4090,9 @@ defmodule IexCodeWeb.WorkspaceLive do
      socket
      |> append_terminal_output("\n[Exit #{code}#{if code == 0, do: ": OK", else: ": Error"}]\n")
      |> assign(:terminal_running?, false)
-     |> assign(:terminal_port, nil)}
+     |> assign(:terminal_port, nil)
+     |> assign(:terminal_available?, true)
+     |> rebuild_instrument_summaries()}
   end
 
   # Stale messages from a port we already stopped
@@ -3970,7 +4115,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info(:operations_cleared, socket) do
-    {:noreply, assign(socket, :operations, [])}
+    {:noreply, socket |> assign(:operations, []) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -3990,7 +4135,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       if Enum.any?(socket.assigns.tasks, &(&1.id == task.id)) do
         {:noreply, socket}
       else
-        {:noreply, assign(socket, :tasks, [task | socket.assigns.tasks])}
+        {:noreply,
+         socket |> assign(:tasks, [task | socket.assigns.tasks]) |> refresh_kanban_summary()}
       end
     else
       {:noreply, socket}
@@ -4010,7 +4156,11 @@ defmodule IexCodeWeb.WorkspaceLive do
           do: updated_task,
           else: socket.assigns.selected_task
 
-      {:noreply, socket |> assign(:tasks, tasks) |> assign(:selected_task, selected)}
+      {:noreply,
+       socket
+       |> assign(:tasks, tasks)
+       |> assign(:selected_task, selected)
+       |> refresh_kanban_summary()}
     else
       {:noreply, socket}
     end
@@ -4020,7 +4170,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_info({:task_deleted, deleted_task}, socket) do
     if deleted_task.project_id == socket.assigns.project.id do
       tasks = Enum.reject(socket.assigns.tasks, &(&1.id == deleted_task.id))
-      {:noreply, assign(socket, :tasks, tasks)}
+      {:noreply, socket |> assign(:tasks, tasks) |> refresh_kanban_summary()}
     else
       {:noreply, socket}
     end
@@ -4032,7 +4182,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({:run_created, run}, socket) do
     if run.session_id == socket.assigns.session.id do
-      {:noreply, select_run_projection(socket, run)}
+      {:noreply, socket |> select_run_projection(run) |> refresh_run_summaries()}
     else
       {:noreply, socket}
     end
@@ -4044,12 +4194,17 @@ defmodule IexCodeWeb.WorkspaceLive do
       socket = sync_run_linked_task(socket, run)
 
       if socket.assigns.selected_run && socket.assigns.selected_run.id == run.id do
-        {:noreply, socket |> select_run_projection(run) |> refresh_research_results()}
+        {:noreply,
+         socket
+         |> select_run_projection(run)
+         |> refresh_research_results()
+         |> refresh_run_summaries()}
       else
         {:noreply,
          socket
-         |> assign_run_projection(socket.assigns.session.id)
-         |> refresh_research_results()}
+         |> refresh_run_rows_preserving_selection()
+         |> refresh_research_results()
+         |> refresh_run_summaries()}
       end
     else
       {:noreply, socket}
@@ -4060,16 +4215,19 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_info({:run_event, event}, socket) do
     if socket.assigns.selected_run && event.run_id == socket.assigns.selected_run.id do
       if socket.assigns.selected_run.execution_engine == "dag_v1" do
-        {:noreply, refresh_selected_run(socket)}
+        {:noreply, refresh_selected_run(socket) |> refresh_run_summaries()}
       else
         updated_run = Runs.get_run(event.run_id) || socket.assigns.selected_run
         events = Runs.list_latest_events(updated_run, limit: 500)
 
         {:noreply,
-         socket |> assign(:selected_run, updated_run) |> assign(:run_event_rows, events)}
+         socket
+         |> assign(:selected_run, updated_run)
+         |> assign(:run_event_rows, events)
+         |> refresh_run_summaries()}
       end
     else
-      {:noreply, socket}
+      {:noreply, refresh_run_summaries(socket)}
     end
   end
 
@@ -4088,13 +4246,13 @@ defmodule IexCodeWeb.WorkspaceLive do
            ] do
     cond do
       socket.assigns.selected_run && entity.run_id == socket.assigns.selected_run.id ->
-        {:noreply, refresh_selected_run(socket)}
+        {:noreply, refresh_selected_run(socket) |> refresh_run_summaries()}
 
       event_name in [:run_approval_requested, :run_approval_decided] ->
-        {:noreply, refresh_run_counts(socket)}
+        {:noreply, socket |> refresh_run_counts() |> refresh_run_summaries()}
 
       true ->
-        {:noreply, socket}
+        {:noreply, refresh_run_summaries(socket)}
     end
   end
 
@@ -4102,9 +4260,9 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_info({event_name, agent}, socket)
       when event_name in [:run_agent_created, :run_agent_updated] do
     if socket.assigns.selected_run && agent.run_id == socket.assigns.selected_run.id do
-      {:noreply, refresh_run_fleet(socket)}
+      {:noreply, refresh_run_fleet(socket) |> refresh_run_summaries()}
     else
-      {:noreply, socket}
+      {:noreply, refresh_run_summaries(socket)}
     end
   end
 
@@ -4112,9 +4270,9 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_info({event_name, control}, socket)
       when event_name in [:run_agent_control_enqueued, :run_agent_control_updated] do
     if socket.assigns.selected_run && control.run_id == socket.assigns.selected_run.id do
-      {:noreply, refresh_run_fleet(socket)}
+      {:noreply, refresh_run_fleet(socket) |> refresh_run_summaries()}
     else
-      {:noreply, socket}
+      {:noreply, refresh_run_summaries(socket)}
     end
   end
 
@@ -4134,6 +4292,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_info(:refresh_runtime_status, socket) do
+    {:noreply, request_runtime_refresh(socket)}
+  end
+
+  @impl true
   def handle_info(_msg, socket) do
     {:noreply, socket}
   end
@@ -4141,6 +4304,410 @@ defmodule IexCodeWeb.WorkspaceLive do
   # ============================================================================
   # Helpers & Seeders
   # ============================================================================
+
+  @impl true
+  def handle_async(:runtime_status, {:ok, snapshot}, socket) do
+    snapshot = normalize_runtime_snapshot(snapshot)
+
+    socket =
+      socket
+      |> assign(:runtime_status, snapshot)
+      |> assign(:runtime_refresh_pending?, false)
+      |> rebuild_instrument_summaries()
+
+    Process.send_after(self(), :refresh_runtime_status, @runtime_refresh_interval)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_async(:runtime_status, {:exit, reason}, socket) do
+    Logger.warning("Workspace runtime snapshot unavailable: #{inspect(reason)}")
+
+    socket =
+      socket
+      |> assign(:runtime_status, %{state: :unavailable})
+      |> assign(:runtime_refresh_pending?, false)
+      |> rebuild_instrument_summaries()
+
+    Process.send_after(self(), :refresh_runtime_status, @runtime_refresh_interval)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_async({:deck_git_summary, generation}, {:ok, result}, socket) do
+    complete_deck_git_refresh(socket, generation, result)
+  end
+
+  def handle_async({:deck_git_summary, generation}, {:exit, reason}, socket) do
+    complete_deck_git_exit(socket, generation, reason)
+  end
+
+  defp request_runtime_refresh(%{assigns: %{runtime_refresh_pending?: true}} = socket), do: socket
+
+  defp request_runtime_refresh(socket) do
+    if connected?(socket) do
+      socket
+      |> assign(:runtime_refresh_pending?, true)
+      |> start_async(:runtime_status, fn -> runtime_source().snapshot() end)
+    else
+      socket
+    end
+  end
+
+  defp runtime_source do
+    Application.get_env(:iex_code, :runtime_status_reader, RuntimeStatus)
+  end
+
+  defp normalize_runtime_snapshot(%{state: state} = snapshot)
+       when state in [:idle, :active, :unavailable],
+       do: snapshot
+
+  defp normalize_runtime_snapshot(_snapshot), do: %{state: :unavailable}
+
+  defp request_deck_git_refresh(socket) do
+    if connected?(socket) do
+      generation = socket.assigns.deck_git_generation + 1
+      project = socket.assigns.project
+      socket = assign(socket, :deck_git_generation, generation)
+
+      case socket.assigns.deck_git_in_flight do
+        nil -> start_deck_git_refresh(socket, project.id, generation)
+        _in_flight -> assign(socket, :deck_git_queued_project_id, project.id)
+      end
+    else
+      socket
+    end
+  end
+
+  defp start_deck_git_refresh(socket, project_id, generation) do
+    project = socket.assigns.project
+
+    if project.id == project_id do
+      root = Path.expand(project.root_path)
+
+      socket
+      |> assign(:deck_git_in_flight, %{project_id: project_id, generation: generation})
+      |> assign(:deck_git_queued_project_id, nil)
+      |> start_async({:deck_git_summary, generation}, fn ->
+        reader = Application.get_env(:iex_code, :git_summary_reader, Git)
+
+        result =
+          case reader.status(root,
+                 path_limit: 500,
+                 output_limit_bytes: 1 * 1_024 * 1_024
+               ) do
+            {:ok, status} ->
+              branch = safe_current_branch(reader, root, status)
+
+              {:ok, %{git_status: status, current_branch: branch}}
+
+            {:error, reason} ->
+              {:error, reason}
+
+            other ->
+              {:error, other}
+          end
+
+        {project_id, result}
+      end)
+    else
+      socket
+    end
+  end
+
+  defp safe_current_branch(reader, root, status) do
+    if function_exported?(reader, :current_branch, 1) do
+      case reader.current_branch(root) do
+        {:ok, value} -> value
+        _ -> Map.get(status, :branch, "main")
+      end
+    else
+      Map.get(status, :branch, "main")
+    end
+  rescue
+    _ -> Map.get(status, :branch, "main")
+  end
+
+  defp complete_deck_git_refresh(socket, generation, {project_id, result}) do
+    marker = socket.assigns.deck_git_in_flight
+
+    owns? =
+      is_map(marker) and marker.project_id == project_id and marker.generation == generation
+
+    socket =
+      if owns? and project_id == socket.assigns.project.id do
+        case result do
+          {:ok, %{git_status: status, current_branch: branch}} ->
+            status = Map.put(status, :branch, branch)
+
+            socket
+            |> assign(:git_status, status)
+            |> assign(:current_branch, branch)
+            |> assign(:git_error, nil)
+
+          {:error, reason} ->
+            Logger.warning("Workspace Git summary unavailable: #{inspect(reason)}")
+            assign(socket, :git_error, "Git error: #{inspect(reason)}")
+        end
+      else
+        socket
+      end
+
+    socket =
+      if owns? do
+        socket = socket |> assign(:deck_git_in_flight, nil) |> rebuild_instrument_summaries()
+
+        case socket.assigns.deck_git_queued_project_id do
+          queued when queued == socket.assigns.project.id ->
+            start_deck_git_refresh(socket, queued, socket.assigns.deck_git_generation)
+
+          _other ->
+            assign(socket, :deck_git_queued_project_id, nil)
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  defp complete_deck_git_exit(socket, generation, reason) do
+    marker = socket.assigns.deck_git_in_flight
+    owns? = is_map(marker) and marker.generation == generation
+
+    socket =
+      if owns? and marker.project_id == socket.assigns.project.id do
+        Logger.warning("Workspace Git summary task exited: #{inspect(reason)}")
+        assign(socket, :git_error, reason)
+      else
+        socket
+      end
+
+    socket =
+      if owns? do
+        socket = socket |> assign(:deck_git_in_flight, nil) |> rebuild_instrument_summaries()
+
+        case socket.assigns.deck_git_queued_project_id do
+          queued when queued == socket.assigns.project.id ->
+            start_deck_git_refresh(socket, queued, socket.assigns.deck_git_generation)
+
+          _other ->
+            assign(socket, :deck_git_queued_project_id, nil)
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  defp safe_kanban_summary(project_id) do
+    reader = Application.get_env(:iex_code, :kanban_summary_reader, Kanban)
+
+    case reader.summary(project_id) do
+      {:ok, summary} when is_map(summary) -> {:ok, summary}
+      summary when is_map(summary) -> {:ok, summary}
+      _other -> {:error, :unavailable}
+    end
+  rescue
+    exception ->
+      Logger.warning("Kanban summary unavailable: #{inspect(exception)}")
+      {:error, :unavailable}
+  catch
+    _kind, reason ->
+      Logger.warning("Kanban summary unavailable: #{inspect(reason)}")
+      {:error, :unavailable}
+  end
+
+  defp refresh_kanban_summary(socket) do
+    case safe_kanban_summary(socket.assigns.project.id) do
+      {:ok, summary} ->
+        socket
+        |> assign(:kanban_summary, summary)
+        |> assign(:kanban_summary_error?, false)
+        |> rebuild_instrument_summaries()
+
+      {:error, :unavailable} ->
+        socket
+        |> assign(:kanban_summary, nil)
+        |> assign(:kanban_summary_error?, true)
+        |> rebuild_instrument_summaries()
+    end
+  end
+
+  defp refresh_run_summaries(socket) do
+    runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
+    ready = ResearchResults.list_ready(session_id: socket.assigns.session.id)
+
+    socket
+    |> refresh_run_summary_facts(runs, ready)
+    |> rebuild_instrument_summaries()
+  end
+
+  defp refresh_run_rows_preserving_selection(socket) do
+    runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
+    pending_approval_count = Runs.count_pending_approvals(socket.assigns.session.id)
+
+    socket
+    |> assign(:run_rows, runs)
+    |> assign(:research_runs, research_runs(runs))
+    |> assign(:run_count, length(runs))
+    |> assign(:run_counts, run_counts(runs, pending_approval_count))
+    |> assign(:run_dispatcher_stats, safe_dispatcher_stats())
+  end
+
+  defp select_active_mission(runs) when is_list(runs) do
+    Enum.find(runs, &(&1.status == "running")) ||
+      Enum.find(runs, &(&1.status == "paused")) ||
+      Enum.find(runs, &(&1.status == "queued")) ||
+      Enum.find(runs, &(&1.status == "draft")) ||
+      Enum.find(runs, &(&1.status in ~w(completed failed cancelled interrupted)))
+  end
+
+  defp mission_phase(nil), do: nil
+
+  defp mission_phase(run) do
+    steps = Runs.list_step_summaries(run)
+
+    case Enum.find(steps, &(&1.status == "running")) ||
+           Enum.find(steps, &(&1.status == "paused")) do
+      nil ->
+        steps
+        |> Enum.filter(&(&1.status == "completed"))
+        |> Enum.max_by(&step_completion_key/1, fn -> nil end)
+        |> case do
+          nil -> "Status: #{run.status}"
+          step -> step.title || step.key || "Status: #{run.status}"
+        end
+
+      step ->
+        step.title || step.key || "Status: #{run.status}"
+    end
+  end
+
+  defp step_completion_key(step) do
+    timestamp =
+      step.completed_at || step.updated_at || step.inserted_at || ~U[1970-01-01 00:00:00Z]
+
+    {DateTime.to_unix(timestamp, :microsecond), step.id || ""}
+  end
+
+  defp research_summary_round(steps) do
+    steps
+    |> Enum.filter(&(&1.status == "completed"))
+    |> Enum.map(fn step ->
+      case Regex.run(
+             ~r/\Aresearch\.(?:plan|search\.(?:ranked|grounded)|evidence\.(?:merge|audit)|source\.fetch)\.(\d+)(?:\.|\z)/,
+             step.key || ""
+           ) do
+        [_, round] -> String.to_integer(round)
+        _ -> 0
+      end
+    end)
+    |> Enum.max(fn -> 0 end)
+    |> min(4)
+    |> max(0)
+  end
+
+  defp latest_test_operation(operations) do
+    operations
+    |> Enum.filter(&(&1.op_type == "run_tests"))
+    |> Enum.max_by(
+      fn op -> {op.inserted_at || ~U[1970-01-01 00:00:00Z], op.id || ""} end,
+      fn -> nil end
+    )
+  end
+
+  defp refresh_run_summary_facts(socket, runs, ready_results) do
+    mission = select_active_mission(runs)
+    research = Enum.find(runs, &(&1.kind == "deep_research"))
+
+    research_result =
+      if research, do: Enum.find(ready_results, &(&1.run_id == research.id)), else: nil
+
+    level =
+      get_in((research && research.metadata) || %{}, ["research", "level"]) ||
+        (research_result && research_result.level)
+
+    socket
+    |> assign(:summary_mission_run, mission)
+    |> assign(:summary_mission_phase, mission_phase(mission))
+    |> assign(
+      :summary_pending_approvals,
+      Runs.count_pending_approvals(socket.assigns.session.id)
+    )
+    |> assign(:summary_research_run, research)
+    |> assign(:summary_research_result, research_result)
+    |> assign(:summary_research_level, level)
+    |> assign(
+      :research_summary_steps,
+      if(research, do: Runs.list_step_summaries(research), else: [])
+    )
+  end
+
+  defp rebuild_instrument_summaries(socket) do
+    route = socket.assigns.workspace_route
+    destination = fn view -> workspace_path(route, view) end
+    latest_test = latest_test_operation(socket.assigns.operations)
+    kanban = socket.assigns.kanban_summary || %{}
+    error? = socket.assigns[:kanban_summary_error?] == true
+    research_result = socket.assigns[:summary_research_result]
+    mission = socket.assigns[:summary_mission_run]
+
+    facts = %{
+      "swarm" => %{
+        run: mission,
+        phase: socket.assigns[:summary_mission_phase],
+        progress: mission && mission.progress,
+        pending_approvals: socket.assigns[:summary_pending_approvals],
+        destination: destination.("swarm")
+      },
+      "kanban" => Map.merge(kanban, %{error?: error?, destination: destination.("kanban")}),
+      "calendar" => Map.merge(kanban, %{error?: error?, destination: destination.("calendar")}),
+      "research" => %{
+        run: socket.assigns[:summary_research_run],
+        level: socket.assigns[:summary_research_level],
+        completed_round: research_summary_round(socket.assigns.research_summary_steps),
+        source_count: research_result && research_result.source_count,
+        result_ready?: not is_nil(research_result),
+        destination: destination.("research")
+      },
+      "changes" => %{
+        git_status: socket.assigns.git_status,
+        git_error: socket.assigns.git_error,
+        latest_test: latest_test,
+        destination: destination.("changes")
+      },
+      "chat" => %{
+        latest_message: socket.assigns.latest_message_summary,
+        messages_newer?: socket.assigns.messages_newer?,
+        destination: destination.("chat")
+      },
+      "files" => %{
+        loaded?: socket.assigns.files_loaded?,
+        file_count: length(socket.assigns.project_files || []),
+        files_more?: socket.assigns.files_more?,
+        selected_file: socket.assigns.selected_file,
+        dirty?: socket.assigns.is_dirty?,
+        destination: destination.("files")
+      },
+      "terminal" => %{
+        available?: socket.assigns.terminal_available?,
+        state: socket.assigns.terminal_status,
+        active_command: socket.assigns.terminal_active_cmd,
+        latest_command: List.first(socket.assigns.terminal_history || []),
+        owner: socket.assigns.terminal_occupant,
+        destination: destination.("terminal")
+      }
+    }
+
+    summaries =
+      Map.new(facts, fn {surface, surface_facts} ->
+        {surface, InstrumentSummary.build(surface, surface_facts)}
+      end)
+
+    assign(socket, :instrument_summaries, summaries)
+  end
 
   @spec normalize_workspace_view(map(), atom(), :root | {:session, String.t()}) ::
           {:ok, String.t()} | {:replace, String.t()}
@@ -4240,6 +4807,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp activate_workspace_view_change(socket, previous_view, view) do
     socket = if view == "changes", do: refresh_git_state(socket), else: socket
+    socket = if view == "deck", do: request_deck_git_refresh(socket), else: socket
     socket = if view == "files", do: ensure_workspace_files_loaded(socket), else: socket
     socket = if view == "swarm", do: refresh_run_fleet(socket), else: socket
     socket = if view == "research", do: refresh_research_results(socket), else: socket
@@ -4569,6 +5137,12 @@ defmodule IexCodeWeb.WorkspaceLive do
     assign(socket, :terminal_output, cap_terminal_output(terminal_base(socket) <> text))
   end
 
+  defp terminal_command(%{active_command: %{command: command}}) when is_binary(command),
+    do: command
+
+  defp terminal_command(%{active_command: command}) when is_binary(command), do: command
+  defp terminal_command(_state), do: nil
+
   defp update_terminal_viewer(socket, previous_tab, "terminal")
        when previous_tab != "terminal" do
     case ensure_terminal_attached(socket) do
@@ -4607,11 +5181,18 @@ defmodule IexCodeWeb.WorkspaceLive do
            rows: socket.assigns.terminal_rows
          ) do
       {:ok, _pid} ->
-        terminal_state =
+        {terminal_available?, terminal_error_reason, terminal_state} =
           case TerminalServer.get_state(session_id) do
-            {:ok, state} -> state
-            _unavailable -> %{}
+            {:ok, state} -> {true, nil, state}
+            {:error, reason} -> {false, reason, %{}}
+            other -> {false, other, %{}}
           end
+
+        if not terminal_available? do
+          Logger.warning(
+            "Terminal state unavailable after attach: #{inspect(terminal_error_reason)}"
+          )
+        end
 
         command_history =
           terminal_state
@@ -4619,18 +5200,32 @@ defmodule IexCodeWeb.WorkspaceLive do
           |> Enum.map(&Map.get(&1, :command))
           |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
 
+        terminal_status = Map.get(terminal_state, :status, :starting)
+
         {:ok,
          socket
-         |> assign(:terminal_running?, true)
-         |> assign(:terminal_status, Map.get(terminal_state, :status, :starting))
+         |> assign(:terminal_available?, terminal_available?)
+         |> assign(:terminal_error_reason, terminal_error_reason)
+         |> assign(
+           :terminal_running?,
+           terminal_available? and terminal_status in [:starting, :ready, :running]
+         )
+         |> assign(:terminal_status, terminal_status)
          |> assign(:terminal_shell, Map.get(terminal_state, :shell, "zsh"))
          |> assign(:terminal_cols, Map.get(terminal_state, :cols, socket.assigns.terminal_cols))
          |> assign(:terminal_rows, Map.get(terminal_state, :rows, socket.assigns.terminal_rows))
          |> assign(:terminal_occupant, Map.get(terminal_state, :occupant, :user))
-         |> assign(:terminal_history, command_history)}
+         |> assign(:terminal_history, command_history)
+         |> rebuild_instrument_summaries()}
 
       {:error, reason} ->
-        {:error, reason, socket}
+        failed_socket =
+          socket
+          |> assign(:terminal_available?, false)
+          |> assign(:terminal_error_reason, reason)
+          |> rebuild_instrument_summaries()
+
+        {:error, reason, failed_socket}
     end
   end
 
@@ -4831,12 +5426,20 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:diff_text, diff_text)
       |> assign(:diff_truncated?, truncated?)
       |> assign(:git_error, nil)
+      |> rebuild_instrument_summaries()
+      |> request_deck_git_refresh()
     else
       {:error, reason} ->
-        assign(socket, :git_error, "Git error: #{inspect(reason)}")
+        socket
+        |> assign(:git_error, "Git error: #{inspect(reason)}")
+        |> rebuild_instrument_summaries()
+        |> request_deck_git_refresh()
 
       _ ->
-        assign(socket, :git_error, "Git is not available for this project")
+        socket
+        |> assign(:git_error, "Git is not available for this project")
+        |> rebuild_instrument_summaries()
+        |> request_deck_git_refresh()
     end
   end
 
@@ -5563,7 +6166,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp select_async_run_message(socket, run) do
     case Runs.get_run(run.id) do
       %Runs.Run{session_id: session_id} = current when session_id == socket.assigns.session.id ->
-        {:noreply, select_run_projection(socket, current)}
+        {:noreply, socket |> select_run_projection(current) |> refresh_run_summaries()}
 
       _missing_or_foreign ->
         {:noreply, socket}

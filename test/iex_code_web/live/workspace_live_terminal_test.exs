@@ -11,6 +11,27 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
   # ============================================================================
 
   describe "Terminal Viewport & Toolbar Component Rendering" do
+    test "distinguishes an absent terminal from a successfully attached idle terminal", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+      initial = :sys.get_state(view.pid).socket.assigns
+      refute initial.terminal_available?
+      assert initial.instrument_summaries["terminal"].primary == "Terminal unavailable"
+
+      view |> element("#tab-btn-terminal") |> render_click()
+      _ = :sys.get_state(view.pid)
+      attached = :sys.get_state(view.pid).socket.assigns
+
+      assert attached.terminal_available?
+      assert attached.terminal_error_reason == nil
+      assert attached.instrument_summaries["terminal"].detail == "Idle · no active command"
+    end
+
     test "starts the PTY lazily on terminal activation and releases its viewer on exit", %{
       conn: conn,
       workspace_path: path

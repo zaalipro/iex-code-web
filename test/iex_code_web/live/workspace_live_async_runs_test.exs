@@ -423,6 +423,48 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert has_element?(view, "#async-run-metrics[data-pending-approvals='0']")
   end
 
+  test "durable run PubSub updates refresh mission summary without changing explicit selection",
+       %{
+         conn: conn,
+         workspace_path: path
+       } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, selected} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Keep this workbench selection",
+        kind: "analysis",
+        mode: "single",
+        status: "queued"
+      })
+
+    {:ok, active} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Live mission summary",
+        kind: "analysis",
+        mode: "single",
+        status: "queued"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#async-run-#{selected.id}") |> render_click()
+    assert :sys.get_state(view.pid).socket.assigns.selected_run.id == selected.id
+
+    {:ok, _updated} = Runs.transition_run(active, "running", %{progress: 42})
+    _ = :sys.get_state(view.pid)
+
+    assigns = :sys.get_state(view.pid).socket.assigns
+    assert assigns.selected_run.id == selected.id
+    assert assigns.instrument_summaries["swarm"].primary == "Live mission summary"
+    assert %{label: "Progress", value: "42%"} in assigns.instrument_summaries["swarm"].secondary
+  end
+
   test "renders honest dispatcher state and accessible asynchronous progress", %{
     conn: conn,
     workspace_path: path
