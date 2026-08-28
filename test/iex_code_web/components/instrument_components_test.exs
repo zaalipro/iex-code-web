@@ -339,9 +339,17 @@ defmodule IexCodeWeb.InstrumentComponentsTest do
       {"research", "//host/research"},
       {"research", "/research?extra=1"},
       {"research", "/research#fragment"},
+      {"research", "/research\n"},
+      {"research", "/research\r"},
+      {"research", "/research\t"},
+      {"research", "/research\u0000"},
       {"kanban", "/?view=files"},
       {"kanban", "/?view=kanban&extra=1"},
       {"kanban", "/?view=kanban#fragment"},
+      {"kanban", "/?view=kanban\n"},
+      {"kanban", "/?view=kanban\r"},
+      {"kanban", "/?view=kanban\t"},
+      {"kanban", "/?view=kan\u0001ban"},
       {"kanban", "/sessions/id?view=kanban&extra=1"},
       {"kanban", "/sessions//?view=kanban"}
     ]

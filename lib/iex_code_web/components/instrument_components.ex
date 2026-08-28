@@ -488,23 +488,25 @@ defmodule IexCodeWeb.InstrumentComponents do
   defp valid_summary?(_summary, _surface), do: false
 
   defp valid_destination?(destination, "research") when is_binary(destination) do
-    canonical_path?(destination, ~r|^/research$|) or
-      canonical_path?(destination, ~r|^/sessions/[A-Za-z0-9._~-]+/research$|)
+    canonical_path?(destination, ~r|\A/research\z|) or
+      canonical_path?(destination, ~r|\A/sessions/[A-Za-z0-9._~-]+/research\z|)
   end
 
   defp valid_destination?(destination, surface) when is_binary(destination) do
-    canonical_path?(destination, Regex.compile!("^/\\?view=" <> Regex.escape(surface) <> "$")) or
+    canonical_path?(destination, Regex.compile!("\\A/\\?view=" <> Regex.escape(surface) <> "\\z")) or
       canonical_path?(
         destination,
-        Regex.compile!("^/sessions/[A-Za-z0-9._~-]+\\?view=" <> Regex.escape(surface) <> "$")
+        Regex.compile!("\\A/sessions/[A-Za-z0-9._~-]+\\?view=" <> Regex.escape(surface) <> "\\z")
       )
   end
 
   defp valid_destination?(_destination, _surface), do: false
 
   defp canonical_path?(destination, regex) do
-    Regex.match?(regex, destination) and not String.starts_with?(destination, "//")
+    Regex.match?(regex, destination) and not control_character?(destination)
   end
+
+  defp control_character?(destination), do: Regex.match?(~r/\p{Cc}/u, destination)
 
   defp canonical_title("swarm"), do: "Active Mission"
   defp canonical_title("kanban"), do: "Mission Board"
