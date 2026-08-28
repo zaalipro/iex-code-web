@@ -11,6 +11,51 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
   # ============================================================================
 
   describe "Terminal Viewport & Toolbar Component Rendering" do
+    test "session rehydrate reloads terminal history and reports active command without exposing its id",
+         %{
+           conn: conn,
+           workspace_path: path
+         } do
+      project = create_project_fixture(%{root_path: path})
+      session_a = create_session_fixture(project)
+      session_b = create_session_fixture(project)
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "session:#{session_b.id}:terminal")
+
+      assert {:ok, terminal_pid} =
+               TerminalServer.ensure_started(session_b.id, workspace_path: path)
+
+      assert :ok = TerminalServer.run_command(session_b.id, "printf history-b")
+      assert_receive {:terminal_command_completed, %{session_id: sid}}, 5_000
+      assert sid == session_b.id
+
+      assert {:ok, %{command_history: [%{command: "printf history-b"} | _]}} =
+               TerminalServer.get_state(session_b.id)
+
+      assert :ok = TerminalServer.run_command(session_b.id, "sleep 30")
+      _ = :sys.get_state(terminal_pid)
+      assert {:ok, %{active_command_id: active_id}} = TerminalServer.get_state(session_b.id)
+      assert is_binary(active_id)
+
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session_a.id}")
+      render_patch(view, ~p"/sessions/#{session_b.id}")
+      assigns = :sys.get_state(view.pid).socket.assigns
+
+      assert {:ok, current_state} = TerminalServer.get_state(session_b.id)
+
+      expected_history =
+        current_state.command_history
+        |> Enum.map(&Map.get(&1, :command))
+        |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+
+      assert assigns.terminal_history == expected_history
+      assert "printf history-b" in expected_history
+
+      if assigns.terminal_active_cmd do
+        assert assigns.terminal_active_cmd == "Command active"
+        refute inspect(assigns.instrument_summaries["terminal"]) =~ active_id
+      end
+    end
+
     test "distinguishes an absent terminal from a successfully attached idle terminal", %{
       conn: conn,
       workspace_path: path

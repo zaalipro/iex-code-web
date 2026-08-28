@@ -242,6 +242,137 @@ defmodule IexCodeWeb.WorkspaceLiveInstrumentSummariesTest do
     send(runtime_task, {:runtime_snapshot_reply, %{state: :idle}})
   end
 
+  test "cross-project rehydrate clears editor and detailed Git state while same-project keeps buffers",
+       %{
+         conn: conn,
+         workspace_path: path_a
+       } do
+    File.write!(Path.join(path_a, "a.ex"), "old-a")
+    project_a = create_project_fixture(%{root_path: path_a})
+    session_a1 = create_session_fixture(project_a)
+    session_a2 = create_session_fixture(project_a)
+    path_b = create_temp_workspace(%{"b.ex" => "safe-b"})
+    project_b = create_project_fixture(%{root_path: path_b})
+    session_b = create_session_fixture(project_b)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session_a1.id}")
+    complete_background_reads()
+
+    render_patch(view, ~p"/sessions/#{session_a1.id}?view=files")
+    render_click(view, "select_file", %{"path" => "a.ex"})
+    render_change(view, "file_content_changed", %{"content" => "dirty-a"})
+    render_patch(view, ~p"/sessions/#{session_a2.id}?view=files")
+
+    same_project = assigns(view)
+    assert same_project.selected_file == "a.ex"
+    assert same_project.is_dirty?
+    assert [%{path: "a.ex"}] = Enum.map(same_project.open_buffers, &Map.take(&1, [:path]))
+
+    render_patch(view, ~p"/sessions/#{session_b.id}?view=files")
+    switched = assigns(view)
+
+    assert switched.open_buffers == []
+    assert switched.selected_file == nil
+    assert switched.file_content == nil
+    assert switched.dirty_content == nil
+    refute switched.is_dirty?
+    assert switched.parsed_diffs == []
+    assert switched.staged_diffs == []
+    assert switched.unstaged_diffs == []
+    assert switched.diff_text == ""
+    refute switched.diff_truncated?
+    assert switched.diff_mode == "inline"
+    assert switched.diff_file_path == nil
+    assert switched.diff_hunks == []
+    assert switched.git_branches == []
+    assert switched.current_branch == "main"
+    assert switched.git_status == nil
+
+    render_click(view, "save_file", %{"content" => "must-not-write"})
+    assert File.read!(Path.join(path_a, "a.ex")) == "old-a"
+    assert File.read!(Path.join(path_b, "b.ex")) == "safe-b"
+  end
+
+  test "stale operation callbacks and clear cannot corrupt the current session test summary", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session_a = create_session_fixture(project)
+    session_b = create_session_fixture(project)
+
+    stale =
+      create_operation_fixture(session_a, %{
+        op_type: "run_tests",
+        status: "failed",
+        duration_ms: 9
+      })
+
+    current =
+      create_operation_fixture(session_b, %{
+        op_type: "run_tests",
+        status: "completed",
+        duration_ms: 31
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session_a.id}")
+    complete_background_reads()
+    render_patch(view, ~p"/sessions/#{session_b.id}")
+
+    send(view.pid, {:operation_started, stale})
+    send(view.pid, {:operation_created, stale})
+    send(view.pid, {:operation_updated, %{stale | status: "completed", duration_ms: 1}})
+    send(view.pid, {:operation_progress, stale.id, 99, "stale"})
+    send(view.pid, {:operation_completed, stale})
+    send(view.pid, {:operation_failed, stale})
+    send(view.pid, :operations_cleared)
+    _ = :sys.get_state(view.pid)
+
+    state = assigns(view)
+    assert Enum.map(state.operations, & &1.id) == [current.id]
+
+    assert %{label: "Latest test operation", value: "completed · 31 ms"} in state.instrument_summaries[
+             "changes"
+           ].secondary
+  end
+
+  test "File Atlas receives bounded Git relation for success truncation and error", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    File.write!(Path.join(path, "tracked.ex"), "tracked")
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    assert_receive {:runtime_snapshot_requested, runtime_task}
+    assert_receive {:git_status_requested, git_task, ^path, _opts}
+    render_patch(view, ~p"/sessions/#{session.id}?view=files")
+
+    status = %StatusResult{branch: "main", untracked: ["tracked.ex"], clean?: false}
+    send(git_task, {:git_status_reply, {:ok, status}})
+    _ = :sys.get_state(view.pid)
+
+    assert %{label: "Git", value: "Git · 1 change"} in assigns(view).instrument_summaries["files"].secondary
+
+    render_click(view, "refresh_git_summary", %{})
+    assert_receive {:git_status_requested, truncated_task, ^path, _opts}
+    send(truncated_task, {:git_status_reply, {:ok, %{status | truncated?: true}}})
+    _ = :sys.get_state(view.pid)
+
+    assert %{label: "Git", value: "Git status truncated"} in assigns(view).instrument_summaries[
+             "files"
+           ].secondary
+
+    render_click(view, "refresh_git_summary", %{})
+    assert_receive {:git_status_requested, error_task, ^path, _opts}
+    send(error_task, {:git_status_reply, {:error, :offline}})
+    send(runtime_task, {:runtime_snapshot_reply, %{state: :idle}})
+    _ = :sys.get_state(view.pid)
+
+    assert %{label: "Git", value: "Git unavailable"} in assigns(view).instrument_summaries[
+             "files"
+           ].secondary
+  end
+
   test "active mission selection is status-prioritized and independent of selected workbench run",
        %{
          conn: conn,

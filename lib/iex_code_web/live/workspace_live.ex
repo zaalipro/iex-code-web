@@ -528,6 +528,8 @@ defmodule IexCodeWeb.WorkspaceLive do
               terminal_occupant = Map.get(terminal_state, :occupant, :user)
               terminal_active_cmd = terminal_command(terminal_state)
 
+              project_changed? = new_session.project_id != old_project_id
+
               socket =
                 socket
                 |> assign(:session, new_session)
@@ -536,12 +538,27 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:all_projects, projects)
                 |> assign(:sessions, sessions)
                 |> assign(:all_sessions, sessions)
-                |> assign(:project_files, [])
-                |> assign(:files, [])
-                |> assign(:files_loaded?, false)
-                |> assign(:files_more?, false)
-                |> assign(:file_limit, @file_page_size)
-                |> assign(:expanded_folders, MapSet.new())
+                |> assign(
+                  :project_files,
+                  if(project_changed?, do: [], else: socket.assigns.project_files)
+                )
+                |> assign(:files, if(project_changed?, do: [], else: socket.assigns.files))
+                |> assign(
+                  :files_loaded?,
+                  if(project_changed?, do: false, else: socket.assigns.files_loaded?)
+                )
+                |> assign(
+                  :files_more?,
+                  if(project_changed?, do: false, else: socket.assigns.files_more?)
+                )
+                |> assign(
+                  :file_limit,
+                  if(project_changed?, do: @file_page_size, else: socket.assigns.file_limit)
+                )
+                |> assign(
+                  :expanded_folders,
+                  if(project_changed?, do: MapSet.new(), else: socket.assigns.expanded_folders)
+                )
                 |> assign(:tasks, tasks)
                 |> assign(:page_title, "#{new_session.title} · #{project.name}")
                 |> assign(:messages, messages)
@@ -565,12 +582,19 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:terminal_rows, terminal_rows)
                 |> assign(:terminal_occupant, terminal_occupant)
                 |> assign(:terminal_active_cmd, terminal_active_cmd)
+                |> assign(
+                  :terminal_history,
+                  terminal_state
+                  |> Map.get(:command_history, [])
+                  |> Enum.map(&Map.get(&1, :command))
+                  |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+                )
                 |> assign(:terminal_output, "")
                 |> assign(:terminal_available?, terminal_available?)
                 |> assign(:terminal_error_reason, terminal_error_reason)
                 |> assign(
                   :git_status,
-                  if(new_session.project_id != old_project_id,
+                  if(project_changed?,
                     do: nil,
                     else: socket.assigns.git_status
                   )
@@ -578,7 +602,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:git_error, nil)
                 |> assign(
                   :current_branch,
-                  if(new_session.project_id != old_project_id,
+                  if(project_changed?,
                     do: "main",
                     else: socket.assigns.current_branch
                   )
@@ -590,6 +614,11 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign_run_projection(new_session.id)
                 |> refresh_research_results()
                 |> clear_research_attachments()
+
+              socket =
+                if project_changed?,
+                  do: reset_project_scoped_state(socket),
+                  else: socket
 
               {kanban_summary, kanban_error?} =
                 case safe_kanban_summary(project.id) do
@@ -3766,44 +3795,60 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:operation_started, op}, socket) do
-    operations = retain_operations(op, socket.assigns.operations)
+    if operation_in_session?(op, socket.assigns.session.id) do
+      operations = retain_operations(op, socket.assigns.operations)
 
-    {:noreply,
-     socket
-     |> assign(:operations, operations)
-     |> assign(:active_agent, op.agent_name)
-     |> assign(:active_worker_pid, op.pid_str || socket.assigns.active_worker_pid)
-     |> rebuild_instrument_summaries()}
+      {:noreply,
+       socket
+       |> assign(:operations, operations)
+       |> assign(:active_agent, op.agent_name)
+       |> assign(:active_worker_pid, op.pid_str || socket.assigns.active_worker_pid)
+       |> rebuild_instrument_summaries()}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
   def handle_info({:operation_created, op}, socket) do
-    operations = retain_operations(op, socket.assigns.operations)
-    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+    if operation_in_session?(op, socket.assigns.session.id) do
+      operations = retain_operations(op, socket.assigns.operations)
+      {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
   def handle_info({:operation_updated, updated_op}, socket) do
-    operations =
-      Enum.map(socket.assigns.operations, fn op ->
-        if op.id == updated_op.id, do: updated_op, else: op
-      end)
+    if operation_in_session?(updated_op, socket.assigns.session.id) do
+      operations =
+        Enum.map(socket.assigns.operations, fn op ->
+          if op.id == updated_op.id, do: updated_op, else: op
+        end)
 
-    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+      {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
   def handle_info({:operation_progress, op_id, pct, msg}, socket) when is_binary(op_id) do
-    operations =
-      Enum.map(socket.assigns.operations, fn op ->
-        if op.id == op_id do
-          %{op | progress: pct, result: msg || op.result, status: "running"}
-        else
-          op
-        end
-      end)
+    if operation_in_session_id?(op_id, socket.assigns) do
+      operations =
+        Enum.map(socket.assigns.operations, fn op ->
+          if op.id == op_id do
+            %{op | progress: pct, result: msg || op.result, status: "running"}
+          else
+            op
+          end
+        end)
 
-    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+      {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -3811,31 +3856,38 @@ defmodule IexCodeWeb.WorkspaceLive do
         {:operation_progress, %{id: op_id, progress: pct} = data},
         socket
       ) do
-    latency = Map.get(data, :latency_ms)
-    status = Map.get(data, :status, "running")
-    msg = Map.get(data, :message)
+    data_session_id = Map.get(data, :session_id)
 
-    operations =
-      Enum.map(socket.assigns.operations, fn op ->
-        if op.id == op_id do
-          op
-          |> Map.put(:progress, pct)
-          |> Map.put(:status, status)
-          |> then(fn o -> if latency, do: Map.put(o, :duration_ms, latency), else: o end)
-          |> then(fn o -> if msg, do: Map.put(o, :result, msg), else: o end)
+    if not operation_in_session_id?(op_id, socket.assigns) or
+         (not is_nil(data_session_id) and data_session_id != socket.assigns.session.id) do
+      {:noreply, socket}
+    else
+      latency = Map.get(data, :latency_ms)
+      status = Map.get(data, :status, "running")
+      msg = Map.get(data, :message)
+
+      operations =
+        Enum.map(socket.assigns.operations, fn op ->
+          if op.id == op_id do
+            op
+            |> Map.put(:progress, pct)
+            |> Map.put(:status, status)
+            |> then(fn o -> if latency, do: Map.put(o, :duration_ms, latency), else: o end)
+            |> then(fn o -> if msg, do: Map.put(o, :result, msg), else: o end)
+          else
+            op
+          end
+        end)
+
+      socket =
+        if latency do
+          assign(socket, :current_latency_ms, latency)
         else
-          op
+          socket
         end
-      end)
 
-    socket =
-      if latency do
-        assign(socket, :current_latency_ms, latency)
-      else
-        socket
-      end
-
-    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+      {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+    end
   end
 
   @impl true
@@ -4115,7 +4167,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info(:operations_cleared, socket) do
-    {:noreply, socket |> assign(:operations, []) |> rebuild_instrument_summaries()}
+    operations =
+      Sessions.list_operations(socket.assigns.session.id, limit: @operation_retained_limit)
+
+    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -4535,6 +4590,35 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
+  defp reset_project_scoped_state(socket) do
+    socket
+    |> assign(:open_buffers, [])
+    |> assign(:active_editor_path, nil)
+    |> assign(:active_editor_content, nil)
+    |> assign(:selected_file, nil)
+    |> assign(:file_content, nil)
+    |> assign(:dirty_content, nil)
+    |> assign(:is_dirty?, false)
+    |> assign(:diff_text, "")
+    |> assign(:diff_truncated?, false)
+    |> assign(:diff_mode, "inline")
+    |> assign(:diff_file_path, nil)
+    |> assign(:diff_hunks, [])
+    |> assign(:parsed_diffs, [])
+    |> assign(:selected_diff_file, nil)
+    |> assign(:staged_diffs, [])
+    |> assign(:unstaged_diffs, [])
+    |> assign(:active_diff_scope, :unstaged)
+    |> assign(:git_branches, [])
+    |> assign(:current_branch, "main")
+    |> assign(:show_branch_menu, false)
+    |> assign(:commit_message, "")
+    |> assign(:commit_generating?, false)
+    |> assign(:git_syncing?, false)
+    |> assign(:git_status, nil)
+    |> assign(:git_error, nil)
+  end
+
   defp refresh_run_summaries(socket) do
     runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
     ready = ResearchResults.list_ready(session_id: socket.assigns.session.id)
@@ -4618,6 +4702,22 @@ defmodule IexCodeWeb.WorkspaceLive do
     )
   end
 
+  defp operation_in_session?(op, session_id) when is_map(op) do
+    Map.get(op, :session_id, Map.get(op, "session_id")) == session_id
+  end
+
+  defp operation_in_session?(_op, _session_id), do: false
+
+  defp operation_in_session_id?(op_id, assigns) do
+    Enum.any?(assigns.operations, fn op ->
+      op.id == op_id and operation_in_session?(op, assigns.session.id)
+    end) or
+      case Sessions.get_operation(op_id) do
+        op when is_map(op) -> operation_in_session?(op, assigns.session.id)
+        _ -> false
+      end
+  end
+
   defp refresh_run_summary_facts(socket, runs, ready_results) do
     mission = select_active_mission(runs)
     research = Enum.find(runs, &(&1.kind == "deep_research"))
@@ -4689,6 +4789,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         files_more?: socket.assigns.files_more?,
         selected_file: socket.assigns.selected_file,
         dirty?: socket.assigns.is_dirty?,
+        git_relation: bounded_git_relation(socket.assigns.git_status, socket.assigns.git_error),
         destination: destination.("files")
       },
       "terminal" => %{
@@ -4707,6 +4808,24 @@ defmodule IexCodeWeb.WorkspaceLive do
       end)
 
     assign(socket, :instrument_summaries, summaries)
+  end
+
+  defp bounded_git_relation(_status, error) when not is_nil(error), do: "Git unavailable"
+
+  defp bounded_git_relation(nil, _error), do: nil
+
+  defp bounded_git_relation(status, _error) do
+    staged = length(Map.get(status, :staged, []))
+    unstaged = length(Map.get(status, :unstaged, []))
+    untracked = length(Map.get(status, :untracked, []))
+    conflicted = length(Map.get(status, :conflicted, []))
+    total = staged + unstaged + untracked + conflicted
+
+    cond do
+      Map.get(status, :truncated?, false) -> "Git status truncated"
+      total == 0 -> "Git clean"
+      true -> "Git · #{total} #{if(total == 1, do: "change", else: "changes")}"
+    end
   end
 
   @spec normalize_workspace_view(map(), atom(), :root | {:session, String.t()}) ::
@@ -5137,10 +5256,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     assign(socket, :terminal_output, cap_terminal_output(terminal_base(socket) <> text))
   end
 
-  defp terminal_command(%{active_command: %{command: command}}) when is_binary(command),
-    do: command
-
-  defp terminal_command(%{active_command: command}) when is_binary(command), do: command
+  defp terminal_command(%{active_command_id: id}) when not is_nil(id), do: "Command active"
   defp terminal_command(_state), do: nil
 
   defp update_terminal_viewer(socket, previous_tab, "terminal")
