@@ -4,6 +4,7 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/iex_code"
 import topbar from "../vendor/topbar"
 import TerminalHook from "./hooks/terminal_hook"
+import InstrumentDeck from "./hooks/instrument_deck_hook.mjs"
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
@@ -64,6 +65,7 @@ document.addEventListener("click", (event) => {
 
 const Hooks = {
   TerminalHook,
+  InstrumentDeck,
   ModalFocus: {
     mounted() {
       const activeElement = document.activeElement

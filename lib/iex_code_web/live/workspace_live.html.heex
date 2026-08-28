@@ -2,9 +2,13 @@
   <a href="#main-content" class="workspace-skip-link">Skip to workspace content</a>
   <div
     id="workspace-shell"
-    phx-hook=".ResponsiveShell"
+    phx-hook="InstrumentDeck"
+    data-active-view={@active_view}
+    data-project-id={@project.id}
+    data-session-id={@session.id}
     class="workspace-shell flex h-dvh min-h-0 w-full bg-[#0a0d12] text-[#f0f6fc] font-sans antialiased overflow-hidden"
   >
+    <div id="responsive-shell-controller" phx-hook=".ResponsiveShell" class="hidden"></div>
     <!-- Sidebar: Sessions & Projects Navigation -->
     <aside
       id="workspace-sidebar"
@@ -640,6 +644,16 @@
       <!-- View Containers -->
       <div id="workspace-views" class="relative flex-1 flex min-w-0 overflow-hidden">
         <%= if @active_view == "deck" do %>
+          <%= if @resume_instrument != nil do %>
+            <.link
+              id="resume-instrument"
+              patch={@resume_instrument.path}
+              data-surface={@resume_instrument.surface}
+              class="sf-focus-surface absolute right-5 top-5 z-10 rounded-full border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-4 py-2 text-xs font-semibold tracking-wide text-[var(--sf-text-primary)] transition-colors hover:bg-[var(--sf-raised-control)] md:right-7 md:top-7"
+            >
+              Resume {@resume_instrument.title}
+            </.link>
+          <% end %>
           <.instrument_deck summaries={@instrument_summaries} active_view={@active_view} />
         <% else %>
           <!-- TAB 1: KANBAN BOARD -->
@@ -3711,12 +3725,14 @@
   <script :type={Phoenix.LiveView.ColocatedHook} name=".ResponsiveShell">
     export default {
       mounted() {
-        this.openButton = this.el.querySelector('[data-sidebar-open]')
-        this.sidebar = this.el.querySelector('#workspace-sidebar')
+        this.shell = document.getElementById('workspace-shell')
+        this.openButton = this.shell?.querySelector('[data-sidebar-open]')
+        this.sidebar = this.shell?.querySelector('#workspace-sidebar')
         this.lastFocused = null
 
         this.setSidebarAccessibility = (isOpen) => {
           const isDesktop = this.desktopQuery.matches
+          if (!this.sidebar) return
           this.sidebar.inert = !isDesktop && !isOpen
           if (isDesktop) {
             this.sidebar.removeAttribute('aria-hidden')
@@ -3728,15 +3744,15 @@
         this.openSidebar = () => {
           if (this.desktopQuery.matches) return
           this.lastFocused = document.activeElement
-          this.el.classList.add('sidebar-is-open')
+          this.shell?.classList.add('sidebar-is-open')
           this.openButton?.setAttribute('aria-expanded', 'true')
           this.setSidebarAccessibility(true)
           requestAnimationFrame(() => this.sidebar?.querySelector('[data-sidebar-close]')?.focus())
         }
 
         this.closeSidebar = (restoreFocus = true) => {
-          const wasOpen = this.el.classList.contains('sidebar-is-open')
-          this.el.classList.remove('sidebar-is-open')
+          const wasOpen = this.shell?.classList.contains('sidebar-is-open')
+          this.shell?.classList.remove('sidebar-is-open')
           this.openButton?.setAttribute('aria-expanded', 'false')
           this.setSidebarAccessibility(false)
           if (wasOpen && restoreFocus) this.lastFocused?.focus?.()
@@ -3754,7 +3770,7 @@
             return
           }
 
-          if (event.key !== 'Tab' || !this.el.classList.contains('sidebar-is-open')) return
+          if (event.key !== 'Tab' || !this.shell?.classList.contains('sidebar-is-open')) return
 
           const focusable = [...this.sidebar.querySelectorAll(
             'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -3779,13 +3795,13 @@
 
         this.desktopQuery = window.matchMedia('(min-width: 64rem)')
         this.setSidebarAccessibility(false)
-        this.el.addEventListener('click', this.handleClick)
+        this.shell?.addEventListener('click', this.handleClick)
         window.addEventListener('keydown', this.handleKeydown)
         this.desktopQuery.addEventListener('change', this.handleViewportChange)
       },
 
       destroyed() {
-        this.el.removeEventListener('click', this.handleClick)
+        this.shell?.removeEventListener('click', this.handleClick)
         window.removeEventListener('keydown', this.handleKeydown)
         this.desktopQuery?.removeEventListener('change', this.handleViewportChange)
       }

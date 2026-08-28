@@ -282,6 +282,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:summary_research_result, nil)
       |> assign(:summary_research_level, nil)
       |> assign(:instrument_summaries, %{})
+      |> assign(:resume_instrument, nil)
       |> assign(:changes_subtab, "changes")
       |> assign(:project_files, files)
       |> assign(:files, files)
@@ -576,6 +577,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:file_filter, "")
                 |> assign(:file_filter_form, to_form(%{"filter" => ""}))
                 |> assign(:operations, operations)
+                |> assign(:resume_instrument, nil)
                 |> assign(:terminal_running?, terminal_status in [:starting, :ready, :running])
                 |> assign(:terminal_status, terminal_status)
                 |> assign(:terminal_shell, terminal_shell)
@@ -658,6 +660,21 @@ defmodule IexCodeWeb.WorkspaceLive do
   # ============================================================================
   # Event Handlers: Navigation & Tabs
   # ============================================================================
+
+  @impl true
+  def handle_event("restore_last_instrument", %{"surface" => surface}, socket)
+      when surface in @workspace_tabs do
+    case Map.get(socket.assigns.instrument_summaries, surface) do
+      %{title: title, destination: path} when is_binary(title) and is_binary(path) ->
+        {:noreply,
+         assign(socket, :resume_instrument, %{surface: surface, title: title, path: path})}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("restore_last_instrument", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("switch_tab", %{"tab" => tab}, socket) when tab in @workspace_tabs do
