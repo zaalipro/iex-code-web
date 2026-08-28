@@ -72,6 +72,94 @@ defmodule IexCode.Kanban do
     end)
   end
 
+  @doc """
+  Returns a bounded, project-wide task aggregate.
+
+  Today's interval is the half-open UTC range beginning at midnight, and the
+  next scheduled time is strictly later than `:now`. The aggregate contains no
+  task rows or task text. Tests may provide `:today` and `:now`; production
+  callers default to the current UTC date and time.
+  """
+  @spec summary(Ecto.UUID.t(), keyword()) :: %{
+          status_counts: %{String.t() => non_neg_integer()},
+          today_count: non_neg_integer(),
+          next_scheduled_at: DateTime.t() | nil
+        }
+  def summary(project_id, opts \\ []) do
+    today =
+      case Keyword.get(opts, :today) do
+        %Date{} = value -> value
+        _other -> Date.utc_today()
+      end
+
+    now =
+      case Keyword.get(opts, :now) do
+        %DateTime{} = value ->
+          value |> DateTime.shift_zone!("Etc/UTC") |> DateTime.truncate(:second)
+
+        _other ->
+          DateTime.utc_now() |> DateTime.truncate(:second)
+      end
+
+    day_start = DateTime.new!(today, ~T[00:00:00], "Etc/UTC")
+    day_stop = DateTime.new!(Date.add(today, 1), ~T[00:00:00], "Etc/UTC")
+    statuses = Task.statuses()
+
+    rows =
+      from(task in Task,
+        where: task.project_id == ^project_id and task.status in ^statuses,
+        group_by: task.status,
+        select: %{
+          status: task.status,
+          status_count: count(task.id),
+          today_count:
+            type(
+              fragment(
+                "SUM(CASE WHEN ? >= ? AND ? < ? THEN 1 ELSE 0 END)",
+                task.scheduled_at,
+                ^day_start,
+                task.scheduled_at,
+                ^day_stop
+              ),
+              :integer
+            ),
+          next_scheduled_at:
+            type(
+              fragment(
+                "MIN(CASE WHEN julianday(?) > julianday(?) THEN ? ELSE NULL END)",
+                task.scheduled_at,
+                ^now,
+                task.scheduled_at
+              ),
+              :utc_datetime
+            )
+        }
+      )
+      |> Repo.all()
+
+    initial = %{
+      status_counts: Map.new(statuses, &{&1, 0}),
+      today_count: 0,
+      next_scheduled_at: nil
+    }
+
+    Enum.reduce(rows, initial, fn row, aggregate ->
+      %{
+        aggregate
+        | status_counts: Map.replace(aggregate.status_counts, row.status, row.status_count),
+          today_count: aggregate.today_count + row.today_count,
+          next_scheduled_at: earlier_datetime(aggregate.next_scheduled_at, row.next_scheduled_at)
+      }
+    end)
+  end
+
+  defp earlier_datetime(nil, value), do: value
+  defp earlier_datetime(value, nil), do: value
+
+  defp earlier_datetime(left, right) do
+    if DateTime.compare(left, right) == :gt, do: right, else: left
+  end
+
   def get_task!(id), do: Repo.get!(Task, id)
 
   def get_task(id), do: Repo.get(Task, id)
