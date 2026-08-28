@@ -159,7 +159,7 @@
 
           <.link
             id="sidebar-tab-research"
-            patch={~p"/sessions/#{@session.id}/research"}
+            patch={workspace_path(@workspace_route, "research")}
             aria-current={if @active_tab == "research", do: "page", else: false}
             class={[
               "w-full flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-smooth text-left",
@@ -432,7 +432,7 @@
 
             <.link
               id="tab-btn-research"
-              patch={~p"/sessions/#{@session.id}/research"}
+              patch={workspace_path(@workspace_route, "research")}
               aria-current={if @active_tab == "research", do: "page", else: false}
               class={[
                 "px-3 py-1 rounded-lg text-xs font-mono font-medium flex items-center gap-1.5 transition-smooth",

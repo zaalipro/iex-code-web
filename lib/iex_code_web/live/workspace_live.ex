@@ -77,6 +77,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                        )
                        |> IO.iodata_to_binary()
   @workspace_tabs ~w(kanban swarm research calendar changes chat files terminal)
+  @workspace_views ~w(deck kanban swarm research calendar changes chat files terminal)
 
   @impl true
   def mount(params, _session, socket) do
@@ -207,6 +208,12 @@ defmodule IexCodeWeb.WorkspaceLive do
         :active_tab,
         if(socket.assigns.live_action == :research, do: "research", else: "kanban")
       )
+      |> assign(:workspace_views, @workspace_views)
+      |> assign(
+        :active_view,
+        if(socket.assigns.live_action == :research, do: "research", else: "deck")
+      )
+      |> assign(:workspace_route, workspace_route_from_params(params))
       |> assign(:expanded_column, "running")
       |> assign(:tasks, tasks)
       |> assign(:selected_task, selected_task)
@@ -385,20 +392,31 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
-    socket =
-      case {socket.assigns.live_action, socket.assigns.active_tab} do
-        {:research, _tab} ->
+    case normalize_workspace_view(params, socket.assigns.live_action) do
+      {:replace, path} ->
+        {:noreply, push_patch(socket, to: path, replace: true)}
+
+      {:ok, active_view} ->
+        route_context = workspace_route_from_params(params)
+
+        socket =
           socket
-          |> assign(:active_tab, "research")
-          |> refresh_research_results()
+          |> assign(:workspace_route, route_context)
+          |> assign(:active_view, active_view)
+          |> maybe_assign_active_tab(active_view)
 
-        {_action, "research"} ->
-          assign(socket, :active_tab, "kanban")
+        socket =
+          if socket.assigns.live_action == :research do
+            refresh_research_results(socket)
+          else
+            socket
+          end
 
-        {_action, _tab} ->
-          socket
-      end
+        handle_workspace_params(params, socket)
+    end
+  end
 
+  defp handle_workspace_params(params, socket) do
     if params["id"] && params["id"] != socket.assigns.session.id do
       old_id = socket.assigns.session.id
       old_project_id = socket.assigns.project.id
@@ -554,48 +572,14 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("switch_tab", %{"tab" => tab}, socket) when tab in @workspace_tabs do
-    previous_tab = socket.assigns.active_tab
-    socket = assign(socket, :active_tab, tab)
-
-    socket = if tab == "changes", do: refresh_git_state(socket), else: socket
-    socket = if tab == "files", do: ensure_workspace_files_loaded(socket), else: socket
-
-    socket = if tab == "swarm", do: refresh_run_fleet(socket), else: socket
-    socket = if tab == "research", do: refresh_research_results(socket), else: socket
-    socket = update_terminal_viewer(socket, previous_tab, tab)
-
-    socket =
-      if socket.assigns.live_action == :research and tab != "research" do
-        push_patch(socket, to: ~p"/sessions/#{socket.assigns.session.id}")
-      else
-        socket
-      end
-
-    {:noreply, socket}
+    navigate_workspace(socket, tab)
   end
 
   def handle_event("switch_tab", %{"tab" => _invalid}, socket), do: {:noreply, socket}
 
   def handle_event("switch_tab", %{"sidebar_tab" => tab}, socket)
       when tab in @workspace_tabs do
-    previous_tab = socket.assigns.active_tab
-    socket = assign(socket, :active_tab, tab)
-
-    socket = if tab == "changes", do: refresh_git_state(socket), else: socket
-    socket = if tab == "files", do: ensure_workspace_files_loaded(socket), else: socket
-
-    socket = if tab == "swarm", do: refresh_run_fleet(socket), else: socket
-    socket = if tab == "research", do: refresh_research_results(socket), else: socket
-    socket = update_terminal_viewer(socket, previous_tab, tab)
-
-    socket =
-      if socket.assigns.live_action == :research and tab != "research" do
-        push_patch(socket, to: ~p"/sessions/#{socket.assigns.session.id}")
-      else
-        socket
-      end
-
-    {:noreply, socket}
+    navigate_workspace(socket, tab)
   end
 
   def handle_event("switch_tab", %{"sidebar_tab" => _invalid}, socket), do: {:noreply, socket}
@@ -3197,12 +3181,10 @@ defmodule IexCodeWeb.WorkspaceLive do
          |> put_flash(:info, "Describe the durable goal and choose whether to queue it now")}
 
       text == "/research" ->
-        {:noreply,
-         socket
-         |> assign(:active_tab, "research")
-         |> reset_prompt_form()
-         |> refresh_research_results()
-         |> put_flash(:info, "Define an exact bounded research objective")}
+        socket
+        |> reset_prompt_form()
+        |> put_flash(:info, "Define an exact bounded research objective")
+        |> navigate_workspace("research")
 
       true ->
         case CommandParser.parse(text, source: "workspace_composer") do
@@ -4178,6 +4160,82 @@ defmodule IexCodeWeb.WorkspaceLive do
   # Helpers & Seeders
   # ============================================================================
 
+  @spec normalize_workspace_view(map(), atom()) ::
+          {:ok, String.t()} | {:replace, String.t()}
+  defp normalize_workspace_view(params, :research) do
+    route_context = workspace_route_from_params(params)
+
+    case Map.drop(params, ["id"]) do
+      query when map_size(query) == 0 -> {:ok, "research"}
+      _query -> {:replace, workspace_path(route_context, "research")}
+    end
+  end
+
+  defp normalize_workspace_view(params, _live_action) do
+    route_context = workspace_route_from_params(params)
+
+    case params["view"] do
+      nil ->
+        case Map.drop(params, ["id"]) do
+          query when map_size(query) == 0 -> {:ok, "deck"}
+          _query -> {:replace, workspace_path(route_context, "deck")}
+        end
+
+      view when view in @workspace_views and view not in ["deck", "research"] ->
+        case Map.drop(params, ["id"]) do
+          %{"view" => ^view} = query when map_size(query) == 1 -> {:ok, view}
+          _query -> {:replace, workspace_path(route_context, "deck")}
+        end
+
+      "research" ->
+        {:replace, workspace_path(route_context, "research")}
+
+      _invalid ->
+        {:replace, workspace_path(route_context, "deck")}
+    end
+  end
+
+  @spec workspace_path(:root | {:session, String.t()}, String.t()) :: String.t()
+  defp workspace_path(:root, "deck"), do: ~p"/"
+  defp workspace_path(:root, "research"), do: ~p"/research"
+  defp workspace_path(:root, view), do: ~p"/?view=#{view}"
+  defp workspace_path({:session, id}, "deck"), do: ~p"/sessions/#{id}"
+  defp workspace_path({:session, id}, "research"), do: ~p"/sessions/#{id}/research"
+  defp workspace_path({:session, id}, view), do: ~p"/sessions/#{id}?view=#{view}"
+
+  defp workspace_route_from_params(%{"id" => id}) when is_binary(id) and id != "",
+    do: {:session, id}
+
+  defp workspace_route_from_params(_params), do: :root
+
+  defp maybe_assign_active_tab(%{assigns: %{active_tab: "research"}} = socket, "deck"),
+    do: assign(socket, :active_tab, "kanban")
+
+  defp maybe_assign_active_tab(socket, "deck"), do: socket
+  defp maybe_assign_active_tab(socket, view), do: assign(socket, :active_tab, view)
+
+  defp navigate_workspace(socket, view) when view in @workspace_tabs do
+    {:noreply, navigate_workspace_socket(socket, view)}
+  end
+
+  defp navigate_workspace_socket(socket, view) do
+    previous_tab = socket.assigns.active_tab
+
+    socket =
+      socket
+      |> assign(:active_view, view)
+      |> assign(:active_tab, view)
+
+    socket = if view == "changes", do: refresh_git_state(socket), else: socket
+    socket = if view == "files", do: ensure_workspace_files_loaded(socket), else: socket
+    socket = if view == "swarm", do: refresh_run_fleet(socket), else: socket
+    socket = if view == "research", do: refresh_research_results(socket), else: socket
+
+    socket
+    |> update_terminal_viewer(previous_tab, view)
+    |> push_patch(to: workspace_path(socket.assigns.workspace_route, view))
+  end
+
   # -- Safe fetches (client params must never raise) ---------------------------
 
   defp fetch_session(id) when is_binary(id) do
@@ -4444,13 +4502,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     case item.category do
       :view ->
-        {:noreply, assign(socket, :active_tab, item.tab)}
+        navigate_workspace(socket, item.tab)
 
       :session ->
-        {:noreply,
-         push_patch(socket,
-           to: ~p"/sessions/#{item.session_id}?project_id=#{socket.assigns.project.id}"
-         )}
+        {:noreply, push_patch(socket, to: workspace_path({:session, item.session_id}, "deck"))}
 
       :action ->
         case item.id do
@@ -4990,13 +5045,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp route_composer_intent(socket, %Intent{kind: :research_picker}, _params) do
-    {:noreply,
-     socket
-     |> assign(:active_tab, "research")
-     |> assign(:research_attachment_picker_open?, true)
-     |> reset_prompt_form()
-     |> refresh_research_results()
-     |> put_flash(:info, "Choose a ready research result to attach")}
+    socket
+    |> assign(:research_attachment_picker_open?, true)
+    |> reset_prompt_form()
+    |> put_flash(:info, "Choose a ready research result to attach")
+    |> navigate_workspace("research")
   end
 
   defp route_composer_intent(
@@ -5008,7 +5061,9 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp route_composer_intent(socket, %Intent{kind: :navigate, objective: tab}, _params)
        when tab in @workspace_tabs do
-    {:noreply, socket |> assign(:active_tab, tab) |> reset_prompt_form()}
+    socket
+    |> reset_prompt_form()
+    |> navigate_workspace(tab)
   end
 
   defp route_composer_intent(socket, %Intent{kind: :help}, _params) do

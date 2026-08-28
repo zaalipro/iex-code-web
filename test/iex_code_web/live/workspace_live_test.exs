@@ -25,11 +25,14 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    assert :sys.get_state(view.pid).socket.assigns.active_view == "deck"
 
     # Switch to swarm tab
     view
     |> element("#tab-btn-swarm")
     |> render_click()
+
+    assert_patch(view, ~p"/sessions/#{session.id}?view=swarm")
 
     assert render(view) =~ "PlannerAgent"
     assert render(view) =~ "ExplorerAgent"
@@ -39,12 +42,16 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     |> element("#tab-btn-calendar")
     |> render_click()
 
+    assert_patch(view, ~p"/sessions/#{session.id}?view=calendar")
+
     assert render(view) =~ "Scheduled Tasks" or render(view) =~ "August, 2026"
 
     # Switch to changes tab
     view
     |> element("#tab-btn-changes")
     |> render_click()
+
+    assert_patch(view, ~p"/sessions/#{session.id}?view=changes")
 
     assert render(view) =~ "All Changes"
     assert render(view) =~ "Canvas"
@@ -54,12 +61,24 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     |> element("#tab-btn-chat")
     |> render_click()
 
+    assert_patch(view, ~p"/sessions/#{session.id}?view=chat")
+
+    # Switch to files tab
+    view
+    |> element("#tab-btn-files")
+    |> render_click()
+
+    assert_patch(view, ~p"/sessions/#{session.id}?view=files")
+
     # Switch to terminal tab
     view
     |> element("#tab-btn-terminal")
     |> render_click()
 
+    assert_patch(view, ~p"/sessions/#{session.id}?view=terminal")
+
     assert render(view) =~ "mix test"
+    assert :sys.get_state(view.pid).socket.assigns.active_view == "terminal"
   end
 
   test "toggles swarm mode", %{conn: conn, workspace_path: path} do
