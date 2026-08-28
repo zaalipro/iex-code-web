@@ -42,22 +42,30 @@
   background: #384252;
 }
 
-/* Disconnected indicator (class toggled on <body> from app.js) */
-body.phx-disconnected::after {
-  content: "Connection lost — reconnecting…";
+/* Accessible connection state; body.phx-disconnected remains a compatibility hook. */
+#connection-status {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
   z-index: 9999;
-  padding: 0.375rem 1rem;
+  top: max(0.5rem, env(safe-area-inset-top));
+  left: 50%;
+  max-width: calc(100vw - 2rem);
+  transform: translateX(-50%);
+  border: 1px solid var(--sf-hairline, rgba(255, 255, 255, 0.1));
+  border-radius: 9999px;
+  background: var(--sf-instrument-raised, #151616);
+  padding: 0.45rem 0.85rem;
+  box-shadow: 0 16px 36px -20px var(--sf-shadow, rgba(0, 0, 0, 0.46));
+  color: var(--sf-live-text, #F6532E);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  line-height: 1.25;
   text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  font-weight: 600;
-  color: #fda4af;
-  background-color: #4c0519;
-  border-bottom: 1px solid #f43f5e;
+}
+
+#connection-status[hidden] {
+  display: none;
 }
 
 /* Quiet operational focus ring for the prompt composer. */

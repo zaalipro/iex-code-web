@@ -3,12 +3,13 @@ import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { SearchAddon } from "@xterm/addon-search"
 import { CanvasAddon } from "@xterm/addon-canvas"
+import {resolveTheme} from "../theme.mjs"
 
 /**
  * TerminalHook - High-performance interactive xterm.js LiveView Hook.
  *
  * Features:
- * - Dark luxury aesthetic palette matching IexCode obsidian theme
+ * - Theme-aware Signal Foundry palettes with in-place runtime recoloring
  * - FitAddon, WebLinksAddon, SearchAddon, and resilient CanvasAddon with fallback
  * - ResizeObserver with debouncing and zero-dimension protection
  * - Bidirectional input streaming (keystrokes, control signals, bracketed paste)
@@ -17,40 +18,80 @@ import { CanvasAddon } from "@xterm/addon-canvas"
  */
 export const TerminalHook = {
   mounted() {
-    this.initTerminal()
+    const theme = resolveTheme({
+      explicitTheme: document.documentElement.dataset.theme,
+      prefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches
+    })
+    this.handleThemeChanged = (event) => this.applyTheme(event.detail?.theme)
+    this.initTerminal(theme)
+    window.addEventListener("iexcode:theme-changed", this.handleThemeChanged)
   },
 
-  initTerminal() {
-    // 1. Dark Aesthetic Palette (Obsidian Base #0a0d12 + Vibrant ANSI Accent Colors)
-    const terminalTheme = {
-      background: "#0a0d12",
-      foreground: "#e6edf3",
-      cursor: "#ff5e3a",
-      cursorAccent: "#0a0d12",
-      selectionBackground: "rgba(255, 94, 58, 0.35)",
-      selectionForeground: "#ffffff",
-      selectionInactiveBackground: "rgba(255, 255, 255, 0.1)",
-      black: "#0a0d12",
-      red: "#ff7b72",
-      green: "#3fb950",
-      yellow: "#d29922",
-      blue: "#58a6ff",
-      magenta: "#bc8cff",
-      cyan: "#39c5cf",
-      white: "#d0d7de",
-      brightBlack: "#484f58",
-      brightRed: "#ffa198",
-      brightGreen: "#56d364",
-      brightYellow: "#e3b341",
-      brightBlue: "#79c0ff",
-      brightMagenta: "#d2a8ff",
-      brightCyan: "#56d4dd",
-      brightWhite: "#ffffff"
+  themeFor(theme) {
+    if (theme === "light") {
+      return {
+        background: "#FBF8F2",
+        foreground: "#202321",
+        cursor: "#D74628",
+        cursorAccent: "#FBF8F2",
+        selectionBackground: "rgba(215, 70, 40, 0.24)",
+        selectionForeground: "#202321",
+        selectionInactiveBackground: "rgba(32, 35, 33, 0.12)",
+        black: "#202321",
+        red: "#A8321F",
+        green: "#42624F",
+        yellow: "#775B18",
+        blue: "#365E7D",
+        magenta: "#6F4C76",
+        cyan: "#34656A",
+        white: "#DDD7CE",
+        brightBlack: "#655F58",
+        brightRed: "#D74628",
+        brightGreen: "#60836E",
+        brightYellow: "#977425",
+        brightBlue: "#4E7695",
+        brightMagenta: "#896390",
+        brightCyan: "#4C7C81",
+        brightWhite: "#FFFFFF"
+      }
     }
 
-    // 2. Initialize xterm.js Terminal Instance
+    return {
+      background: "#0B0E10",
+      foreground: "#F4EFE7",
+      cursor: "#F6532E",
+      cursorAccent: "#0B0E10",
+      selectionBackground: "rgba(246, 83, 46, 0.32)",
+      selectionForeground: "#F4EFE7",
+      selectionInactiveBackground: "rgba(244, 239, 231, 0.12)",
+      black: "#0B0E10",
+      red: "#FF7B72",
+      green: "#9EBDA7",
+      yellow: "#D6A84B",
+      blue: "#78A9D1",
+      magenta: "#C49ACB",
+      cyan: "#78B7BA",
+      white: "#D8D2C9",
+      brightBlack: "#655F58",
+      brightRed: "#FF9A8F",
+      brightGreen: "#B2CEBA",
+      brightYellow: "#E4BD68",
+      brightBlue: "#94BDE0",
+      brightMagenta: "#D7B2DC",
+      brightCyan: "#94CBCE",
+      brightWhite: "#FFFFFF"
+    }
+  },
+
+  applyTheme(theme) {
+    if (!this.term || (theme !== "dark" && theme !== "light")) return
+    this.term.options.theme = this.themeFor(theme)
+  },
+
+  initTerminal(theme) {
+    // 1. Initialize xterm.js Terminal Instance
     this.term = new Terminal({
-      theme: terminalTheme,
+      theme: this.themeFor(theme),
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
       fontSize: 13,
       lineHeight: 1.3,
@@ -242,6 +283,11 @@ export const TerminalHook = {
 
   destroyed() {
     // 11. Cleanup & Teardown
+    if (this.handleThemeChanged) {
+      window.removeEventListener("iexcode:theme-changed", this.handleThemeChanged)
+      this.handleThemeChanged = null
+    }
+
     if (this.resizeRaf) {
       cancelAnimationFrame(this.resizeRaf)
       this.resizeRaf = null

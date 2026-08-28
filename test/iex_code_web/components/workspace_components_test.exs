@@ -355,10 +355,13 @@ defmodule IexCodeWeb.WorkspaceComponentsTest do
       assert html =~ "Clear"
       assert html =~ "Restart"
       assert html =~ "Kill"
-      assert html =~ "terminal-xterm-container"
-      assert html =~ "phx-hook=\"TerminalHook\""
-      assert html =~ "phx-update=\"ignore\""
-      assert html =~ "data-session-id=\"session-123\""
+      document = LazyHTML.from_fragment(html)
+
+      assert LazyHTML.query(
+               document,
+               "#terminal-xterm-container[phx-hook='TerminalHook'][phx-update='ignore'][data-session-id='session-123']"
+             )
+
       assert html =~ "80x24"
     end
 

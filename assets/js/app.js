@@ -4,25 +4,37 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/iex_code"
 import topbar from "../vendor/topbar"
 import TerminalHook from "./hooks/terminal_hook"
+import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
 // inline layout script, so CSP can remain strict in desktop and release builds.
-const systemTheme = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-const setTheme = (theme) => {
-  if (theme === "system") {
-    localStorage.removeItem("phx:theme")
-    document.documentElement.dataset.theme = systemTheme()
-    document.documentElement.dataset.themeSource = "system"
-  } else {
-    localStorage.setItem("phx:theme", theme)
-    document.documentElement.dataset.theme = theme
-    document.documentElement.dataset.themeSource = "user"
-  }
+const themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
+const themeEnv = {
+  window,
+  document,
+  localStorage,
+  matchMedia: () => themeMediaQuery
+}
+const serverTheme = document.documentElement.dataset.theme
+
+// Server markup owns the initial preference and first paint. phx:theme is only
+// a cross-tab notification mirror; it is deliberately never startup authority.
+if (serverTheme === "dark" || serverTheme === "light") {
+  applyTheme(serverTheme, themeEnv)
+} else {
+  setSystemTheme(themeEnv)
 }
 
-setTheme(localStorage.getItem("phx:theme") || "system")
-window.addEventListener("storage", (event) => event.key === "phx:theme" && setTheme(event.newValue || "system"))
-window.addEventListener("phx:set-theme", (event) => setTheme(event.target.dataset.phxTheme))
+// These listeners are application-lifetime singletons registered once when the
+// bundle loads. Component hooks own only their component-scoped listeners.
+window.addEventListener("storage", (event) => {
+  if (event.key !== "phx:theme") return
+  if (event.newValue === null) return setSystemTheme(themeEnv)
+  if (event.newValue === "dark" || event.newValue === "light") applyTheme(event.newValue, themeEnv)
+})
+window.addEventListener("phx:set-theme", (event) => {
+  setTheme(event.target?.dataset?.phxTheme, themeEnv)
+})
 window.addEventListener("phx:reset_run_agent_guidance", (event) => {
   const agentId = event.detail?.agent_id
   if (!agentId) return
@@ -33,8 +45,8 @@ window.addEventListener("phx:reset_run_agent_guidance", (event) => {
     input.dispatchEvent(new Event("input", {bubbles: true}))
   }
 })
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  if (document.documentElement.dataset.themeSource === "system") setTheme("system")
+themeMediaQuery.addEventListener("change", () => {
+  if (!document.documentElement.dataset.theme) setSystemTheme(themeEnv)
 })
 
 // LiveView may replace the focused trigger before a conditionally rendered
@@ -345,12 +357,25 @@ topbar.config({barColors: {0: "#ff5e3a"}, shadowColor: "rgba(0, 0, 0, 0.3)"})
 window.addEventListener("phx:page-loading-start", (_info) => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", (_info) => topbar.hide())
 
+function updateConnectionStatus(connected, reason) {
+  const status = document.getElementById("connection-status")
+  if (status) {
+    status.hidden = connected
+    status.dataset.state = connected ? "connected" : "reconnecting"
+    status.dataset.reason = reason
+  }
+  document.body.classList.toggle("phx-disconnected", !connected)
+}
+
 // Track the underlying Phoenix socket with its supported channel callbacks.
-liveSocket.socket.onOpen(() => document.body.classList.remove("phx-disconnected"))
-liveSocket.socket.onClose(() => document.body.classList.add("phx-disconnected"))
-liveSocket.socket.onError(() => document.body.classList.add("phx-disconnected"))
-window.addEventListener("offline", () => document.body.classList.add("phx-disconnected"))
-window.addEventListener("online", () => document.body.classList.remove("phx-disconnected"))
+liveSocket.socket.onOpen(() => updateConnectionStatus(true, "socket-open"))
+liveSocket.socket.onClose(() => updateConnectionStatus(false, "socket-close"))
+liveSocket.socket.onError(() => updateConnectionStatus(false, "socket-error"))
+window.addEventListener("offline", () => updateConnectionStatus(false, "offline"))
+window.addEventListener("online", () => {
+  const connected = liveSocket.socket.isConnected()
+  updateConnectionStatus(connected, connected ? "socket-open" : "online-waiting")
+})
 
 liveSocket.connect()
 window.liveSocket = liveSocket
