@@ -1,7 +1,7 @@
 defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
   use IexCode.E2E.Case, async: false
 
-  alias IexCode.Runs
+  alias IexCode.{Repo, Runs}
   alias IexCode.Engine.FleetSupervisor
 
   setup %{conn: conn} do
@@ -40,13 +40,20 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       assert :sys.get_state(view.pid).socket.assigns.selected_run.id == run.id
     end
 
+    view |> element("#toggle-run-setup") |> render_click()
+    state_before = :sys.get_state(view.pid).socket.assigns
+    agent_count_before = state_before.run_agent_count
+
     render_click(view, "switch_mission_control_mode", %{"mode" => "__invalid_mode__"})
     render_click(view, "switch_mission_control_mode", %{})
     render_click(view, "switch_mission_control_mode", %{"mode" => %{"journal" => "true"}})
     render_click(view, "switch_mission_control_mode", %{"mode" => ["overview"]})
     assert has_element?(view, "#mission-control-mode-journal[aria-selected='true']")
     assert has_element?(view, "#mission-control-panel-journal:not([hidden])")
-    assert :sys.get_state(view.pid).socket.assigns.selected_run.id == run.id
+    state_after = :sys.get_state(view.pid).socket.assigns
+    assert state_after.selected_run.id == run.id
+    assert state_after.run_setup_open?
+    assert state_after.run_agent_count == agent_count_before
   end
 
   test "Mission Control phase prefers running then paused persisted steps", %{
@@ -93,6 +100,55 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
     assert has_element?(view, "#mission-control-phase", "Running phase")
+  end
+
+  test "Mission Control completed phase uses timestamp tuple and deterministic ID ties", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Completed phase ordering",
+        kind: "analysis",
+        mode: "single",
+        status: "completed"
+      })
+
+    completed_at = ~U[2026-08-28 12:00:00Z]
+    inserted_at = ~U[2026-08-28 10:00:00Z]
+
+    {:ok, first} =
+      Runs.create_step(run, %{
+        key: "first",
+        kind: "analysis",
+        title: "First completed",
+        status: "completed",
+        completed_at: completed_at
+      })
+
+    {:ok, second} =
+      Runs.create_step(run, %{
+        key: "second",
+        kind: "analysis",
+        title: "Second completed",
+        status: "completed",
+        completed_at: completed_at
+      })
+
+    for step <- [first, second] do
+      step
+      |> Ecto.Changeset.change(inserted_at: inserted_at, updated_at: inserted_at)
+      |> Repo.update!()
+    end
+
+    expected = if first.id > second.id, do: first.title, else: second.title
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    assert has_element?(view, "#mission-control-phase", expected)
   end
 
   test "entering Mission Control selects the bounded active mission in status order", %{
@@ -175,10 +231,94 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
   test "Mission Control renders an exact no-run fallback", %{conn: conn, workspace_path: path} do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
+
+    start_supervised!(
+      {IexCode.Runs.RunDispatcher,
+       name: IexCode.Runs.RunDispatcher,
+       worker_id: "mission-no-run-#{System.unique_integer([:positive])}",
+       executor: IexCode.RunDispatcherTestExecutor,
+       max_concurrency: 1,
+       poll_interval: 60_000,
+       heartbeat_interval: 60_000,
+       lease_ms: 120_000,
+       workspace_lock_retry_interval: 60_000,
+       workspace_lock_lease_seconds: 120}
+    )
+
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
 
     assert has_element?(view, "#mission-control-hero", "No active run")
-    assert has_element?(view, "#mission-control-signal-panel")
+    assert has_element?(view, "#mission-control-signal", "No operator decision required")
+  end
+
+  test "interactive session steering draft survives operation updates with a stable root", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, operation} =
+      IexCode.Sessions.create_operation(%{
+        session_id: session.id,
+        agent_name: "CoderAgent",
+        op_type: "analysis",
+        title: "Retain the operator draft",
+        status: "running",
+        progress: 10
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    view |> element("#mission-control-mode-execution") |> render_click()
+
+    view
+    |> form("#steering-form", %{"steering" => "Keep this draft"})
+    |> render_change()
+
+    assert has_element?(view, "#mission-control-interactive-slot #session-steering-input")
+
+    send(view.pid, {:operation_updated, %{operation | progress: 60, status: "running"}})
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#mission-control-interactive-slot #session-steering-input")
+    assert has_element?(view, "#session-steering-input[value='Keep this draft']")
+  end
+
+  test "stale operations-cleared messages reconcile the current session", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    first_session = create_session_fixture(project)
+    current_session = create_session_fixture(project)
+
+    {:ok, _first_operation} =
+      IexCode.Sessions.create_operation(%{
+        session_id: first_session.id,
+        agent_name: "ExplorerAgent",
+        op_type: "scan",
+        title: "Old session operation",
+        status: "completed",
+        progress: 100
+      })
+
+    {:ok, _current_operation} =
+      IexCode.Sessions.create_operation(%{
+        session_id: current_session.id,
+        agent_name: "VerifierAgent",
+        op_type: "verify",
+        title: "Current session operation",
+        status: "completed",
+        progress: 100
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{first_session.id}?view=swarm")
+    render_patch(view, ~p"/sessions/#{current_session.id}?view=swarm")
+    assert has_element?(view, "#operation-tree-root", "Current session operation")
+
+    send(view.pid, :operations_cleared)
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#operation-tree-root", "Current session operation")
+    refute has_element?(view, "#operation-tree-root", "Old session operation")
   end
 
   test "queues a durable background run and renders its replayable control plane", %{

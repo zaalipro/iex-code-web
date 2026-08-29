@@ -479,18 +479,6 @@
                 dag_projection={@dag_projection}
                 mode={@mission_control_mode}
                 phase={@mission_control_phase}
-                interactive_revision={
-                  :erlang.phash2({
-                    @operations,
-                    @expanded_ops,
-                    @active_agent,
-                    @active_stage,
-                    @session.status,
-                    @session.swarm_mode,
-                    @open_dropdown,
-                    @steer_text
-                  })
-                }
               >
                 <:interactive_execution>
                   <section
@@ -501,285 +489,160 @@
                     <h3 id="mission-control-interactive-execution-title" class="sr-only">
                       Interactive session execution controls
                     </h3>
-            <div class="bg-[#11151c] border border-[#21262d] rounded-3xl p-6 shadow-2xl relative overflow-hidden">
-              <div class="mb-4 flex items-start gap-3 border border-amber-500/20 bg-amber-500/[0.05] px-3 py-2.5">
-                <.icon name="hero-signal" class="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-                <div>
-                  <p class="font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-200">
-                    Interactive session plane
-                  </p>
-                  <p class="mt-1 text-[11px] leading-5 text-gray-500">
-                    These legacy session controls do not target the durable run selected above.
-                    Use Mission Control for run-scoped pause, stop, retry, and steering.
-                  </p>
-                </div>
-              </div>
-              <div class="bg-[#161b22]/70 border border-[#21262d] rounded-2xl p-5 mb-4 relative">
-                <%!-- Status Badge Top Right --%>
-                <div class="absolute top-5 right-5 flex items-center gap-1.5 text-xs font-mono font-semibold">
-                  <%= cond do %>
-                    <% @session.status in ["running", :running] -> %>
-                      <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse"></span>
-                      <span class="text-emerald-400">ACTIVE (RUNNING)</span>
-                    <% @session.status in ["paused", :paused] -> %>
-                      <span class="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)]"></span>
-                      <span class="text-amber-400">PAUSED</span>
-                    <% @session.status in ["failed", :failed] -> %>
-                      <span class="w-2 h-2 rounded-full bg-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.8)]"></span>
-                      <span class="text-rose-400">FAILED</span>
-                    <% @session.status in ["stopped", "cancelled", :stopped] -> %>
-                      <span class="w-2 h-2 rounded-full bg-gray-500"></span>
-                      <span class="text-gray-400">STOPPED</span>
-                    <% @session.status in ["completed", "done", :completed] -> %>
-                      <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.8)]"></span>
-                      <span class="text-emerald-400">COMPLETED</span>
-                    <% true -> %>
-                      <span class="w-2 h-2 rounded-full bg-gray-500"></span>
-                      <span class="text-gray-400">IDLE</span>
-                  <% end %>
-                </div>
+                    <div id="interactive-coach-session-surface" class="sf-coach-session-surface">
+                      <header class="sf-coach-session-header">
+                        <div class="min-w-0">
+                          <p class="sf-metadata">Interactive session plane</p>
+                          <h4 class="mt-1 text-lg font-semibold text-[var(--sf-text-primary)]">Milo · session coach</h4>
+                          <p class="mt-2 max-w-3xl text-sm leading-6 text-[var(--sf-text-secondary)]">
+                            These controls target the current interactive session, not the durable run selected above.
+                            Use the selected-run controls for durable pause, cancel, retry, and steering.
+                          </p>
+                        </div>
+                        <p id="interactive-session-status" role="status" class="sf-coach-session-status">
+                          Session status · {String.upcase(to_string(@session.status || "idle"))}
+                        </p>
+                      </header>
 
-                <div class="flex items-start gap-4">
-                  <%!-- Pixel Avatar Graphic --%>
-                  <div class="w-16 h-16 rounded-2xl bg-gradient-to-b from-[#1c2128] to-[#11151c] border border-[#30363d] flex items-center justify-center text-3xl shadow-inner shrink-0 relative overflow-hidden">
-                    <span class="animate-bounce">🧙‍♂️</span>
-                    <div class="absolute bottom-1 left-2 right-2 h-1 bg-indigo-500/40 rounded-full blur-[1px]">
-                    </div>
-                  </div>
-
-                  <%!-- Name, Role & Connected Integrations --%>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-3">
-                      <h2 class="text-2xl font-bold text-white tracking-tight">
-                        Milo
-                      </h2>
-                    </div>
-                    <div class="text-xs font-mono text-gray-400 uppercase tracking-wider mb-3">
-                      EXECUTIVE CODING HARNESS ASSISTANT
-                    </div>
-
-                    <%!-- Native harness capabilities --%>
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <span class="px-2.5 py-1 rounded-xl bg-[#11151c] border border-[#21262d] text-xs font-mono text-gray-300 flex items-center gap-1.5">
-                        <.icon name="hero-command-line" class="h-3 w-3 text-cyan-400" />
-                        Native terminal
-                      </span>
-                      <span class="px-2.5 py-1 rounded-xl bg-[#11151c] border border-[#21262d] text-xs font-mono text-gray-300 flex items-center gap-1.5">
-                        <.icon name="hero-calendar-days" class="h-3 w-3 text-blue-400" />
-                        Scheduler
-                      </span>
-                      <span class="px-2.5 py-1 rounded-xl bg-[#11151c] border border-[#21262d] text-xs font-mono text-gray-300 flex items-center gap-1.5">
-                        <.icon name="hero-code-bracket-square" class="h-3 w-3 text-emerald-400" />
-                        Git + tests
-                      </span>
-                      <span class="px-2 py-1 rounded-xl bg-[#11151c] border border-[#21262d] text-xs font-mono text-gray-400 font-semibold">
-                        SQLite journal
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <%!-- Current Task & Tally Tick Progress Bar --%>
-                <div class="mt-6 pt-5 border-t border-dashed border-[#21262d]">
-                  <div class="text-[10px] font-mono text-gray-400 uppercase tracking-wider mb-2.5">
-                    CURRENT TASK · ITERATION {@swarm_iteration}/{@max_retries}
-                  </div>
-
-                  <% total_ops = length(@operations)
-
-                  completed_ops =
-                    Enum.count(@operations, &(&1.status in ["completed", "success"]))
-
-                  coach_pct =
-                    cond do
-                      total_ops > 0 ->
-                        round(completed_ops / total_ops * 100)
-
-                      @swarm_iteration > 0 and @max_retries > 0 ->
-                        round(@swarm_iteration / @max_retries * 100)
-
-                      true ->
-                        0
-                    end
-
-                  coach_active_ticks = min(65, max(0, round(coach_pct * 0.65))) %>
-                  <%!-- Tally Hash Vertical Tick Bar --%>
-                  <div class="tally-tick-bar mb-2.5">
-                    <%= for tick <- 1..65 do %>
-                      <div class={[
-                        "tally-tick",
-                        tick <= coach_active_ticks && "tally-tick-active-orange",
-                        tick > coach_active_ticks && "bg-[#21262d]"
-                      ]}>
+                      <div class="sf-coach-capabilities" aria-label="Interactive session capabilities">
+                        <span>Native terminal</span>
+                        <span>Scheduler</span>
+                        <span>Git and tests</span>
+                        <span>SQLite journal</span>
                       </div>
-                    <% end %>
-                  </div>
 
-                  <div class="flex items-center justify-between font-mono text-xs">
-                    <span class="font-semibold text-white tracking-wide">
-                      MULTI-AGENT SWARM HARNESS ACTIVE
-                    </span>
-                    <span class="text-gray-400">
-                      {@session_tokens} TOKENS · {@current_latency_ms}ms
-                    </span>
-                  </div>
-                </div>
-              </div>
+                      <div class="sf-coach-control-grid">
+                        <div
+                          class="relative min-w-0"
+                          phx-click-away={@open_dropdown == "coach_menu" && "close_dropdowns"}
+                        >
+                          <button
+                            id="coach-actions-toggle"
+                            type="button"
+                            phx-click="toggle_coach_menu"
+                            aria-expanded={to_string(@open_dropdown == "coach_menu")}
+                            aria-controls="coach-actions-disclosure"
+                            class="sf-control min-h-11 w-full justify-center px-3 text-sm font-semibold sm:w-auto"
+                          >
+                            <.icon name="hero-ellipsis-horizontal" class="size-4" />
+                            Session actions
+                          </button>
+                          <div
+                            :if={@open_dropdown == "coach_menu"}
+                            id="coach-actions-disclosure"
+                            class="sf-coach-actions-disclosure"
+                          >
+                            <button
+                              type="button"
+                              phx-click="switch_tab"
+                              phx-value-tab="terminal"
+                              class="sf-control min-h-11 w-full justify-start px-3 text-sm"
+                            >
+                              <.icon name="hero-command-line" class="size-4" />
+                              Open Terminal
+                            </button>
+                            <button
+                              type="button"
+                              phx-click="clear_operations"
+                              data-confirm="Clear this session's operation history?"
+                              class="sf-control min-h-11 w-full justify-start px-3 text-sm"
+                            >
+                              <.icon name="hero-trash" class="size-4" />
+                              Clear operations
+                            </button>
+                          </div>
+                        </div>
 
-              <%!-- Footer Actions Row --%>
-              <div class="flex items-center justify-between pt-2 text-xs font-mono text-gray-400">
-                <div class="flex items-center gap-3 relative">
-                  <%!-- Coach Menu Trigger --%>
-                  <div
-                    class="relative"
-                    phx-click-away={@open_dropdown == "coach_menu" && "close_dropdowns"}
-                  >
-                    <button
-                      phx-click="toggle_coach_menu"
-                      aria-haspopup="menu"
-                      aria-expanded={@open_dropdown == "coach_menu"}
-                      aria-label="Agent configuration menu"
-                      class="p-1.5 rounded-lg hover:bg-[#161b22] text-gray-400 hover:text-white transition-smooth"
-                      title="Agent Configuration Menu"
-                    >
-                      <.icon name="hero-ellipsis-vertical" class="w-4 h-4" />
-                    </button>
+                        <div class="flex min-w-0 flex-wrap gap-2">
+                          <button
+                            type="button"
+                            phx-click="switch_tab"
+                            phx-value-tab="terminal"
+                            class="sf-control min-h-11 px-3 text-sm"
+                          >
+                            <.icon name="hero-command-line" class="size-4" />
+                            Terminal
+                          </button>
+                          <%= if @session.status in ["running", :running] do %>
+                            <button
+                              type="button"
+                              phx-click="pause_session"
+                              class="sf-control min-h-11 px-3 text-sm font-semibold"
+                              title="Pause active execution without losing state"
+                            >
+                              <.icon name="hero-pause" class="size-4" /> Pause session
+                            </button>
+                          <% else %>
+                            <button
+                              type="button"
+                              phx-click="resume_session"
+                              class="sf-control min-h-11 px-3 text-sm font-semibold"
+                              title="Resume paused execution"
+                            >
+                              <.icon name="hero-play" class="size-4" /> Resume session
+                            </button>
+                          <% end %>
+                          <button
+                            type="button"
+                            phx-click="open_cancel_modal"
+                            class="sf-control min-h-11 px-3 text-sm font-semibold"
+                            title="Stop session with rollback or commit"
+                          >
+                            <.icon name="hero-stop" class="size-4" /> Stop session
+                          </button>
+                        </div>
 
-                    <%= if @open_dropdown == "coach_menu" do %>
-                      <div class="absolute left-0 bottom-full mb-2 w-48 bg-[#11151c]/95 border border-[#21262d] rounded-2xl p-1.5 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 space-y-0.5">
-                        <button
-                          id="coach-create-goal-button"
-                          type="button"
-                          phx-click="open_goal_modal"
-                          class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth text-left"
+                        <.form
+                          for={@session_steering_form}
+                          id="steering-form"
+                          phx-change="update_session_steering"
+                          phx-submit="send_steering"
+                          class="sf-coach-steering-form"
                         >
-                          <.icon name="hero-flag" class="w-3.5 h-3.5 text-amber-400" />
-                          <span>Create Goal</span>
-                        </button>
-                        <button
-                          type="button"
-                          phx-click="switch_tab"
-                          phx-value-tab="terminal"
-                          class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth text-left"
-                        >
-                          <.icon name="hero-command-line" class="w-3.5 h-3.5 text-cyan-400" />
-                          <span>Open Terminal</span>
-                        </button>
-                        <button
-                          type="button"
-                          phx-click="clear_operations"
-                          data-confirm="Clear this session's operation history?"
-                          class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-rose-300 transition-smooth text-left"
-                        >
-                          <.icon name="hero-trash" class="w-3.5 h-3.5 text-rose-400" />
-                          <span>Clear Ops</span>
-                        </button>
+                          <.input
+                            field={@session_steering_form[:steering]}
+                            id="session-steering-input"
+                            type="text"
+                            label="Session steering guidance"
+                            placeholder="Steer the interactive session…"
+                            class="min-h-11 min-w-0 w-full border border-[var(--sf-hairline)] bg-[var(--sf-code-surface)] px-3 text-sm text-[var(--sf-text-primary)] outline-none placeholder:text-[var(--sf-text-secondary)]"
+                          />
+                          <button
+                            id="session-steering-submit"
+                            type="submit"
+                            phx-disable-with="Sending…"
+                            class="sf-control min-h-11 px-4 text-sm font-semibold"
+                          >
+                            <.icon name="hero-paper-airplane" class="size-4" />
+                            Steer
+                          </button>
+                        </.form>
+
+                        <p class="sf-metadata self-center">Session-scoped controls</p>
                       </div>
-                    <% end %>
-                  </div>
-
-                  <%!-- Jump to Terminal --%>
-                  <button
-                    phx-click="switch_tab"
-                    phx-value-tab="terminal"
-                    class="p-1.5 rounded-lg hover:bg-[#161b22] text-gray-400 hover:text-white transition-smooth"
-                    title="Switch to Terminal Tab"
-                  >
-                    <.icon name="hero-command-line" class="w-4 h-4" />
-                  </button>
-
-                  <%!-- Pause / Resume Control Button --%>
-                  <%= if @session.status in ["running", :running] do %>
-                    <button
-                      phx-click="pause_session"
-                      class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-smooth font-semibold"
-                      title="Pause active execution without losing state"
-                    >
-                      <.icon name="hero-pause" class="w-3.5 h-3.5" />
-                      <span>PAUSE</span>
-                    </button>
-                  <% else %>
-                    <button
-                      phx-click="resume_session"
-                      class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-smooth font-semibold"
-                      title="Resume paused execution"
-                    >
-                      <.icon name="hero-play" class="w-3.5 h-3.5" />
-                      <span>RESUME</span>
-                    </button>
-                  <% end %>
-
-                  <%!-- Stop / Cancel Trigger --%>
-                  <button
-                    phx-click="open_cancel_modal"
-                    class="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition-smooth"
-                    title="Stop session with rollback or commit"
-                  >
-                    <.icon name="hero-stop" class="w-3.5 h-3.5" />
-                    <span>STOP</span>
-                  </button>
-
-                  <%!-- Steering Input: mid-run guidance for the active swarm --%>
-                  <.form
-                    for={to_form(%{"steering" => @steer_text})}
-                    id="steering-form"
-                    phx-submit="send_steering"
-                    class="flex items-center gap-1.5 ml-1"
-                  >
-                    <input
-                      type="text"
-                      name="steering"
-                      value={@steer_text}
-                      placeholder="Steer the swarm..."
-                      aria-label="Steering guidance for the active swarm"
-                      class="w-44 px-2.5 py-1.5 rounded-xl bg-[#161b22] border border-[#21262d] text-xs font-mono text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 transition-smooth"
-                    />
-                    <button
-                      type="submit"
-                      phx-disable-with="Sending..."
-                      aria-label="Send steering guidance"
-                      class="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-smooth font-semibold"
-                    >
-                      <.icon name="hero-paper-airplane" class="w-3.5 h-3.5" />
-                      <span>STEER</span>
-                    </button>
-                  </.form>
-                </div>
-
-                <div class="flex items-center gap-3">
-                  <span class="text-gray-500 text-[11px]">SESSION-SCOPED CONTROLS</span>
-                  <button
-                    phx-click="switch_tab"
-                    phx-value-tab="kanban"
-                    class="px-4 py-1.5 rounded-full border border-white/20 hover:bg-white/10 text-white text-xs font-medium transition-smooth"
-                  >
-                    View details
-                  </button>
-                </div>
-              </div>
-            </div>
+                    </div>
 
             <%!-- Visible error state for failed operations --%>
             <% failed_ops = Enum.filter(@operations, &(&1.status == "failed")) %>
             <%= if failed_ops != [] do %>
               <div
                 role="alert"
-                class="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-xs font-mono text-rose-300"
+                class="flex items-center gap-2.5 border border-[var(--sf-hairline)] px-4 py-3 text-sm text-[var(--sf-text-primary)]"
               >
-                <.icon name="hero-exclamation-triangle" class="w-4 h-4 text-rose-400 shrink-0" />
-                <span class="truncate">
+                <.icon name="hero-exclamation-triangle" class="size-4 shrink-0" />
+                <span class="min-w-0 break-words">
                   {length(failed_ops)} operation{if length(failed_ops) == 1, do: "", else: "s"} failed
                   <%= latest_error = Enum.find_value(failed_ops, & &1.error_message)
                   if latest_error do %>
-                    <span class="text-rose-400">· {latest_error}</span>
+                    <span>· {latest_error}</span>
                   <% end %>
                 </span>
               </div>
             <% end %>
 
-            <div id="interactive-operation-history-note" class="border-l border-[#303844] pl-3">
-              <p class="text-xs font-semibold text-gray-300">Interactive operation history</p>
-              <p class="mt-1 text-[10px] leading-5 text-gray-600">
+            <div id="interactive-operation-history-note" class="border-l border-[var(--sf-hairline)] pl-3">
+              <p class="text-sm font-semibold text-[var(--sf-text-primary)]">Interactive operation history</p>
+              <p class="mt-1 text-sm leading-6 text-[var(--sf-text-secondary)]">
                 Session-scoped tool activity is kept separate from the selected run's persisted fleet.
               </p>
             </div>
@@ -787,19 +650,19 @@
               id="interactive-role-templates"
               aria-labelledby="interactive-role-templates-heading"
             >
-              <div class="mb-3 flex items-start gap-2 border border-blue-500/15 bg-blue-500/[0.03] px-3 py-2.5">
+              <div class="mb-3 flex items-start gap-2 border border-[var(--sf-hairline)] px-3 py-3">
                 <.icon
                   name="hero-information-circle"
-                  class="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-300"
+                  class="mt-1 size-4 shrink-0 text-[var(--sf-text-secondary)]"
                 />
                 <div>
                   <h3
                     id="interactive-role-templates-heading"
-                    class="text-[10px] font-semibold uppercase tracking-wider text-blue-200"
+                    class="sf-metadata font-semibold"
                   >
                     Interactive role templates
                   </h3>
-                  <p class="mt-1 text-[10px] leading-5 text-gray-600">
+                  <p class="mt-1 text-sm leading-6 text-[var(--sf-text-secondary)]">
                     Fixed session role templates show legacy operation telemetry only. Idle cards do not represent live or persisted workers.
                   </p>
                 </div>

@@ -75,7 +75,7 @@ defmodule IexCodeWeb.WorkspaceLiveAdversarialTelemetryControlsTest do
       assert Process.alive?(view.pid)
       html = render(view)
       assert html =~ "Execution Hierarchy"
-      assert html =~ "MULTI-AGENT SWARM HARNESS ACTIVE"
+      assert html =~ "Interactive session plane"
     end
 
     test "handles rapid swarm_stage_changed cycling with all metadata formats and extreme values",
@@ -121,7 +121,7 @@ defmodule IexCodeWeb.WorkspaceLiveAdversarialTelemetryControlsTest do
 
       assert Process.alive?(view.pid)
       html = render(view)
-      assert html =~ "MULTI-AGENT SWARM HARNESS ACTIVE"
+      assert html =~ "Interactive session plane"
     end
 
     test "gracefully handles out-of-order, corrupt, unknown, and extreme operation payloads", %{
@@ -250,7 +250,7 @@ defmodule IexCodeWeb.WorkspaceLiveAdversarialTelemetryControlsTest do
 
       assert Process.alive?(view.pid)
       html = render(view)
-      assert html =~ "MULTI-AGENT SWARM HARNESS ACTIVE"
+      assert html =~ "Interactive session plane"
     end
 
     test "executes Abort / Cancel with Rollback mode and dismisses modal with confirmation", %{

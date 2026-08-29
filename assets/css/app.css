@@ -2250,6 +2250,13 @@
 .sf-mission-control-tabs .is-active {
   border-color: var(--sf-live-mark);
   color: var(--sf-live-text);
+  border-bottom-width: 3px;
+  font-weight: 700;
+}
+
+.sf-mission-control-tab-marker {
+  margin-right: 0.35rem;
+  font-size: 0.75rem;
 }
 
 .sf-mission-control-panels {
@@ -2317,6 +2324,100 @@
 
 .sf-mission-topology {
   min-width: 0;
+}
+
+.sf-coach-session-surface {
+  min-width: 0;
+  border: 1px solid var(--sf-hairline);
+  background: var(--sf-instrument-raised);
+  color: var(--sf-text-primary);
+}
+
+.sf-coach-session-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--sf-hairline);
+  padding: 1rem;
+}
+
+.sf-coach-session-status {
+  flex: 0 1 auto;
+  margin-left: auto;
+  border: 1px solid var(--sf-hairline);
+  padding: 0.6rem 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.sf-coach-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--sf-hairline);
+  padding: 0.75rem 1rem;
+}
+
+.sf-coach-capabilities span {
+  border: 1px solid var(--sf-hairline);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--sf-text-secondary);
+}
+
+.sf-coach-control-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  padding: 1rem;
+}
+
+.sf-coach-steering-form {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.sf-coach-actions-disclosure {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  display: grid;
+  min-width: min(18rem, calc(100vw - 2rem));
+  gap: 0.25rem;
+  border: 1px solid var(--sf-hairline);
+  background: var(--sf-instrument-raised);
+  padding: 0.5rem;
+}
+
+@media (max-width: 39.99rem) {
+  .sf-coach-session-status {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .sf-coach-control-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-coach-steering-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-coach-steering-form button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 63.99rem) {
@@ -2446,9 +2547,14 @@
   }
 
   .sf-workbench-enter,
-  .sf-waveform-travel,
-  .sf-mission-control-waveform span {
+  .sf-waveform-travel {
     opacity: 1;
+    transform: none;
+    animation: none;
+    transition: none;
+  }
+
+  .sf-mission-control-waveform span {
     transform: none;
     animation: none;
     transition: none;

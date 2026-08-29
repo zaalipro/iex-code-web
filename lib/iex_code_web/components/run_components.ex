@@ -26,8 +26,14 @@ defmodule IexCodeWeb.RunComponents do
         aria-selected={to_string(@mode == mode)}
         aria-controls={"mission-control-panel-#{mode}"}
         tabindex="0"
-        class={["sf-control min-h-11 px-3 text-xs font-semibold", @mode == mode && "is-active"]}
+        class={[
+          "sf-mission-control-tab sf-control min-h-11 px-3 text-sm font-semibold",
+          @mode == mode && "is-active"
+        ]}
       >
+        <span class="sf-mission-control-tab-marker" aria-hidden="true">{if @mode == mode,
+          do: "●",
+          else: "○"}</span>
         {String.capitalize(mode)}
       </button>
     </div>
@@ -72,6 +78,13 @@ defmodule IexCodeWeb.RunComponents do
         </p>
       </div>
       <div :if={@selected_run} class="sf-mission-control-progress">
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <span class="sf-metadata">Persisted mission progress</span>
+          <span
+            id="mission-control-progress-text"
+            class="font-mono text-sm font-semibold text-[var(--sf-text-primary)]"
+          >{@progress}%</span>
+        </div>
         <div
           id="mission-control-waveform"
           aria-hidden="true"
@@ -191,7 +204,6 @@ defmodule IexCodeWeb.RunComponents do
   attr :dag_projection, :map, default: nil
   attr :mode, :string, default: "overview"
   attr :phase, :string, default: nil
-  attr :interactive_revision, :integer, default: 0
   slot :interactive_execution
 
   def run_control_plane(assigns) do
@@ -543,7 +555,6 @@ defmodule IexCodeWeb.RunComponents do
         role="tabpanel"
         aria-labelledby="mission-control-mode-execution"
         hidden={@mode != "execution"}
-        data-interactive-revision={@interactive_revision}
         class="sf-mission-control-panel"
       >
         <%= if @selected_run do %>
@@ -753,7 +764,7 @@ defmodule IexCodeWeb.RunComponents do
 
         <details open class="sf-disclosure mt-4">
           <summary>Interactive session plane</summary>
-          <div id={"mission-control-interactive-slot-#{@interactive_revision}"} class="p-4">
+          <div id="mission-control-interactive-slot" class="p-4">
             {render_slot(@interactive_execution)}
           </div>
         </details>
@@ -864,37 +875,32 @@ defmodule IexCodeWeb.RunComponents do
       aria-labelledby="run-agent-fleet-heading"
       aria-busy={to_string(@loading)}
       data-fleet-state={fleet_state(@run, @agent_count, @summary, @loading)}
-      class="mt-5 overflow-hidden border border-[#29313a] bg-[#0b0f14]"
+      class="mt-5 border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)]"
     >
-      <header class="flex flex-col gap-4 border-b border-[#252c35] px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
+      <header class="flex flex-col gap-4 border-b border-[var(--sf-hairline)] p-4 lg:flex-row lg:items-end lg:justify-between">
         <div class="min-w-0">
-          <div class="mb-1.5 flex items-center gap-2 font-mono text-[9px] font-semibold uppercase tracking-[0.2em] text-cyan-400">
-            <span class="h-1.5 w-1.5 bg-cyan-400"></span> Persisted run topology
-          </div>
-          <h4 id="run-agent-fleet-heading" class="text-sm font-semibold tracking-tight text-white">
+          <p class="sf-metadata">Persisted run roster</p>
+          <h4
+            id="run-agent-fleet-heading"
+            class="mt-1 text-base font-semibold text-[var(--sf-text-primary)]"
+          >
             Agent fleet
           </h4>
-          <p class="mt-1 max-w-2xl text-[11px] leading-5 text-gray-500">
-            Actual worker instances attached to this run. Health and usage survive reconnects;
-            controls are isolated to the selected agent.
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-[var(--sf-text-secondary)]">
+            Persisted workers attached to this selected run. Health, usage, and controls replay after reconnect.
           </p>
         </div>
-
         <div
           id="run-agent-fleet-summary"
           role="status"
           aria-live="polite"
           aria-atomic="true"
-          class="grid grid-cols-4 gap-px bg-[#252c35] font-mono text-[9px] uppercase tracking-wider sm:min-w-[24rem]"
+          class="grid grid-cols-2 border border-[var(--sf-hairline)] sm:grid-cols-4"
         >
-          <.fleet_fact label="Agents" value={@agent_count} tone="text-gray-100" />
-          <.fleet_fact label="Active" value={Map.get(@summary, :active, 0)} tone="text-emerald-300" />
-          <.fleet_fact label="Paused" value={Map.get(@summary, :paused, 0)} tone="text-amber-300" />
-          <.fleet_fact
-            label="Attention"
-            value={Map.get(@summary, :attention, 0)}
-            tone="text-rose-300"
-          />
+          <.fleet_fact label="Agents" value={@agent_count} tone="neutral" />
+          <.fleet_fact label="Active" value={Map.get(@summary, :active, 0)} tone="neutral" />
+          <.fleet_fact label="Paused" value={Map.get(@summary, :paused, 0)} tone="neutral" />
+          <.fleet_fact label="Attention" value={Map.get(@summary, :attention, 0)} tone="attention" />
         </div>
       </header>
 
@@ -902,9 +908,9 @@ defmodule IexCodeWeb.RunComponents do
         :if={Map.get(@summary, :recovering, 0) > 0}
         id="run-agent-fleet-recovering"
         role="status"
-        class="flex items-start gap-2.5 border-b border-amber-500/20 bg-amber-500/[0.04] px-4 py-3 text-[11px] leading-5 text-amber-100/80"
+        class="flex items-start gap-2 border-b border-[var(--sf-hairline)] px-4 py-3 text-sm leading-6 text-[var(--sf-text-secondary)]"
       >
-        <.icon name="hero-arrow-path" class="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-amber-300" />
+        <.icon name="hero-arrow-path" class="mt-1 size-4 shrink-0" />
         <span>
           {Map.get(@summary, :recovering, 0)} worker {pluralize(
             Map.get(@summary, :recovering, 0),
@@ -914,21 +920,15 @@ defmodule IexCodeWeb.RunComponents do
         </span>
       </div>
 
-      <div
-        :if={@loading}
-        id="run-agent-fleet-loading"
-        role="status"
-        class="grid gap-px bg-[#252c35] md:grid-cols-2"
-      >
+      <div :if={@loading} id="run-agent-fleet-loading" role="status" class="grid md:grid-cols-2">
         <div
           :for={index <- 1..2}
           id={"run-agent-fleet-skeleton-#{index}"}
-          class="animate-pulse bg-[#10151b] p-4 sm:p-5"
+          class="border-b border-[var(--sf-hairline)] p-5 md:border-r"
         >
-          <div class="h-3 w-28 bg-[#252c35]"></div>
-          <div class="mt-4 h-2 w-4/5 bg-[#20262e]"></div>
-          <div class="mt-2 h-2 w-2/3 bg-[#20262e]"></div>
-          <div class="mt-5 h-px bg-[#252c35]"></div>
+          <div class="h-3 w-28 bg-[var(--sf-hairline)]"></div>
+          <div class="mt-4 h-2 w-4/5 bg-[var(--sf-hairline)]"></div>
+          <div class="mt-2 h-2 w-2/3 bg-[var(--sf-hairline)]"></div>
         </div>
       </div>
 
@@ -936,17 +936,17 @@ defmodule IexCodeWeb.RunComponents do
         :if={!@loading}
         id="run-agent-fleet-list"
         phx-update="stream"
-        class="grid gap-px bg-[#252c35] md:grid-cols-2"
+        class="grid md:grid-cols-2"
       >
         <div
           id="run-agent-fleet-empty"
-          class="hidden bg-[#0f141a] px-5 py-10 text-center only:block md:col-span-2"
+          class="hidden border-b border-[var(--sf-hairline)] px-5 py-10 text-center only:block md:col-span-2"
         >
-          <div class="mx-auto flex h-9 w-9 items-center justify-center border border-dashed border-[#38404a] text-gray-600">
-            <.icon name="hero-cpu-chip" class="h-4 w-4" />
-          </div>
-          <p class="mt-3 text-xs font-medium text-gray-300">{fleet_empty_title(@run)}</p>
-          <p class="mx-auto mt-1 max-w-md text-[11px] leading-5 text-gray-600">
+          <.icon name="hero-cpu-chip" class="mx-auto size-5 text-[var(--sf-text-secondary)]" />
+          <p class="mt-3 text-sm font-semibold text-[var(--sf-text-primary)]">
+            {fleet_empty_title(@run)}
+          </p>
+          <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--sf-text-secondary)]">
             {fleet_empty_copy(@run)}
           </p>
         </div>
@@ -956,66 +956,42 @@ defmodule IexCodeWeb.RunComponents do
           id={dom_id}
           data-agent-status={agent_value(agent, :status, "pending")}
           data-agent-health={agent_health(agent)}
-          class="group min-w-0 bg-[#10151b] p-4 transition-colors hover:bg-[#121820] sm:p-5"
+          class="min-w-0 border-b border-[var(--sf-hairline)] p-4 md:border-r sm:p-5"
         >
           <% receipt = latest_agent_receipt(@receipts, agent) %>
-          <div class="flex items-start justify-between gap-3">
+          <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="flex min-w-0 items-start gap-3">
-              <span class={[
-                "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center border",
-                agent_health_tone(agent_health(agent), :surface)
-              ]}>
-                <.icon name={agent_role_icon(agent)} class="h-4 w-4" />
+              <span class="flex size-9 shrink-0 items-center justify-center border border-[var(--sf-hairline)] text-[var(--sf-text-secondary)]">
+                <.icon name={agent_role_icon(agent)} class="size-4" />
               </span>
               <div class="min-w-0">
-                <p class="truncate text-xs font-semibold text-gray-100">
+                <p class="truncate text-sm font-semibold text-[var(--sf-text-primary)]">
                   {agent_display_name(agent)}
                 </p>
-                <div class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[9px] uppercase tracking-wider text-gray-600">
-                  <span>{agent_value(agent, :role, "worker")}</span>
-                  <span class="text-gray-700">/</span>
-                  <span
-                    class="max-w-40 truncate normal-case tracking-normal"
-                    title={agent_value(agent, :key, "agent")}
-                  >
-                    {agent_value(agent, :key, "agent")}
-                  </span>
-                </div>
+                <p class="sf-metadata mt-1 truncate" title={agent_value(agent, :key, "agent")}>
+                  {agent_value(agent, :role, "worker")} · {agent_value(agent, :key, "agent")}
+                </p>
               </div>
             </div>
-
-            <div class="flex shrink-0 flex-col items-end gap-1">
-              <span class={[
-                "border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider",
-                agent_status_tone(agent_value(agent, :status, "pending"))
-              ]}>
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <span class="sf-pill px-2 py-1 text-xs font-semibold uppercase">
                 {agent_value(agent, :status, "pending")}
               </span>
-              <span class={[
-                "flex items-center gap-1 font-mono text-[8px] uppercase tracking-wider",
-                agent_health_tone(agent_health(agent), :text)
-              ]}>
-                <span class={[
-                  "h-1 w-1 rounded-full",
-                  agent_health(agent) == "healthy" && "animate-pulse",
-                  agent_health_tone(agent_health(agent), :dot)
-                ]}></span>
-                {agent_health(agent)}
-              </span>
+              <span class="sf-pill px-2 py-1 text-xs uppercase">Health · {agent_health(agent)}</span>
             </div>
           </div>
 
-          <div class="mt-4 min-h-12 border-l border-[#303844] pl-3">
-            <p class="font-mono text-[8px] uppercase tracking-[0.16em] text-gray-600">Current task</p>
-            <p class="mt-1 line-clamp-2 break-words text-[11px] leading-5 text-gray-300">
+          <div class="mt-4 border-l border-[var(--sf-hairline)] pl-3">
+            <p class="sf-metadata">Current task</p>
+            <p class="mt-1 line-clamp-2 break-words text-sm leading-6 text-[var(--sf-text-secondary)]">
               {agent_task(agent)}
             </p>
           </div>
 
           <div class="mt-4">
-            <div class="mb-1.5 flex items-center justify-between font-mono text-[9px] text-gray-600">
-              <span class="min-w-0 truncate pr-2" title={agent_model(agent)}>{agent_model(agent)}</span>
-              <span class="tabular-nums text-gray-400">{agent_progress(agent)}%</span>
+            <div class="mb-2 flex items-center justify-between gap-3 text-xs text-[var(--sf-text-secondary)]">
+              <span class="min-w-0 truncate" title={agent_model(agent)}>{agent_model(agent)}</span>
+              <span class="font-mono font-semibold tabular-nums">{agent_progress(agent)}%</span>
             </div>
             <div
               role="progressbar"
@@ -1023,49 +999,35 @@ defmodule IexCodeWeb.RunComponents do
               aria-valuemin="0"
               aria-valuemax="100"
               aria-valuenow={agent_progress(agent)}
-              class="h-px bg-[#2a313a]"
+              class="h-1 bg-[var(--sf-hairline)]"
             >
-              <div
-                class={[
-                  "h-px transition-[width] duration-300",
-                  agent_value(agent, :status, "pending") == "failed" && "bg-rose-400",
-                  agent_value(agent, :status, "pending") != "failed" && "bg-cyan-400"
-                ]}
-                style={"width: #{agent_progress(agent)}%"}
-              >
+              <div class="h-full bg-[var(--sf-live-mark)]" style={"width: #{agent_progress(agent)}%"}>
               </div>
             </div>
           </div>
 
-          <div class="mt-4 grid grid-cols-3 gap-px bg-[#252c35]">
+          <div class="mt-4 grid grid-cols-3 border border-[var(--sf-hairline)]">
             <.agent_metric label="Tokens" value={format_count(agent_tokens(agent))} />
-            <.agent_metric
-              label="Avg latency"
-              value={agent_average_latency(agent)}
-            />
+            <.agent_metric label="Avg latency" value={agent_average_latency(agent)} />
             <.agent_metric
               label="Requests"
               value={format_count(agent_value(agent, :request_count, 0))}
             />
           </div>
 
-          <div class="mt-3 flex flex-wrap items-center justify-between gap-2 font-mono text-[9px] text-gray-600">
-            <span title={agent_heartbeat_title(agent)}>
-              Heartbeat · {agent_heartbeat_label(agent)}
-            </span>
-            <span :if={agent_desired_state_pending?(agent)} class="text-amber-300">
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--sf-text-secondary)]">
+            <span title={agent_heartbeat_title(agent)}>Heartbeat · {agent_heartbeat_label(agent)}</span>
+            <span :if={agent_desired_state_pending?(agent)}>
               Requested · {agent_value(agent, :desired_state)}
             </span>
-            <span :if={!agent_desired_state_pending?(agent)}>
-              Last · {agent_last_latency(agent)}
-            </span>
+            <span :if={!agent_desired_state_pending?(agent)}>Last · {agent_last_latency(agent)}</span>
           </div>
 
           <div
             :if={agent_value(agent, :error_message)}
             id={"run-agent-error-#{agent_value(agent, :id)}"}
             role="alert"
-            class="mt-3 break-words border-l-2 border-rose-500 pl-3 text-[10px] leading-5 text-rose-300"
+            class="mt-3 border-l-2 border-[var(--sf-live-mark)] pl-3 text-sm leading-6 text-[var(--sf-text-primary)]"
           >
             {agent_value(agent, :error_message)}
           </div>
@@ -1076,12 +1038,9 @@ defmodule IexCodeWeb.RunComponents do
             role="status"
             data-control-status={agent_receipt_value(receipt, :status, "pending")}
             data-control-result-status={agent_receipt_result_status(receipt)}
-            class={[
-              "mt-3 border px-3 py-2.5",
-              agent_receipt_tone(receipt)
-            ]}
+            class="mt-3 border border-[var(--sf-hairline)] p-3"
           >
-            <div class="flex items-start justify-between gap-3 font-mono text-[9px] uppercase tracking-wider">
+            <div class="flex items-start justify-between gap-3 text-xs uppercase tracking-wide">
               <span class="font-semibold">
                 #{agent_receipt_value(receipt, :sequence, 0)} · {agent_receipt_value(
                   receipt,
@@ -1089,23 +1048,21 @@ defmodule IexCodeWeb.RunComponents do
                   "control"
                 )}
               </span>
-              <span class="shrink-0">
-                {agent_receipt_lifecycle(receipt)}
-              </span>
+              <span class="shrink-0">{agent_receipt_lifecycle(receipt)}</span>
             </div>
-            <p class="mt-1 text-[10px] leading-5 text-gray-400">
+            <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
               {agent_receipt_summary(receipt)}
             </p>
             <p
-              class="mt-1 font-mono text-[8px] text-gray-600"
+              class="mt-1 text-xs text-[var(--sf-text-secondary)]"
               title={agent_receipt_timestamp_title(receipt)}
             >
               {agent_receipt_timestamp_label(receipt)}
             </p>
           </div>
 
-          <div class="mt-4 border-t border-[#252c35] pt-3">
-            <div class="flex flex-wrap gap-1.5">
+          <div class="mt-4 border-t border-[var(--sf-hairline)] pt-3">
+            <div class="flex flex-wrap gap-2">
               <button
                 :if={agent_value(agent, :status) in ["idle", "running"]}
                 id={"pause-run-agent-#{agent_value(agent, :id)}"}
@@ -1116,10 +1073,8 @@ defmodule IexCodeWeb.RunComponents do
                 phx-disable-with="Pausing…"
                 disabled={agent_control_pending?(@receipts, agent, "pause")}
                 aria-label={"Pause #{agent_display_name(agent)}"}
-                class="min-h-9 flex-1 border border-amber-500/25 bg-amber-500/[0.05] px-2.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-amber-300 transition-colors hover:bg-amber-500/10 disabled:cursor-wait disabled:opacity-45 sm:flex-none"
-              >
-                Pause
-              </button>
+                class="sf-control min-h-11 px-3 text-sm"
+              >Pause</button>
               <button
                 :if={agent_value(agent, :status) == "paused"}
                 id={"resume-run-agent-#{agent_value(agent, :id)}"}
@@ -1130,10 +1085,8 @@ defmodule IexCodeWeb.RunComponents do
                 phx-disable-with="Resuming…"
                 disabled={agent_control_pending?(@receipts, agent, "resume")}
                 aria-label={"Resume #{agent_display_name(agent)}"}
-                class="min-h-9 flex-1 border border-emerald-500/25 bg-emerald-500/[0.05] px-2.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-emerald-300 transition-colors hover:bg-emerald-500/10 disabled:cursor-wait disabled:opacity-45 sm:flex-none"
-              >
-                Resume
-              </button>
+                class="sf-control min-h-11 px-3 text-sm"
+              >Resume</button>
               <button
                 :if={agent_retryable?(agent)}
                 id={"restart-run-agent-#{agent_value(agent, :id)}"}
@@ -1144,10 +1097,8 @@ defmodule IexCodeWeb.RunComponents do
                 phx-disable-with="Restarting…"
                 disabled={agent_control_pending?(@receipts, agent, "restart")}
                 aria-label={"Restart #{agent_display_name(agent)}"}
-                class="min-h-9 flex-1 border border-cyan-500/25 bg-cyan-500/[0.05] px-2.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-cyan-300 transition-colors hover:bg-cyan-500/10 disabled:cursor-wait disabled:opacity-45 sm:flex-none"
-              >
-                Restart
-              </button>
+                class="sf-control min-h-11 px-3 text-sm"
+              >Restart</button>
               <button
                 :if={agent_cancellable?(agent)}
                 id={"cancel-run-agent-#{agent_value(agent, :id)}"}
@@ -1159,10 +1110,8 @@ defmodule IexCodeWeb.RunComponents do
                 disabled={agent_control_pending?(@receipts, agent, "cancel")}
                 aria-label={"Stop #{agent_display_name(agent)}"}
                 data-confirm="Stop only this agent? Dependent work may wait for recovery or operator action."
-                class="min-h-9 flex-1 border border-rose-500/25 bg-rose-500/[0.05] px-2.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-rose-300 transition-colors hover:bg-rose-500/10 disabled:cursor-wait disabled:opacity-45 sm:flex-none"
-              >
-                Stop
-              </button>
+                class="sf-control min-h-11 px-3 text-sm"
+              >Stop</button>
             </div>
 
             <.form
@@ -1171,7 +1120,7 @@ defmodule IexCodeWeb.RunComponents do
               id={"run-agent-steering-form-#{agent_value(agent, :id)}"}
               phx-change="update_run_agent_guidance"
               phx-submit="steer_run_agent"
-              class="mt-2 flex items-end gap-2"
+              class="mt-3 grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"
             >
               <.input
                 type="hidden"
@@ -1179,26 +1128,22 @@ defmodule IexCodeWeb.RunComponents do
                 name="agent_id"
                 value={agent_value(agent, :id)}
               />
-              <div class="min-w-0 flex-1">
-                <.input
-                  field={agent_steering_form(agent, @guidance)[:guidance]}
-                  id={"run-agent-steering-input-#{agent_value(agent, :id)}"}
-                  type="text"
-                  label="Agent guidance"
-                  placeholder="Redirect this worker…"
-                  class="block min-h-9 w-full border border-[#303844] bg-[#0b0f14] px-2.5 py-2 text-[11px] text-gray-100 outline-none transition-colors placeholder:text-gray-700 focus:border-cyan-500/50"
-                />
-              </div>
+              <.input
+                field={agent_steering_form(agent, @guidance)[:guidance]}
+                id={"run-agent-steering-input-#{agent_value(agent, :id)}"}
+                type="text"
+                label="Agent guidance"
+                placeholder="Redirect this worker…"
+                class="min-h-11 min-w-0 w-full border border-[var(--sf-hairline)] bg-[var(--sf-code-surface)] px-3 text-sm text-[var(--sf-text-primary)] outline-none placeholder:text-[var(--sf-text-secondary)]"
+              />
               <button
                 id={"run-agent-steering-submit-#{agent_value(agent, :id)}"}
                 type="submit"
                 phx-disable-with="Queueing…"
                 disabled={agent_control_pending?(@receipts, agent, "steer")}
                 aria-label={"Send guidance to #{agent_display_name(agent)}"}
-                class="mb-0.5 min-h-9 shrink-0 bg-cyan-400 px-3 font-mono text-[9px] font-semibold uppercase tracking-wider text-[#071014] transition-colors hover:bg-cyan-300 disabled:cursor-wait disabled:bg-gray-700 disabled:text-gray-500"
-              >
-                Steer
-              </button>
+                class="sf-control min-h-11 px-3 text-sm font-semibold"
+              >Steer</button>
             </.form>
           </div>
         </article>
@@ -1213,9 +1158,12 @@ defmodule IexCodeWeb.RunComponents do
 
   defp fleet_fact(assigns) do
     ~H"""
-    <div class="bg-[#10151b] px-2.5 py-2 text-center">
-      <span class={[@tone, "block text-xs font-semibold tabular-nums"]}>{@value}</span>
-      <span class="mt-0.5 block text-[8px] text-gray-600">{@label}</span>
+    <div
+      data-tone={@tone}
+      class="border-r border-[var(--sf-hairline)] px-3 py-2 text-center last:border-r-0"
+    >
+      <span class="block text-sm font-semibold tabular-nums text-[var(--sf-text-primary)]">{@value}</span>
+      <span class="sf-metadata mt-1 block">{@label}</span>
     </div>
     """
   end
@@ -1225,9 +1173,9 @@ defmodule IexCodeWeb.RunComponents do
 
   defp agent_metric(assigns) do
     ~H"""
-    <div class="min-w-0 bg-[#0d1218] px-2 py-2">
-      <span class="block font-mono text-[8px] uppercase tracking-wider text-gray-600">{@label}</span>
-      <span class="mt-0.5 block truncate font-mono text-[10px] tabular-nums text-gray-300">{@value}</span>
+    <div class="min-w-0 border-r border-[var(--sf-hairline)] px-3 py-2 last:border-r-0">
+      <span class="sf-metadata block">{@label}</span>
+      <span class="mt-1 block truncate font-mono text-sm tabular-nums text-[var(--sf-text-primary)]">{@value}</span>
     </div>
     """
   end
@@ -1237,9 +1185,11 @@ defmodule IexCodeWeb.RunComponents do
 
   defp manifest_fact(assigns) do
     ~H"""
-    <div class="min-w-0 bg-[#0c1117] px-2.5 py-2">
-      <p class="text-[8px] uppercase tracking-wider text-gray-600">{@label}</p>
-      <p class="mt-1 truncate font-mono text-[10px] text-gray-300" title={@value}>{@value}</p>
+    <div class="min-w-0 border-r border-[var(--sf-hairline)] px-3 py-2 last:border-r-0">
+      <p class="sf-metadata">{@label}</p>
+      <p class="mt-1 truncate font-mono text-sm text-[var(--sf-text-primary)]" title={@value}>
+        {@value}
+      </p>
     </div>
     """
   end
@@ -1263,29 +1213,25 @@ defmodule IexCodeWeb.RunComponents do
       id={@id}
       data-budget-actual={@actual}
       data-budget-limit={@limit || "unset"}
-      class="bg-[#10151b] px-3 py-3"
+      class="border-r border-[var(--sf-hairline)] px-3 py-3 last:border-r-0"
     >
       <div class="flex items-start justify-between gap-3">
         <div>
-          <p class="text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">{@label}</p>
-          <p class="mt-1 font-mono text-xs tabular-nums text-gray-200">{@actual_label}</p>
+          <p class="sf-metadata font-semibold">{@label}</p>
+          <p class="mt-1 font-mono text-sm tabular-nums text-[var(--sf-text-primary)]">
+            {@actual_label}
+          </p>
         </div>
-        <span class="font-mono text-[9px] text-gray-600">{@limit_prefix} {@limit_label}</span>
+        <span class="font-mono text-xs text-[var(--sf-text-secondary)]">{@limit_prefix} {@limit_label}</span>
       </div>
-      <div class="mt-2 h-1 overflow-hidden bg-[#252c35]">
+      <div class="mt-2 h-1 overflow-hidden bg-[var(--sf-hairline)]">
         <div
           role="progressbar"
           aria-label={"#{@label} budget used"}
           aria-valuemin="0"
           aria-valuemax="100"
           aria-valuenow={@percent}
-          class={[
-            "h-full transition-[width] duration-300",
-            @limit == nil && "bg-gray-600",
-            @limit != nil && @percent < 80 && "bg-cyan-400",
-            @limit != nil && @percent >= 80 && @percent < 100 && "bg-amber-400",
-            @limit != nil && @percent >= 100 && "bg-rose-400"
-          ]}
+          class="h-full bg-[var(--sf-live-mark)] transition-[width] duration-300"
           style={"width: #{@percent}%"}
         >
         </div>
@@ -1300,18 +1246,14 @@ defmodule IexCodeWeb.RunComponents do
 
   defp run_metric(assigns) do
     ~H"""
-    <div class="border-b border-r border-[#21262d] px-4 py-3 last:border-r-0 md:border-b-0">
-      <div class="flex items-center gap-2">
-        <span class={[
-          "h-1.5 w-1.5 rounded-full",
-          @tone == "emerald" && "bg-emerald-400",
-          @tone == "blue" && "bg-blue-400",
-          @tone == "rose" && "bg-rose-400",
-          @tone == "amber" && "bg-amber-400"
-        ]}></span>
-        <span class="text-[10px] uppercase tracking-wider text-gray-500">{@label}</span>
+    <div
+      data-tone={@tone}
+      class="border-b border-r border-[var(--sf-hairline)] px-4 py-3 last:border-r-0 md:border-b-0"
+    >
+      <span class="sf-metadata">{@label}</span>
+      <div class="mt-1 font-mono text-xl font-medium tabular-nums text-[var(--sf-text-primary)]">
+        {@value}
       </div>
-      <div class="mt-1 font-mono text-xl font-medium tabular-nums text-gray-100">{@value}</div>
     </div>
     """
   end
@@ -1320,23 +1262,10 @@ defmodule IexCodeWeb.RunComponents do
 
   defp run_status(assigns) do
     ~H"""
-    <span class={[
-      "inline-flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em]",
-      @status in ["running", "completed"] && "text-emerald-400",
-      @status == "draft" && "text-violet-400",
-      @status == "queued" && "text-blue-400",
-      @status in ["paused", "interrupted"] && "text-amber-400",
-      @status in ["failed", "cancelled"] && "text-rose-400"
-    ]}>
-      <span class={[
-        "h-1.5 w-1.5 rounded-full",
-        @status == "running" && "animate-pulse bg-emerald-400",
-        @status == "completed" && "bg-emerald-400",
-        @status == "draft" && "bg-violet-400",
-        @status == "queued" && "bg-blue-400",
-        @status in ["paused", "interrupted"] && "bg-amber-400",
-        @status in ["failed", "cancelled"] && "bg-rose-400"
-      ]}></span>
+    <span
+      data-status={@status}
+      class="sf-pill inline-flex items-center px-2 py-1 font-mono text-xs font-semibold uppercase tracking-wide"
+    >
       {@status |> String.replace("_", " ")}
     </span>
     """
@@ -1759,52 +1688,6 @@ defmodule IexCodeWeb.RunComponents do
     end
   end
 
-  defp agent_status_tone(status) do
-    cond do
-      status in ["running", "completed"] ->
-        "border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-300"
-
-      status in ["paused", "waiting", "starting", "recovering"] ->
-        "border-amber-500/25 bg-amber-500/[0.06] text-amber-300"
-
-      status in ["failed", "cancelled", "interrupted"] ->
-        "border-rose-500/20 bg-rose-500/[0.05] text-rose-300"
-
-      true ->
-        "border-[#303844] bg-[#151b22] text-gray-400"
-    end
-  end
-
-  defp agent_health_tone("healthy", :surface),
-    do: "border-emerald-500/20 bg-emerald-500/[0.05] text-emerald-300"
-
-  defp agent_health_tone("healthy", :text), do: "text-emerald-400"
-  defp agent_health_tone("healthy", :dot), do: "bg-emerald-400"
-
-  defp agent_health_tone(health, :surface) when health in ["stale", "recovering"],
-    do: "border-amber-500/25 bg-amber-500/[0.05] text-amber-300"
-
-  defp agent_health_tone(health, :text) when health in ["stale", "recovering"],
-    do: "text-amber-400"
-
-  defp agent_health_tone(health, :dot) when health in ["stale", "recovering"],
-    do: "bg-amber-400"
-
-  defp agent_health_tone(health, :surface) when health in ["degraded", "offline"],
-    do: "border-rose-500/20 bg-rose-500/[0.04] text-rose-300"
-
-  defp agent_health_tone(health, :text) when health in ["degraded", "offline"],
-    do: "text-rose-400"
-
-  defp agent_health_tone(health, :dot) when health in ["degraded", "offline"],
-    do: "bg-rose-400"
-
-  defp agent_health_tone(_health, :surface),
-    do: "border-[#303844] bg-[#151b22] text-gray-500"
-
-  defp agent_health_tone(_health, :text), do: "text-gray-600"
-  defp agent_health_tone(_health, :dot), do: "bg-gray-600"
-
   defp agent_role_icon(agent) do
     case agent_value(agent, :role, "") |> to_string() |> String.downcase() do
       "planner" -> "hero-map"
@@ -1926,25 +1809,6 @@ defmodule IexCodeWeb.RunComponents do
 
       {_status, _kind, _result_status, _error} ->
         "Recorded in the durable agent control log."
-    end
-  end
-
-  defp agent_receipt_tone(receipt) do
-    case {agent_receipt_value(receipt, :status, "pending"), agent_receipt_result_status(receipt)} do
-      {"applied", "queued"} ->
-        "border-blue-500/20 bg-blue-500/[0.04] text-blue-300"
-
-      {"applied", _result_status} ->
-        "border-emerald-500/20 bg-emerald-500/[0.04] text-emerald-300"
-
-      {status, _result_status} when status in ["rejected"] ->
-        "border-rose-500/20 bg-rose-500/[0.04] text-rose-300"
-
-      {"superseded", _result_status} ->
-        "border-[#303844] bg-[#151b22] text-gray-400"
-
-      {_status, _result_status} ->
-        "border-amber-500/20 bg-amber-500/[0.04] text-amber-300"
     end
   end
 

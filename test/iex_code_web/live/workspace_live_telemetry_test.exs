@@ -209,7 +209,7 @@ defmodule IexCodeWeb.WorkspaceLiveTelemetryTest do
       end
     end
 
-    test "tracks real-time token accumulation on new messages", %{
+    test "does not fabricate token telemetry from message creation", %{
       conn: conn,
       workspace_path: path
     } do
@@ -228,7 +228,8 @@ defmodule IexCodeWeb.WorkspaceLiveTelemetryTest do
       }
 
       send(view.pid, {:message_created, msg})
-      assert render(view) =~ "TOKENS"
+      refute render(view) =~ "MULTI-AGENT SWARM HARNESS ACTIVE"
+      refute render(view) =~ " TOKENS ·"
     end
   end
 
@@ -339,7 +340,11 @@ defmodule IexCodeWeb.WorkspaceLiveTelemetryTest do
 
       assert render(view) =~ "Scan project tree"
 
-      # Send PubSub broadcast
+      # A stale or premature message reconciles from current-session SQLite.
+      send(view.pid, :operations_cleared)
+      assert render(view) =~ "Scan project tree"
+
+      Sessions.clear_session_operations(session.id)
       send(view.pid, :operations_cleared)
       assert render(view) =~ "No operations recorded in this session"
     end

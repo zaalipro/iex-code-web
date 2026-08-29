@@ -72,12 +72,36 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
     assert LazyHTML.query(doc, "#mission-control-panel-execution #interactive-coach-sentinel")
 
     for mode <- ~w(overview topology execution journal) do
-      assert LazyHTML.query(doc, "#mission-control-mode-#{mode}[role='tab']")
-      assert LazyHTML.query(doc, "#mission-control-panel-#{mode}[role='tabpanel']")
+      assert LazyHTML.query(
+               doc,
+               "#mission-control-mode-#{mode}[type='button'][role='tab'][phx-click='switch_mission_control_mode'][phx-value-mode='#{mode}'][aria-controls='mission-control-panel-#{mode}']"
+             )
+
+      assert LazyHTML.query(
+               doc,
+               "#mission-control-panel-#{mode}[role='tabpanel'][aria-labelledby='mission-control-mode-#{mode}']"
+             )
     end
 
     assert LazyHTML.query(doc, "#mission-control-mode-overview[aria-selected='true']")
-    assert LazyHTML.query(doc, "#mission-control-mode-overview[aria-selected='true']")
+    assert selected_tab_count(doc) == 1
+    assert node_count(doc, "#async-run-control") == 1
+    assert node_count(doc, "#run-agent-fleet") == 1
+    assert node_count(doc, "#run-agent-fleet-list[phx-update='stream']") == 1
+    assert node_count(doc, "#async-run-list") == 1
+    assert node_count(doc, "#async-run-detail") == 1
+    assert node_count(doc, "#async-run-actions") == 1
+    assert node_count(doc, "#async-run-steering-form") == 1
+    assert node_count(doc, "#async-run-budget-meters") == 1
+    assert node_count(doc, "#async-run-graph-and-controls") == 1
+    assert node_count(doc, "#async-run-control-timeline") == 1
+    assert node_count(doc, "#async-run-events") == 1
+
+    assert LazyHTML.query(
+             doc,
+             "#return-to-instrument-deck-swarm[data-phx-link='patch'][data-phx-link-state='replace'][data-return-instrument-id='instrument-card-swarm']"
+           )
+
     assert LazyHTML.query(doc, "#mission-control-waveform[aria-hidden='true']")
     assert LazyHTML.query(doc, "#mission-control-panel-overview:not([hidden])")
     assert LazyHTML.query(doc, "#mission-control-panel-topology[hidden]")
@@ -135,11 +159,15 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
            )
 
     assert LazyHTML.query(doc, "[role='progressbar'][aria-valuenow='100']")
+    assert compact_text(LazyHTML.query(doc, "#mission-control-progress-text")) == "100%"
     hero_text = LazyHTML.text(LazyHTML.query(doc, "#mission-control-hero"))
     refute hero_text =~ "objective-secret"
     refute hero_text =~ "run-sensitive-id"
     refute hero_text =~ "lease-secret"
     refute hero_text =~ "error-secret"
+    refute hero_text =~ "prompt-secret"
+    refute hero_text =~ "#PID<0.99.0>"
+    refute hero_text =~ "/private/workspace/path"
   end
 
   test "signal precedence stays scoped to session approvals and the selected run" do
@@ -246,4 +274,24 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
     |> String.replace(~r/\s+/, " ")
     |> String.trim()
   end
+
+  defp selected_tab_count(document) do
+    ~w(overview topology execution journal)
+    |> Enum.count(fn mode ->
+      document
+      |> LazyHTML.query("#mission-control-mode-#{mode}[aria-selected='true']")
+      |> LazyHTML.to_tree()
+      |> Kernel.!=([])
+    end)
+  end
+
+  defp node_count(document, selector) do
+    document
+    |> LazyHTML.query(selector)
+    |> LazyHTML.to_tree()
+    |> count_tree_nodes()
+  end
+
+  defp count_tree_nodes(nodes) when is_list(nodes), do: Enum.reduce(nodes, 0, &count_tree_nodes/2)
+  defp count_tree_nodes(_node, total), do: total + 1
 end

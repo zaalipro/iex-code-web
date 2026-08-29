@@ -156,11 +156,14 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
 
       render_click(view, "switch_tab", %{"tab" => "swarm"})
 
-      # Toggle Coach Menu
+      # Toggle the ordinary Coach action disclosure. Goal creation stays owned by the chassis.
       html = render_click(view, "toggle_coach_menu")
-      assert html =~ "Create Goal"
+      refute html =~ "Create Goal"
       assert html =~ "Open Terminal"
-      assert html =~ "Clear Ops"
+      assert html =~ "Clear operations"
+      assert has_element?(view, "#new-goal-button")
+      refute has_element?(view, "#coach-create-goal-button")
+      refute has_element?(view, "#coach-actions-toggle[aria-haspopup='menu']")
 
       # Exercise Coach menu: open goal modal
       html_goal = render_click(view, "open_goal_modal")

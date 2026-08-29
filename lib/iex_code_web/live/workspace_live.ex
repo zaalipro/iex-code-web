@@ -312,6 +312,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:show_cancel_modal, false)
       |> assign(:cancel_mode, "rollback")
       |> assign(:steer_text, "")
+      |> assign(:session_steering_form, to_form(%{"steering" => ""}))
       |> assign(:submitting?, false)
       |> assign(:cancelling?, false)
       # Telemetry assigns (real values only — tokens/latency are not fabricated)
@@ -2388,6 +2389,17 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("update_session_steering", %{"steering" => steering}, socket)
+      when is_binary(steering) do
+    {:noreply,
+     socket
+     |> assign(:steer_text, steering)
+     |> assign(:session_steering_form, to_form(%{"steering" => steering}))}
+  end
+
+  def handle_event("update_session_steering", _params, socket), do: {:noreply, socket}
+
+  @impl true
   def handle_event("send_steering", params, socket) do
     text = String.trim(params["steering"] || params["text"] || "")
 
@@ -2397,6 +2409,7 @@ defmodule IexCodeWeb.WorkspaceLive do
           {:noreply,
            socket
            |> assign(:steer_text, "")
+           |> assign(:session_steering_form, to_form(%{"steering" => ""}))
            |> put_flash(:info, "Steering guidance delivered to active swarm")}
 
         {:error, reason} ->
@@ -4437,7 +4450,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info(:operations_cleared, socket) do
-    {:noreply, socket |> assign(:operations, []) |> rebuild_instrument_summaries()}
+    operations =
+      Sessions.list_operations(socket.assigns.session.id, limit: @operation_retained_limit)
+
+    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
   end
 
   @impl true
