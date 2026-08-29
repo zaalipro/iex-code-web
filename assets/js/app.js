@@ -253,7 +253,10 @@ const Hooks = {
           this.pushEvent("command_palette_navigate", {direction: "up"})
         } else if (e.key === "Enter" && document.activeElement?.id === "command-palette-input") {
           e.preventDefault()
-          this.pushEvent("command_palette_execute_selected", {})
+          const index = this.selectedIndexFromActiveDescendant()
+          const option = index === null ? null : document.getElementById(`palette-item-${index}`)
+          const activation = option?.querySelector?.('button[type="submit"], a[href], button') || option
+          if (activation?.click) activation.click()
         }
       }
 
@@ -276,6 +279,10 @@ const Hooks = {
         if (el) {
           el.scrollIntoView({block: "nearest"})
         }
+      })
+
+      this.handleEvent("palette_submit_logout", () => {
+        document.getElementById("workspace-logout-form")?.requestSubmit?.()
       })
     },
     updated() {
@@ -344,6 +351,12 @@ const Hooks = {
         event.preventDefault()
         first.focus()
       }
+    },
+    selectedIndexFromActiveDescendant() {
+      const input = document.getElementById("command-palette-input")
+      const id = input?.getAttribute("aria-activedescendant") || ""
+      const match = id.match(/^palette-item-(\d+)$/)
+      return match ? Number(match[1]) : null
     }
   }
 }

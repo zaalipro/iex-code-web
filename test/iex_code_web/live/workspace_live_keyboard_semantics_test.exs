@@ -33,21 +33,22 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     %{view: view, session: session, message: message, task: task}
   end
 
-  test "sidebar controls are semantic and content selection is not disabled globally", %{
+  test "switchboard controls are semantic and content selection is not disabled globally", %{
     view: view,
     session: session
   } do
-    assert has_element?(
-             view,
-             "a#profile-settings-card[href='/sessions/#{session.id}/settings#runtime'][data-phx-link='redirect']"
-           )
-
     refute has_element?(view, "#workspace-shell.select-none")
+    view |> element("#all-instruments-trigger") |> render_click()
+    assert has_element?(view, "#command-palette-dialog[role='dialog'][aria-modal='true']")
 
     assert has_element?(
              view,
-             "button[phx-click='delete_session'][phx-value-id='#{session.id}'][aria-label]"
+             "[data-palette-item-id='delete-session-#{session.id}'][data-confirm]"
            )
+
+    assert has_element?(view, "#workspace-logout-form[action='/logout'][method='post']")
+    refute has_element?(view, "#workspace-sidebar")
+    refute has_element?(view, "#workspace-desktop-tabs")
   end
 
   test "kanban ribbons and cards are native buttons", %{view: view, task: task} do
@@ -78,7 +79,7 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     view: view,
     task: task
   } do
-    view |> element("#sidebar-tab-calendar") |> render_click()
+    view |> element("#instrument-card-calendar") |> render_click()
 
     today = Date.utc_today()
     day_id = "calendar-day-#{today.day}"
@@ -105,7 +106,7 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
   end
 
   test "calendar Monday-first headings align with month dates", %{view: view} do
-    view |> element("#sidebar-tab-calendar") |> render_click()
+    view |> element("#instrument-card-calendar") |> render_click()
 
     first_of_month = %{Date.utc_today() | day: 1}
 
@@ -122,7 +123,7 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     view: view,
     message: message
   } do
-    view |> element("#sidebar-tab-chat") |> render_click()
+    view |> element("#instrument-card-chat") |> render_click()
     assert has_element?(view, "button#scroll-node-#{message.id}[aria-label]")
 
     render_click(view, "toggle_new_task_modal")

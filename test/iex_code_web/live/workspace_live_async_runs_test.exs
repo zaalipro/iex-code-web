@@ -16,7 +16,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
 
     assert has_element?(view, "#async-run-control")
     assert has_element?(view, "#async-run-control", "Mission Control")
@@ -100,6 +100,8 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert is_binary(run.manifest_hash)
     assert length(Runs.list_steps(run)) == 4
 
+    render_click(view, "switch_tab", %{"tab" => "swarm"})
+
     assert has_element?(view, "#async-run-#{run.id}")
     assert has_element?(view, "#async-run-dag-projection")
     assert has_element?(view, "#dag-execution-projection[data-engine='dag_v1']")
@@ -108,7 +110,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     refute has_element?(view, "#async-run-steps")
 
     {:ok, reconnected, _html} = live(conn, ~p"/sessions/#{session.id}")
-    reconnected |> element("#tab-btn-swarm") |> render_click()
+    reconnected |> element("#instrument-card-swarm") |> render_click()
 
     assert has_element?(reconnected, "#async-run-dag-projection")
     assert has_element?(reconnected, "#dag-node-#{hd(Runs.list_steps(run)).id}-desktop")
@@ -226,6 +228,8 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
              Enum.filter(steps, &(&1.kind == "research_source_fetch")),
              &(&1.params["max_parallel_fetches"] == 4)
            )
+
+    render_click(view, "switch_tab", %{"tab" => "swarm"})
 
     assert has_element?(view, "#async-run-research-manifest")
     assert has_element?(view, "#async-run-token-budget[data-budget-limit='100000']")
@@ -400,7 +404,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert Runs.count_pending_approvals(session.id) == 1
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
 
     view |> element("#async-run-#{newest_run.id}") |> render_click()
 
@@ -452,7 +456,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
     view |> element("#async-run-#{selected.id}") |> render_click()
     assert :sys.get_state(view.pid).socket.assigns.selected_run.id == selected.id
 
@@ -483,7 +487,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
 
     assert has_element?(view, "#async-dispatcher-status[role='status']")
     assert has_element?(view, "#async-run-metrics[aria-live='polite']")
@@ -519,11 +523,10 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
   } do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
-    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/settings#research")
+    view |> element("#settings-provider-advanced-serpapi") |> render_click()
 
-    view |> render_hook("toggle_settings_modal", %{})
-
-    assert has_element?(view, "#settings-search-provider-count", "12 ranked adapters")
+    assert has_element?(view, "#settings-search-provider-tavily")
 
     assert has_element?(
              view,
@@ -556,8 +559,6 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
              view,
              "#settings-search-provider-google[data-provider-lifecycle='sunsetting']"
            )
-
-    assert has_element?(view, "#settings-provider-lifecycle-note-google", "sunsets 2027-01-01")
 
     assert has_element?(
              view,
@@ -619,7 +620,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert waiting_lock.status == "waiting"
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
     view |> element("#async-run-#{waiting_run.id}") |> render_click()
 
     assert has_element?(view, "#workspace-lock-overview[data-lock-state='waiting']")
@@ -655,7 +656,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
 
     assert has_element?(view, "#run-agent-fleet[data-fleet-state='empty']")
 
@@ -728,7 +729,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     untouched_id = untouched.agent_id
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
 
     assert has_element?(view, "#pause-run-agent-#{target_id}")
     view |> element("#pause-run-agent-#{target_id}") |> render_click()
@@ -797,7 +798,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       )
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
 
     guidance = "Keep this exact guidance after the dispatcher error"
 
@@ -863,7 +864,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert Runs.get_run_agent(interrupted.agent_id).status == "interrupted"
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
 
     assert has_element?(view, "#restart-run-agent-#{interrupted.agent_id}")
     view |> element("#restart-run-agent-#{interrupted.agent_id}") |> render_click()

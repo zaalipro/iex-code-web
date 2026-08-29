@@ -14,7 +14,7 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
   # ============================================================================
 
   describe "WorkspaceLive Dynamic Calculations & Template Rendering" do
-    test "renders cleanly across all 7 workspace tabs with empty initial session", %{
+    test "renders cleanly across all workspace instruments with empty initial session", %{
       conn: conn,
       workspace_path: path
     } do
@@ -23,13 +23,10 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      tabs = ["kanban", "swarm", "calendar", "changes", "chat", "files", "terminal"]
+      tabs = ["kanban", "swarm", "research", "calendar", "changes", "chat", "files", "terminal"]
 
       for tab <- tabs do
-        html =
-          view
-          |> element("#tab-btn-#{tab}")
-          |> render_click()
+        html = render_click(view, "switch_tab", %{"tab" => tab})
 
         assert is_binary(html)
         assert Process.alive?(view.pid)
@@ -46,15 +43,9 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # Open settings modal
-      html = render_click(view, "toggle_settings_modal")
-      assert html =~ "OBSERVED SESSION TOKENS"
-      assert html =~ "Provider-reported telemetry only"
-      assert html =~ "Unset budget"
-
-      # Re-toggle to close
-      html = render_click(view, "toggle_settings_modal")
-      refute html =~ "OBSERVED SESSION TOKENS"
+      # Workspace delegates settings to SettingsLive via an anchored navigation shim.
+      render_click(view, "toggle_settings_modal")
+      assert_redirect(view, "/sessions/#{session.id}/settings#execution")
     end
 
     test "handles coach and swarm dynamic progress calculation under boundary parameters", %{

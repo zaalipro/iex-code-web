@@ -47,6 +47,7 @@ class FakeElement extends FakeTarget {
     let element = this
     while (element) {
       if (selector === "[data-instrument-surface]" && element.dataset.instrumentSurface !== undefined) return element
+      if (selector === "[data-palette-surface]" && element.dataset.paletteSurface !== undefined) return element
       if (selector === '[id^="return-to-instrument-deck-"]' && element.id.startsWith("return-to-instrument-deck-")) return element
       element = element.parentElement
     }
@@ -232,6 +233,35 @@ test("page-loading preserves the previous valid card focus when focus moved outs
   })
 })
 
+test("palette page-loading uses only a closed palette surface signal", () => {
+  const h = setup()
+  h.hook.mounted()
+  h.flushFrame()
+  const palette = new FakeElement("palette-item-0", {dataset: {paletteSurface: "chat"}})
+  h.shell.append(palette)
+  h.document.activeElement = palette
+  h.window.emit("phx:page-loading-start", {detail: {target: palette, to: "/logout"}})
+  assert.equal(h.localStorage.getItem("iexcode:last-instrument:project-1:session-1"), "chat")
+  assert.deepEqual(h.pushed, [["restore_last_instrument", {surface: "chat"}]])
+
+  const malformed = new FakeElement("palette-item-1", {dataset: {paletteSurface: "settings"}})
+  h.shell.append(malformed)
+  h.window.emit("phx:page-loading-start", {detail: {target: malformed, to: "/settings#runtime"}})
+  assert.deepEqual(h.pushed, [["restore_last_instrument", {surface: "chat"}]])
+})
+
+test("native beforeunload captures deck position without inventing a surface", () => {
+  const h = setup()
+  h.hook.mounted()
+  h.flushFrame()
+  h.deck.scrollTop = 118
+  h.window.emit("beforeunload")
+  assert.deepEqual(JSON.parse(h.sessionStorage.getItem(h.hook.deckStateKey)), {
+    scrollTop: 118, focusedInstrumentId: null, capturedAt: 1_234
+  })
+  assert.equal(h.localStorage.getItem(h.hook.lastInstrumentKey), null)
+})
+
 test("Return captures the active workbench card while preserving stored deck scroll", () => {
   const key = "iexcode:deck-state:project-1:session-1"
   const h = setup({activeView: "changes", stored: {[key]: state(133, "instrument-card-kanban")}, includeDeck: false})
@@ -380,11 +410,13 @@ test("destroyed removes owned listeners and cancels its single pending RAF", () 
   h.hook.mounted()
   assert.equal(h.shell.listenerCount("click"), 1)
   assert.equal(h.window.listenerCount("phx:page-loading-start"), 1)
+  assert.equal(h.window.listenerCount("beforeunload"), 1)
   assert.equal(h.window.listenerCount("popstate"), 1)
   assert.equal(h.frames.size, 1)
   h.hook.destroyed()
   assert.equal(h.shell.listenerCount("click"), 0)
   assert.equal(h.window.listenerCount("phx:page-loading-start"), 0)
+  assert.equal(h.window.listenerCount("beforeunload"), 0)
   assert.equal(h.window.listenerCount("popstate"), 0)
   assert.equal(h.frames.size, 0)
   assert.equal(h.cancelled.length, 1)

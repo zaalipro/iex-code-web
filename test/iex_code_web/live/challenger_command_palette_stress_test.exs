@@ -41,12 +41,33 @@ defmodule IexCodeWeb.ChallengerCommandPaletteStressTest do
       assert Enum.map(session_results, & &1.title) == ["Calculator Refactor"]
 
       assert CommandPalette.search("anything", sessions, "files") == []
-      assert CommandPalette.search("anything", sessions, "unknown") == []
+      assert CommandPalette.search("", sessions, "unknown") == []
     end
 
     test "caps session results at ten" do
       sessions = for i <- 1..20, do: %{id: "s#{i}", title: "Session #{i}"}
       assert length(CommandPalette.search("session", sessions, "sessions")) == 10
+    end
+
+    test "bounds and deduplicates dynamic labels before searching them" do
+      visible = String.duplicate("a", 160)
+      hidden = "hidden suffix"
+
+      sessions = [
+        %{id: "same", title: visible <> hidden},
+        %{id: "same", title: "duplicate"}
+      ]
+
+      assert [%{title: ^visible}] = CommandPalette.search("aaa", sessions, "sessions")
+      assert CommandPalette.search(hidden, sessions, "sessions") == []
+
+      projects = [
+        %{id: "same", name: visible <> hidden},
+        %{id: "same", name: "duplicate"}
+      ]
+
+      assert [%{title: ^visible}] = CommandPalette.project_items("aaa", projects)
+      assert CommandPalette.project_items(hidden, projects) == []
     end
 
     test "removed browser studios are absent from actions and views" do
@@ -60,6 +81,9 @@ defmodule IexCodeWeb.ChallengerCommandPaletteStressTest do
       refute "ast_search" in ids
       refute "view_tests" in ids
       refute "view_ast" in ids
+
+      assert Enum.map(CommandPalette.views(), & &1.id) ==
+               ~w(view_swarm view_kanban view_research view_calendar view_changes view_chat view_files view_terminal)
     end
   end
 end

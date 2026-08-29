@@ -6,33 +6,32 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
   alias IexCode.{Kanban, Runs, Sessions, Settings}
 
   # ============================================================================
-  # 1. Navigation, Sidebar, Workspace Switcher & Session Management
+  # 1. Navigation, Switchboard, Workspace & Session Management
   # ============================================================================
 
   describe "Navigation, Workspace & Sessions Controls" do
-    test "switches across all sidebar tabs seamlessly", %{conn: conn, workspace_path: path} do
+    test "switches across all instruments through the visible switchboard", %{
+      conn: conn,
+      workspace_path: path
+    } do
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      tabs = [
-        {"#sidebar-tab-kanban", "kanban", "Kanban"},
-        {"#sidebar-tab-swarm", "swarm", "Milo"},
-        {"#sidebar-tab-calendar", "calendar", "August, 2026"},
-        {"#sidebar-tab-changes", "changes", "All Changes"},
-        {"#sidebar-tab-files", "files", "Select a workspace file"},
-        {"#sidebar-tab-terminal", "terminal", "mix test"}
-      ]
-
-      for {selector, tab_name, content_match} <- tabs do
-        view
-        |> element(selector)
-        |> render_click()
-
-        html = render(view)
-
-        assert html =~ content_match,
-               "Expected tab '#{tab_name}' to render content matching '#{content_match}'"
+      for {surface, title} <- [
+            {"swarm", "Active Mission"},
+            {"kanban", "Mission Board"},
+            {"research", "Research Radar"},
+            {"calendar", "Schedule Chronometer"},
+            {"changes", "Change Ledger"},
+            {"chat", "Conversation Loop"},
+            {"files", "File Atlas"},
+            {"terminal", "Terminal Scope"}
+          ] do
+        render_click(view, "toggle_command_palette")
+        render_change(view, "command_palette_search", %{"query" => title})
+        view |> element("[data-palette-item-id='view_#{surface}']") |> render_click()
+        assert live_assigns(view).active_view == surface
       end
     end
 
@@ -49,30 +48,20 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       session = create_session_fixture(p1)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # 1. Toggle workspace menu
-      html = render_click(view, "toggle_workspace_menu")
-      assert html =~ "Search Workspace..."
-      assert html =~ "Alpha Project"
-      assert html =~ "Beta Project"
-      assert html =~ "New Workspace"
+      render_click(view, "toggle_command_palette", %{"category" => "projects"})
+      render_change(view, "command_palette_search", %{"query" => "Beta Project"})
+      assert has_element?(view, "[data-palette-item-id='project-#{p2.id}']")
+      view |> element("[data-palette-item-id='project-#{p2.id}']") |> render_click()
+      assert_patch(view, ~p"/sessions/#{hd(Sessions.list_sessions_for_project(p2.id)).id}")
 
-      # 2. Search workspace
-      html = render_change(view, "search_workspace", %{"query" => "Beta"})
-      assert is_binary(html)
-
-      # 3. Switch project
-      render_click(view, "switch_project", %{"id" => p2.id})
-      html = render(view)
-      assert html =~ "Beta Project"
-
-      # 4. Open project creation modal
-      html = render_click(view, "toggle_project_modal")
-      assert html =~ "Open Workspace Folder"
-      assert html =~ "Folder Path"
+      render_click(view, "toggle_command_palette", %{"category" => "projects"})
+      view |> element("[data-palette-item-id='new-project']") |> render_click()
+      assert has_element?(view, "#project-modal")
+      assert has_element?(view, "#project-open-form")
 
       # Close project modal
-      html = render_click(view, "close_project_modal")
-      refute html =~ "Open Workspace Folder"
+      render_click(view, "close_project_modal")
+      refute has_element?(view, "#project-modal")
 
       File.rm_rf(p2_dir)
     end
@@ -228,7 +217,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
   # ============================================================================
 
   describe "Prompt Bar, Tool Pills & Settings Telemetry" do
-    test "toggles prompt bar tool pills and opens usage history modal", %{
+    test "toggles prompt bar tool pills without restoring retired usage UI", %{
       conn: conn,
       workspace_path: path
     } do
@@ -241,9 +230,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       render_click(view, "toggle_tool", %{"tool" => "web_search"})
       render_click(view, "toggle_tool", %{"tool" => "git"})
 
-      # Toggle usage history modal ("View all" button)
-      html_usage = render_click(view, "toggle_all_usage_modal")
-      assert html_usage =~ "Usage History" or is_binary(html_usage)
+      refute has_element?(view, "#all-usage-modal")
     end
 
     test "expands and closes chat message detail view", %{
@@ -311,33 +298,28 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       html = render_submit(view, "submit_prompt", %{"prompt" => "Refactor payment service"})
       assert is_binary(html)
 
-      # Submit /swarm slash command -> switches tab to swarm
-      render_submit(view, "submit_prompt", %{"prompt" => "/swarm build authentication"})
-      assert render(view) =~ "Milo" or render(view) =~ "PlannerAgent"
+      # Enter workbenches through the canonical route seam after the prompt submission.
+      render_click(view, "switch_tab", %{"tab" => "swarm"})
+      assert live_assigns(view).active_view == "swarm"
 
-      # Submit /kanban slash command -> switches tab to kanban
-      render_submit(view, "submit_prompt", %{"prompt" => "/kanban inspect backlog"})
-      assert render(view) =~ "Kanban" or render(view) =~ "Today's tasks"
+      render_click(view, "switch_tab", %{"tab" => "kanban"})
+      assert live_assigns(view).active_view == "kanban"
     end
 
-    test "toggles Settings modal, displays usage history & credit telemetry, and saves API configuration",
+    test "navigates to SettingsLive and saves API configuration there",
          %{conn: conn, workspace_path: path} do
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # 1. Open settings modal
-      html = render_click(view, "toggle_settings_modal")
-      assert html =~ "API &amp; Usage History" or html =~ "API & Usage History"
-      assert html =~ "OBSERVED SESSION TOKENS"
-      assert html =~ "NO FABRICATED USAGE"
-      assert has_element?(view, "#settings-search-providers")
-      assert has_element?(view, "#legacy-settings-swarm-agent-count[min='4'][max='32']")
+      render_click(view, "toggle_settings_modal")
+      assert_redirect(view, "/sessions/#{session.id}/settings#execution")
+      {:ok, settings_view, _html} = live(conn, ~p"/sessions/#{session.id}/settings#execution")
 
       # 2. Save new settings
       html =
-        view
-        |> form("form[phx-submit='save_settings']", %{
+        settings_view
+        |> form("#settings-form", %{
           "settings" => %{
             "openai_api_key" => "sk-test-secret-key-12345",
             "openai_base_url" => "https://cli.llmotions.com/v1",
@@ -346,8 +328,8 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
         })
         |> render_submit()
 
-      assert html =~ "Settings saved successfully"
-      refute html =~ "API &amp; Usage History"
+      assert html =~ "Settings saved"
+      assert has_element?(settings_view, "#settings-save-status", "Settings saved")
 
       stored = Settings.get_settings()
       assert stored.openai_base_url == "https://cli.llmotions.com/v1"
@@ -383,9 +365,10 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       view |> element("#toggle-run-setup") |> render_click()
       assert has_element?(view, "#run-setup-provider-duckduckgo[checked]")
 
-      render_click(view, "toggle_settings_modal")
+      {:ok, settings_view, _html} = live(conn, ~p"/sessions/#{session.id}/settings#research")
+      settings_view |> element("#settings-provider-advanced-tavily") |> render_click()
 
-      view
+      settings_view
       |> form("#settings-form", %{
         "settings" => %{
           "openai_api_key" => "   ",
@@ -404,8 +387,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
               "base_url" => "https://api.tavily.com"
             },
             "duckduckgo" => %{
-              "enabled" => "false",
-              "base_url" => "https://html.duckduckgo.com"
+              "enabled" => "false"
             }
           }
         }
@@ -424,10 +406,12 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       assert stored.research_max_tokens == 180_000
       assert stored.research_time_budget_minutes == 45
 
-      assert has_element?(view, "#run-setup-provider-tavily[checked]")
-      refute has_element?(view, "#run-setup-provider-duckduckgo[checked]")
-      assert has_element?(view, "#run-setup-research-level option[value='high'][selected]")
-      assert has_element?(view, "#run-setup-research-sources[value='7']")
+      {:ok, refreshed, _html} = live(conn, ~p"/sessions/#{session.id}")
+      refreshed |> element("#toggle-run-setup") |> render_click()
+      assert has_element?(refreshed, "#run-setup-provider-tavily[checked]")
+      refute has_element?(refreshed, "#run-setup-provider-duckduckgo[checked]")
+      assert has_element?(refreshed, "#run-setup-research-level option[value='high'][selected]")
+      assert has_element?(refreshed, "#run-setup-research-sources[value='7']")
     end
   end
 
@@ -443,6 +427,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "kanban"})
 
       columns = ["triage", "todo", "scheduled", "ready", "running", "blocked", "review", "done"]
 
@@ -476,6 +461,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
         })
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "kanban"})
 
       # 1. Open drawer
       render_click(view, "open_task_drawer", %{"id" => task.id})
@@ -521,6 +507,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
         })
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "kanban"})
 
       # Expand ready column to see the task card
       render_click(view, "toggle_column", %{"status" => "ready"})

@@ -158,7 +158,8 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
       assert assigns.active_view == unquote(view_name)
       assert assigns.active_tab == unquote(view_name)
       refute has_element?(view, "#instrument-deck")
-      assert has_element?(view, "#workspace-header")
+      assert has_element?(view, "#mission-strip[data-active-view='#{unquote(view_name)}']")
+      refute has_element?(view, "#workspace-header")
     end
   end
 
@@ -360,14 +361,14 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryNavigationTest do
 
     render_click(view, "toggle_command_palette")
     render_click(view, "command_palette_set_category", %{"category" => "views"})
-    render_change(view, "command_palette_search", %{"query" => "Terminal Shell"})
-    render_click(view, "command_palette_execute_selected")
+    render_change(view, "command_palette_search", %{"query" => "Terminal Scope"})
+    view |> element("[data-palette-item-id='view_terminal']") |> render_click()
     assert_push_patch(view, "/sessions/#{session.id}?view=terminal")
 
-    render_submit(view, "submit_prompt", %{"prompt" => "/kanban"})
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
     assert_push_patch(view, "/sessions/#{session.id}?view=kanban")
 
-    render_submit(view, "submit_prompt", %{"prompt" => "/research"})
+    render_click(view, "switch_tab", %{"tab" => "research"})
     assert_push_patch(view, "/sessions/#{session.id}/research")
     assert :sys.get_state(view.pid).socket.assigns.active_view == "research"
   end

@@ -388,9 +388,27 @@ defmodule IexCodeWeb.InstrumentComponents do
         class="sf-control min-h-11 px-3 text-sm"
       >All instruments</button>
 
-      <div class="min-w-0 flex-1 basis-[16rem]">
-        <div class="sf-metadata truncate">{@project.name}</div>
-        <div class="sf-body-copy truncate font-medium">{@session.title}</div>
+      <div class="flex min-w-0 flex-1 basis-[16rem] items-center gap-1">
+        <button
+          id="project-switchboard-trigger"
+          type="button"
+          phx-click="toggle_command_palette"
+          phx-value-category="projects"
+          aria-label="Choose project"
+          class="sf-control min-h-11 min-w-0 flex-1 px-3 text-left"
+        >
+          <span class="sf-metadata block truncate">{@project.name}</span>
+        </button>
+        <button
+          id="session-switchboard-trigger"
+          type="button"
+          phx-click="toggle_command_palette"
+          phx-value-category="sessions"
+          aria-label="Choose session"
+          class="sf-control min-h-11 min-w-0 flex-1 px-3 text-left"
+        >
+          <span class="sf-body-copy block truncate font-medium">{@session.title}</span>
+        </button>
       </div>
 
       <div class="flex min-h-11 items-center gap-2" aria-controls="connection-status">
@@ -398,14 +416,21 @@ defmodule IexCodeWeb.InstrumentComponents do
         <span class="sf-body-copy text-sm">Connected</span>
       </div>
 
-      <div class="min-w-0">
+      <button
+        id="runtime-switchboard-trigger"
+        type="button"
+        phx-click="toggle_command_palette"
+        phx-value-category="settings_account"
+        aria-label="Open runtime settings"
+        class="sf-control min-h-11 min-w-0 px-3 text-left"
+      >
         <div data-runtime-label class="sf-body-copy text-sm font-semibold">
           {runtime_label(@runtime)}
         </div>
         <%= if @dispatcher_summary do %>
           <div data-dispatcher-summary class="sf-metadata mt-1">{@dispatcher_summary}</div>
         <% end %>
-      </div>
+      </button>
 
       <div class="flex items-center gap-1">
         <button

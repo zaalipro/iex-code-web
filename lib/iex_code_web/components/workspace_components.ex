@@ -15,6 +15,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
   import Phoenix.HTML
   alias IexCode.Engine.OperationManager
   alias IexCode.Tools.Git.DiffParser
+  alias Phoenix.LiveView.JS
 
   # ============================================================================
   # F5: Live Telemetry & 4-Column Subagent Cards
@@ -1898,17 +1899,25 @@ defmodule IexCodeWeb.WorkspaceComponents do
   attr :selected_index, :integer, default: 0
 
   def command_palette(assigns) do
+    indexed = Enum.with_index(assigns.results)
+
+    assigns =
+      assigns
+      |> assign(:view_rows, Enum.filter(indexed, fn {item, _index} -> item.category == :view end))
+      |> assign(
+        :deck_rows,
+        Enum.filter(indexed, fn {item, _index} -> item.id == "all-instruments" end)
+      )
+      |> assign(:other_groups, palette_groups(indexed))
+
     ~H"""
     <div id="command-palette-controller" phx-hook="CommandPalette" class="contents">
       <%= if @show do %>
         <div
           id="command-palette-modal"
-          class="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] px-4 bg-black/60 backdrop-blur-md transition-opacity"
+          class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[7vh] backdrop-blur-md"
         >
-          <%!-- Backdrop click dismiss --%>
           <div class="fixed inset-0" phx-click="close_command_palette" aria-hidden="true"></div>
-
-          <%!-- Palette Dialog Window --%>
           <div
             id="command-palette-dialog"
             role="dialog"
@@ -1916,21 +1925,22 @@ defmodule IexCodeWeb.WorkspaceComponents do
             aria-labelledby="command-palette-title"
             aria-describedby="command-palette-description"
             tabindex="-1"
-            class="relative w-full max-w-2xl bg-[#11151c] border border-[#30363d] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[75vh] z-10 animate-scale-in"
+            data-sheet-close-event="close_command_palette"
+            data-sheet-return-id="command-palette-trigger"
+            data-sheet-background-id="workspace-shell"
+            class="relative z-10 flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden rounded-[1.75rem] border border-[#30363d] bg-[#0d1117] shadow-2xl shadow-black/70"
             phx-click-away="close_command_palette"
           >
-            <h2 id="command-palette-title" class="sr-only">Command palette</h2>
+            <h2 id="command-palette-title" class="sr-only">Signal Foundry switchboard</h2>
             <p id="command-palette-description" class="sr-only">
-              Search sessions, views, and actions.
+              Search instruments, projects, sessions, commands, settings, and account actions.
             </p>
-
-            <%!-- Search Header Input --%>
-            <div class="flex items-center px-4 py-3 border-b border-[#21262d] bg-[#161b22]/80 gap-3">
-              <.icon name="hero-magnifying-glass" class="w-5 h-5 text-gray-400 shrink-0" />
+            <div class="flex min-h-16 items-center gap-3 border-b border-[#21262d] bg-[#11151c] px-5">
+              <.icon name="hero-magnifying-glass" class="size-5 shrink-0 text-[#ff8a68]" />
               <form
                 id="command-palette-form"
                 phx-change="command_palette_search"
-                phx-submit="command_palette_execute_selected"
+                phx-submit="command_palette_submit_noop"
                 class="flex-1"
               >
                 <input
@@ -1939,7 +1949,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   name="query"
                   value={@query}
                   role="combobox"
-                  aria-label="Search command palette"
+                  aria-label="Search Signal Foundry switchboard"
                   aria-autocomplete="list"
                   aria-expanded="true"
                   aria-controls="command-palette-results"
@@ -1949,8 +1959,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   phx-debounce="80"
                   autocomplete="off"
                   spellcheck="false"
-                  placeholder="Search sessions, views, actions... (Cmd+K)"
-                  class="w-full bg-transparent border-0 text-gray-100 placeholder-gray-500 font-sans text-sm focus:outline-none focus:ring-0 p-0"
+                  placeholder="Find an instrument, project, session, or command"
+                  class="w-full border-0 bg-transparent p-0 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-0"
                 />
               </form>
               <button
@@ -1958,111 +1968,93 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 type="button"
                 phx-click="close_command_palette"
                 aria-label="Close command palette"
-                class="px-1.5 py-0.5 text-[11px] font-mono font-medium text-gray-400 bg-[#21262d] border border-[#30363d] rounded hover:text-white"
-              >
-                ESC
-              </button>
+                class="min-h-11 rounded-xl border border-[#30363d] px-3 font-mono text-[11px] text-gray-400 transition-colors hover:text-white"
+              >ESC</button>
             </div>
 
-            <%!-- Category Filter Pills --%>
-            <div class="flex items-center gap-1.5 px-4 py-2 border-b border-[#21262d] bg-[#0d1117] overflow-x-auto font-mono text-xs">
-              <%= for {cat, label} <- [{"all", "All"}, {"actions", "Actions"}, {"views", "Views"}, {"sessions", "Sessions"}] do %>
+            <div class="flex items-center gap-1.5 overflow-x-auto border-b border-[#21262d] px-5 py-2.5 font-mono text-[11px]">
+              <%= for {category, label} <- [{"all", "All"}, {"views", "Instruments"}, {"projects", "Projects"}, {"sessions", "Sessions"}, {"actions", "Commands"}, {"settings_account", "Settings / Account"}] do %>
                 <button
                   type="button"
                   phx-click="command_palette_set_category"
-                  phx-value-category={cat}
-                  aria-pressed={to_string(@category == cat)}
+                  phx-value-category={category}
+                  aria-pressed={to_string(@category == category)}
                   class={[
-                    "px-2.5 py-1 rounded-lg transition-smooth font-medium text-[11px] shrink-0",
-                    @category == cat &&
-                      "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold shadow-sm",
-                    @category != cat &&
-                      "text-gray-400 hover:text-gray-200 hover:bg-[#161b22] border border-transparent"
+                    "min-h-11 shrink-0 rounded-xl border px-3 transition-colors",
+                    @category == category && "border-[#ff8a68]/50 bg-[#ff8a68]/10 text-[#ffb29d]",
+                    @category != category &&
+                      "border-transparent text-gray-500 hover:border-[#30363d] hover:text-gray-200"
                   ]}
-                >
-                  {label}
-                </button>
+                >{label}</button>
               <% end %>
             </div>
 
-            <%!-- Results List View --%>
             <div
               id="command-palette-results"
               role="listbox"
-              aria-label="Command palette results"
-              class="flex-1 overflow-y-auto p-2 space-y-1 font-sans text-sm"
+              aria-label="Switchboard results"
+              class="flex-1 overflow-y-auto p-4 sm:p-5"
             >
               <%= if @results == [] do %>
-                <div class="py-12 text-center text-gray-500 font-mono text-xs">
-                  <.icon name="hero-magnifying-glass" class="w-8 h-8 text-gray-600 mx-auto mb-2" />
-                  <p>No results found for "{@query}"</p>
-                  <p class="text-[11px] text-gray-600 mt-1">
-                    Try a different search term or category filter
-                  </p>
+                <div class="py-16 text-center font-mono text-xs text-gray-500">
+                  No matching switchboard controls
                 </div>
               <% else %>
-                <%= for {item, idx} <- Enum.with_index(@results) do %>
-                  <% is_selected = idx == @selected_index %>
-                  <button
-                    type="button"
-                    id={"palette-item-#{idx}"}
-                    role="option"
-                    aria-selected={to_string(is_selected)}
-                    tabindex="-1"
-                    phx-click="command_palette_select_item"
-                    phx-value-index={to_string(idx)}
-                    class={[
-                      "w-full flex items-center justify-between p-2.5 rounded-xl text-left transition-smooth group",
-                      is_selected &&
-                        "bg-cyan-950/40 text-cyan-200 border border-cyan-500/40 font-medium",
-                      !is_selected && "hover:bg-[#161b22] text-gray-300 border border-transparent"
-                    ]}
-                  >
-                    <div class="flex items-center gap-3 truncate">
-                      <div class={[
-                        "w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border",
-                        item.category == :action &&
-                          "bg-purple-500/10 text-purple-400 border-purple-500/30",
-                        item.category == :view && "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
-                        item.category == :session &&
-                          "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                      ]}>
-                        <.icon name={item.icon || "hero-cube"} class="w-4 h-4" />
-                      </div>
-                      <div class="truncate">
-                        <div class="font-medium text-gray-200 group-hover:text-white truncate flex items-center gap-2">
-                          <span>{item.title}</span>
-                          <span class="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-[#21262d] text-gray-400 border border-[#30363d]">
-                            {to_string(item.category)}
-                          </span>
-                        </div>
-                        <div class="text-[11px] text-gray-500 font-mono truncate">
-                          {item.subtitle}
-                        </div>
-                      </div>
+                <%= if @view_rows != [] do %>
+                  <section aria-labelledby="switchboard-instruments-heading">
+                    <h3
+                      id="switchboard-instruments-heading"
+                      class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500"
+                    >
+                      Instruments
+                    </h3>
+                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <%= for {item, index} <- @view_rows do %>
+                        <.palette_option
+                          item={item}
+                          index={index}
+                          selected={index == @selected_index}
+                        />
+                      <% end %>
                     </div>
-
-                    <%= if Map.get(item, :shortcut) && item.shortcut != "" do %>
-                      <span class="px-2 py-0.5 text-[10px] font-mono text-gray-400 bg-[#161b22] border border-[#21262d] rounded shrink-0">
-                        {item.shortcut}
-                      </span>
-                    <% end %>
-                  </button>
+                    <div :if={@deck_rows != []} class="mt-2 space-y-1.5">
+                      <%= for {item, index} <- @deck_rows do %>
+                        <.palette_option
+                          item={item}
+                          index={index}
+                          selected={index == @selected_index}
+                        />
+                      <% end %>
+                    </div>
+                  </section>
+                <% end %>
+                <%= for {{group_id, label}, rows} <- @other_groups do %>
+                  <section
+                    id={"switchboard-group-#{group_id}"}
+                    aria-labelledby={"switchboard-#{group_id}-heading"}
+                    class="mt-5"
+                  >
+                    <h3
+                      id={"switchboard-#{group_id}-heading"}
+                      class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500"
+                    >
+                      {label}
+                    </h3>
+                    <div class="space-y-1.5">
+                      <%= for {item, index} <- rows do %>
+                        <.palette_option
+                          item={item}
+                          index={index}
+                          selected={index == @selected_index}
+                        />
+                      <% end %>
+                    </div>
+                  </section>
                 <% end %>
               <% end %>
             </div>
-
-            <%!-- Footer Keyboard Navigation Helper --%>
-            <div class="px-4 py-2 border-t border-[#21262d] bg-[#0d1117] flex items-center justify-between text-[11px] font-mono text-gray-500">
-              <div class="flex items-center gap-3">
-                <span><kbd class="px-1 py-0.5 bg-[#161b22] border border-[#21262d] rounded text-gray-400">↑↓</kbd>
-                Navigate</span>
-                <span><kbd class="px-1 py-0.5 bg-[#161b22] border border-[#21262d] rounded text-gray-400">↵</kbd>
-                Select</span>
-                <span><kbd class="px-1 py-0.5 bg-[#161b22] border border-[#21262d] rounded text-gray-400">esc</kbd>
-                Close</span>
-              </div>
-              <span>IexCode Command Hub</span>
+            <div class="flex items-center justify-between border-t border-[#21262d] px-5 py-3 font-mono text-[10px] text-gray-600">
+              <span>↑↓ navigate · enter select · esc close</span><span>Signal Foundry</span>
             </div>
           </div>
         </div>
@@ -2070,4 +2062,110 @@ defmodule IexCodeWeb.WorkspaceComponents do
     </div>
     """
   end
+
+  attr :item, :map, required: true
+  attr :index, :integer, required: true
+  attr :selected, :boolean, required: true
+
+  defp palette_option(%{item: %{category: :account}} = assigns) do
+    ~H"""
+    <div
+      id={"palette-item-#{@index}"}
+      role="option"
+      aria-selected={to_string(@selected)}
+      tabindex="-1"
+      data-palette-item-id={@item.id}
+      class={[
+        "flex min-h-12 items-center rounded-xl border px-3 transition-colors",
+        @selected && "border-[#ff8a68]/50 bg-[#ff8a68]/10",
+        !@selected && "border-transparent hover:bg-[#161b22]"
+      ]}
+    >
+      <IexCodeWeb.Layouts.logout_button id="workspace-logout-form" class="w-full" />
+    </div>
+    """
+  end
+
+  defp palette_option(assigns) do
+    ~H"""
+    <div id={if(@item.id == "new-session", do: "new-session-btn", else: nil)} class="contents">
+      <button
+        id={"palette-item-#{@index}"}
+        type="button"
+        role="option"
+        aria-selected={to_string(@selected)}
+        tabindex="-1"
+        data-palette-item-id={@item.id}
+        data-palette-option-id={"palette-item-#{@index}"}
+        data-palette-href={Map.get(@item, :href)}
+        data-palette-surface={if(@item.category == :view, do: Map.get(@item, :tab), else: nil)}
+        data-confirm={Map.get(@item, :confirmation)}
+        data-sheet-close-event={
+          if(@item.category == :confirmation, do: "close_command_palette", else: nil)
+        }
+        data-sheet-return-id={
+          if(@item.category == :confirmation, do: "palette-item-#{@index}", else: nil)
+        }
+        data-sheet-background-id={
+          if(@item.category == :confirmation, do: "workspace-shell", else: nil)
+        }
+        phx-click={
+          JS.push("command_palette_select_item", page_loading: true, value: %{index: @index})
+        }
+        class={[
+          "group flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors",
+          @selected && "border-[#ff8a68]/50 bg-[#ff8a68]/10 text-white",
+          !@selected && "border-transparent text-gray-300 hover:border-[#30363d] hover:bg-[#161b22]"
+        ]}
+      >
+        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[#30363d] bg-[#161b22] text-[#ff9b7f]"><.icon
+          name={Map.get(@item, :icon, "hero-cube")}
+          class="size-4"
+        /></span>
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm font-semibold">{@item.title}</span>
+          <span class="block truncate font-mono text-[10px] text-gray-500">{Map.get(
+            @item,
+            :subtitle,
+            to_string(@item.category)
+          )}</span>
+        </span>
+        <span class="shrink-0 font-mono text-[9px] uppercase tracking-wider text-gray-600">{to_string(
+          @item.category
+        )}</span>
+      </button>
+    </div>
+    """
+  end
+
+  defp palette_groups(indexed) do
+    indexed
+    |> Enum.reject(fn {item, _index} ->
+      item.category == :view or item.id == "all-instruments"
+    end)
+    |> Enum.group_by(
+      fn {item, _index} -> palette_group(item) end,
+      fn row -> row end
+    )
+    |> Enum.sort_by(fn {{group_id, _label}, _rows} -> palette_group_order(group_id) end)
+  end
+
+  defp palette_group(%{id: "new-project"}), do: {"projects", "Projects"}
+  defp palette_group(%{id: "new-session"}), do: {"sessions", "Sessions"}
+  defp palette_group(%{category: :project}), do: {"projects", "Projects"}
+
+  defp palette_group(%{category: category}) when category in [:session, :confirmation],
+    do: {"sessions", "Sessions"}
+
+  defp palette_group(%{category: :action}), do: {"commands", "Commands"}
+  defp palette_group(%{category: :navigation}), do: {"settings", "Settings"}
+  defp palette_group(%{category: :account}), do: {"account", "Account"}
+  defp palette_group(_item), do: {"other", "Other"}
+
+  defp palette_group_order("projects"), do: 1
+  defp palette_group_order("sessions"), do: 2
+  defp palette_group_order("commands"), do: 3
+  defp palette_group_order("settings"), do: 4
+  defp palette_group_order("account"), do: 5
+  defp palette_group_order(_), do: 9
 end

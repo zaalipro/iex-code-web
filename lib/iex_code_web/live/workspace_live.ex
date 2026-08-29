@@ -218,7 +218,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:active_agent, nil)
       |> assign(:active_stage, :init)
       |> assign(:settings, settings)
-      |> assign(:search_provider_descriptors, SearchRegistry.descriptors())
       |> assign(
         :active_tab,
         if(socket.assigns.live_action == :research, do: "research", else: "kanban")
@@ -314,7 +313,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:active_tools, default_active_tools(settings))
       # Dropdown & Modal state
       |> assign(:open_dropdown, nil)
-      |> assign(:show_settings_modal, false)
       |> assign(:show_project_modal, false)
       |> assign(:show_time_picker, false)
       |> assign(:selected_time_slot, "10:30 AM - 11:00 AM")
@@ -345,9 +343,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:user_availability_subtext, "Instant notifications & swarm active")
       |> assign(:new_task_status, "scheduled")
       |> assign(:task_schedule_type, "scheduled")
-      |> assign(:usage_history, Sessions.list_usage_history(10))
-      |> assign(:all_usage_history, [])
-      |> assign(:show_all_usage_modal, false)
       |> assign(:new_task_priority, "medium")
       |> assign(:new_task_assignee, "default")
       |> assign(:open_modal_dropdown, nil)
@@ -392,14 +387,13 @@ defmodule IexCodeWeb.WorkspaceLive do
           "status" => "ready"
         })
       )
-      |> assign(:settings_form, Settings.change_settings(settings) |> to_form(as: :settings))
       |> assign(:project_form, to_form(%{"path" => "", "name" => ""}))
       |> assign(:terminal_form, to_form(%{"command" => ""}))
       # Command Palette assigns
       |> assign(:show_command_palette, false)
       |> assign(:command_palette_query, "")
       |> assign(:command_palette_category, "all")
-      |> assign(:command_palette_results, CommandPalette.search("", sessions, "all"))
+      |> assign(:command_palette_results, [])
       |> assign(:command_palette_selected_index, 0)
       # Git Branch & Staging Hub assigns
       |> assign(:git_branches, [])
@@ -734,27 +728,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       end
 
     {:noreply, assign(socket, :active_tools, new_tools)}
-  end
-
-  @impl true
-  def handle_event("toggle_all_usage_modal", _params, socket) do
-    show? = !socket.assigns.show_all_usage_modal
-
-    socket =
-      if show? do
-        socket
-        |> assign(:all_usage_history, Sessions.list_usage_history(100))
-        |> assign(:show_all_usage_modal, true)
-      else
-        assign(socket, :show_all_usage_modal, false)
-      end
-
-    {:noreply, socket}
-  end
-
-  @impl true
-  def handle_event("close_all_usage_modal", _params, socket) do
-    {:noreply, assign(socket, :show_all_usage_modal, false)}
   end
 
   @impl true
@@ -1724,24 +1697,24 @@ defmodule IexCodeWeb.WorkspaceLive do
   # ============================================================================
 
   @impl true
-  def handle_event("toggle_command_palette", _params, socket) do
-    new_show = !socket.assigns.show_command_palette
-    query = if new_show, do: "", else: socket.assigns.command_palette_query
-    sessions = socket.assigns[:all_sessions] || []
+  def handle_event("toggle_command_palette", params, socket) do
+    show? = !socket.assigns.show_command_palette
 
-    results =
-      if new_show,
-        do: CommandPalette.search("", sessions, socket.assigns.command_palette_category),
-        else: []
+    category =
+      if show?, do: palette_open_category(params), else: socket.assigns.command_palette_category
+
+    query = if show?, do: "", else: socket.assigns.command_palette_query
+    results = if show?, do: palette_results(socket, query, category), else: []
 
     socket =
       socket
-      |> assign(:show_command_palette, new_show)
+      |> assign(:show_command_palette, show?)
       |> assign(:command_palette_query, query)
+      |> assign(:command_palette_category, category)
       |> assign(:command_palette_results, results)
       |> assign(:command_palette_selected_index, 0)
 
-    socket = if new_show, do: push_event(socket, "focus_palette_input", %{}), else: socket
+    socket = if show?, do: push_event(socket, "focus_palette_input", %{}), else: socket
     {:noreply, socket}
   end
 
@@ -1751,81 +1724,72 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("command_palette_search", %{"query" => query}, socket) do
-    sessions = socket.assigns[:all_sessions] || []
-
-    results =
-      CommandPalette.search(query, sessions, socket.assigns.command_palette_category)
-
+  def handle_event("command_palette_search", %{"query" => query}, socket) when is_binary(query) do
     {:noreply,
      socket
      |> assign(:command_palette_query, query)
-     |> assign(:command_palette_results, results)
+     |> assign(
+       :command_palette_results,
+       palette_results(socket, query, socket.assigns.command_palette_category)
+     )
      |> assign(:command_palette_selected_index, 0)}
   end
 
-  @impl true
-  def handle_event("command_palette_set_category", %{"category" => category}, socket) do
-    sessions = socket.assigns[:all_sessions] || []
+  def handle_event("command_palette_search", _params, socket), do: {:noreply, socket}
 
-    results =
-      CommandPalette.search(socket.assigns.command_palette_query, sessions, category)
+  @impl true
+  def handle_event("command_palette_set_category", %{"category" => requested}, socket) do
+    category = normalize_palette_category(requested)
 
     {:noreply,
      socket
      |> assign(:command_palette_category, category)
-     |> assign(:command_palette_results, results)
+     |> assign(
+       :command_palette_results,
+       palette_results(socket, socket.assigns.command_palette_query, category)
+     )
      |> assign(:command_palette_selected_index, 0)}
   end
 
   @impl true
-  def handle_event("command_palette_navigate", %{"direction" => dir}, socket) do
-    results = socket.assigns.command_palette_results
-    count = length(results)
+  def handle_event("command_palette_navigate", %{"direction" => direction}, socket)
+      when direction in ["up", "down"] do
+    count = length(socket.assigns.command_palette_results)
 
     if count == 0 do
       {:noreply, socket}
     else
-      curr = socket.assigns.command_palette_selected_index
+      current = socket.assigns.command_palette_selected_index
 
-      new_index =
-        case dir do
-          "down" -> rem(curr + 1, count)
-          "up" -> if curr <= 0, do: count - 1, else: curr - 1
-          _ -> curr
-        end
+      next =
+        if direction == "down",
+          do: rem(current + 1, count),
+          else: if(current <= 0, do: count - 1, else: current - 1)
 
       {:noreply,
        socket
-       |> assign(:command_palette_selected_index, new_index)
-       |> push_event("scroll_to_palette_item", %{index: new_index})}
+       |> assign(:command_palette_selected_index, next)
+       |> push_event("scroll_to_palette_item", %{index: next})}
     end
   end
+
+  def handle_event("command_palette_navigate", _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_event("command_palette_execute_selected", _params, socket) do
-    results = socket.assigns.command_palette_results
-    index = socket.assigns.command_palette_selected_index
-    item = Enum.at(results, index)
-
-    if item do
-      execute_command_palette_item(socket, item)
-    else
-      {:noreply, assign(socket, :show_command_palette, false)}
-    end
-  end
+  def handle_event("command_palette_execute_selected", _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_event("command_palette_select_item", %{"index" => index_str}, socket) do
-    index = String.to_integer(index_str)
-    item = Enum.at(socket.assigns.command_palette_results, index)
+  def handle_event("command_palette_submit_noop", _params, socket), do: {:noreply, socket}
 
-    if item do
-      execute_command_palette_item(socket, item)
-    else
-      {:noreply, assign(socket, :show_command_palette, false)}
+  @impl true
+  def handle_event("command_palette_select_item", %{"index" => index}, socket) do
+    case parse_palette_index(index, length(socket.assigns.command_palette_results)) do
+      {:ok, parsed} -> execute_palette_index(socket, parsed)
+      :error -> {:noreply, socket}
     end
   end
+
+  def handle_event("command_palette_select_item", _params, socket), do: {:noreply, socket}
 
   # ============================================================================
   # Event Handlers: Git Branch & Multi-File Staging Hub
@@ -3072,15 +3036,8 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("open_research_settings", _params, socket) do
-    settings = Settings.get_settings()
-
     {:noreply,
-     socket
-     |> assign(:settings, settings)
-     |> assign(:settings_form, Settings.change_settings(settings) |> to_form(as: :settings))
-     |> assign(:usage_history, Sessions.list_usage_history(10))
-     |> assign(:show_all_usage_modal, false)
-     |> assign(:show_settings_modal, true)}
+     push_navigate(socket, to: settings_path(socket.assigns.workspace_route, "research"))}
   end
 
   @impl true
@@ -3391,7 +3348,7 @@ defmodule IexCodeWeb.WorkspaceLive do
          |> assign(:sessions, sessions)
          |> assign(:all_sessions, sessions)
          |> assign(:workspace_search, "")
-         |> push_patch(to: ~p"/sessions/#{session.id}?project_id=#{project.id}")}
+         |> push_patch(to: ~p"/sessions/#{session.id}")}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to create session: #{inspect(reason)}")}
@@ -3619,48 +3576,14 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("toggle_settings_modal", _params, socket) do
-    show? = !socket.assigns.show_settings_modal
-    usage = if show?, do: Sessions.list_usage_history(10), else: socket.assigns.usage_history
-
     {:noreply,
-     socket
-     |> assign(:show_settings_modal, show?)
-     |> assign(:show_all_usage_modal, false)
-     |> assign(:usage_history, usage)}
+     push_navigate(socket, to: settings_path(socket.assigns.workspace_route, "execution"))}
   end
 
   @impl true
   def handle_event("open_settings_page", _params, socket) do
-    {:noreply, push_navigate(socket, to: ~p"/sessions/#{socket.assigns.session.id}/settings")}
-  end
-
-  @impl true
-  def handle_event("save_settings", %{"settings" => params}, socket) do
-    case Settings.update_settings_from_form(socket.assigns.settings, params) do
-      {:ok, updated} ->
-        {:noreply,
-         socket
-         |> assign(:settings, updated)
-         |> assign(:usage_history, Sessions.list_usage_history(10))
-         |> assign(
-           :settings_form,
-           Settings.change_settings(updated) |> to_form(as: :settings)
-         )
-         |> refresh_run_setup_settings(updated)
-         |> refresh_research_launch_settings(updated)
-         |> assign(:show_settings_modal, false)
-         |> assign(:show_all_usage_modal, false)
-         |> put_flash(:info, "Settings saved successfully")}
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, assign(socket, :settings_form, to_form(changeset, as: :settings))}
-
-      {:error, {:db_error, _reason}} ->
-        {:noreply, put_flash(socket, :error, "Settings could not be saved to the local database")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Settings could not be saved: #{inspect(reason)}")}
-    end
+    {:noreply,
+     push_navigate(socket, to: settings_path(socket.assigns.workspace_route, "execution"))}
   end
 
   @impl true
@@ -3681,7 +3604,7 @@ defmodule IexCodeWeb.WorkspaceLive do
              socket
              |> assign(:show_project_modal, false)
              |> assign(:show_workspace_menu, false)
-             |> push_patch(to: ~p"/sessions/#{session.id}?project_id=#{project.id}")}
+             |> push_patch(to: ~p"/sessions/#{session.id}")}
 
           {:error, reason} ->
             {:noreply, put_flash(socket, :error, "Failed to create session: #{inspect(reason)}")}
@@ -3718,7 +3641,7 @@ defmodule IexCodeWeb.WorkspaceLive do
             {:noreply,
              socket
              |> assign(:show_workspace_menu, false)
-             |> push_patch(to: ~p"/sessions/#{session.id}?project_id=#{project.id}")}
+             |> push_patch(to: ~p"/sessions/#{session.id}")}
 
           _ ->
             {:noreply, put_flash(socket, :error, "Failed to open project session")}
@@ -3806,7 +3729,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(:settings, settings)
-     |> assign(:settings_form, Settings.change_settings(settings) |> to_form(as: :settings))
      |> refresh_run_setup_settings(settings)
      |> refresh_research_launch_settings(settings)}
   end
@@ -4893,6 +4815,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp workspace_path({:session, id}, "research"), do: ~p"/sessions/#{id}/research"
   defp workspace_path({:session, id}, view), do: ~p"/sessions/#{id}?view=#{view}"
 
+  defp settings_path(:root, anchor), do: ~p"/settings" <> "##{anchor}"
+
+  defp settings_path({:session, id}, anchor),
+    do: ~p"/sessions/#{id}/settings" <> "##{anchor}"
+
   defp workspace_route_from_uri(uri) when is_binary(uri) do
     case uri |> URI.parse() |> Map.get(:path) |> to_string() |> String.split("/", trim: true) do
       ["sessions", id] when id != "" -> {:session, URI.decode(id)}
@@ -5240,40 +5167,307 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp editor_save_error(:invalid_path), do: "invalid file path"
   defp editor_save_error(reason), do: inspect(reason)
 
-  defp execute_command_palette_item(socket, item) do
-    socket = assign(socket, :show_command_palette, false)
+  defp execute_palette_index(socket, index) when is_integer(index) and index >= 0 do
+    results = socket.assigns.command_palette_results
 
-    case item.category do
-      :view ->
-        navigate_workspace(socket, item.tab)
-
-      :session ->
-        {:noreply, push_patch(socket, to: workspace_path({:session, item.session_id}, "deck"))}
-
-      :action ->
-        case item.id do
-          "start_goal" ->
-            handle_event("open_goal_modal", %{}, socket)
-
-          "new_task" ->
-            handle_event("toggle_new_task_modal", %{}, socket)
-
-          "new_session" ->
-            handle_event("new_session", %{}, socket)
-
-          "toggle_swarm" ->
-            handle_event("toggle_swarm", %{}, socket)
-
-          "open_settings" ->
-            handle_event("open_settings_page", %{}, socket)
-
-          "git_fetch" ->
-            handle_event("git_fetch", %{}, socket)
-
-          _ ->
-            {:noreply, socket}
-        end
+    case Enum.fetch(results, index) do
+      {:ok, item} -> execute_command_palette_item(socket, item)
+      :error -> {:noreply, socket}
     end
+  end
+
+  defp execute_palette_index(socket, _index), do: {:noreply, socket}
+
+  defp parse_palette_index(index, count)
+       when is_integer(index) and index >= 0 and index < count,
+       do: {:ok, index}
+
+  defp parse_palette_index(index, count) when is_binary(index) and byte_size(index) <= 9 do
+    case Integer.parse(index) do
+      {parsed, ""} when parsed >= 0 and parsed < count -> {:ok, parsed}
+      _invalid -> :error
+    end
+  end
+
+  defp parse_palette_index(_index, _count), do: :error
+
+  defp execute_command_palette_item(socket, %{category: :view, id: id, tab: tab})
+       when {id, tab} in [
+              {"view_swarm", "swarm"},
+              {"view_kanban", "kanban"},
+              {"view_research", "research"},
+              {"view_calendar", "calendar"},
+              {"view_changes", "changes"},
+              {"view_chat", "chat"},
+              {"view_files", "files"},
+              {"view_terminal", "terminal"}
+            ] do
+    navigate_workspace(assign(socket, :show_command_palette, false), tab)
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :navigation,
+         id: "all-instruments",
+         href: href
+       }) do
+    expected = workspace_path(socket.assigns.workspace_route, "deck")
+
+    if href == expected,
+      do: {:noreply, push_patch(assign(socket, :show_command_palette, false), to: expected)},
+      else: {:noreply, socket}
+  end
+
+  defp execute_command_palette_item(socket, %{category: :navigation, id: id, href: href})
+       when id in [
+              "settings-models",
+              "settings-execution",
+              "settings-research",
+              "settings-runtime"
+            ] do
+    expected =
+      settings_path(socket.assigns.workspace_route, String.replace_prefix(id, "settings-", ""))
+
+    if href == expected,
+      do: {:noreply, push_navigate(assign(socket, :show_command_palette, false), to: expected)},
+      else: {:noreply, socket}
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :project,
+         id: "project-" <> project_id,
+         project_id: project_id
+       }) do
+    if Enum.any?(socket.assigns.all_projects, &(to_string(&1.id) == project_id)) do
+      handle_event(
+        "switch_project",
+        %{"id" => project_id},
+        assign(socket, :show_command_palette, false)
+      )
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :session,
+         id: "session_" <> session_id,
+         session_id: session_id
+       }) do
+    assigned? = Enum.any?(socket.assigns.all_sessions, &(to_string(&1.id) == session_id))
+    session = if assigned?, do: fetch_session(session_id), else: nil
+
+    if match?(
+         %Sessions.Session{project_id: project_id} when project_id == socket.assigns.project.id,
+         session
+       ) do
+      {:noreply,
+       push_patch(assign(socket, :show_command_palette, false),
+         to: workspace_path({:session, session_id}, "deck")
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :confirmation,
+         id: "delete-session-" <> session_id,
+         event: "delete_session",
+         params: %{"id" => session_id},
+         confirmation: confirmation
+       })
+       when is_binary(confirmation) do
+    socket = assign(socket, :show_command_palette, false)
+    # Keep the native confirmation seam on the indexed option; this branch is
+    # reached only from server-produced rows whose id and payload agree.
+    handle_event("delete_session", %{"id" => session_id}, socket)
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :account,
+         id: "account-sign-out",
+         event: "palette_submit_logout",
+         params: %{}
+       }) do
+    {:noreply, push_event(socket, "palette_submit_logout", %{})}
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :action,
+         id: "new-project",
+         event: "toggle_project_modal",
+         params: %{}
+       }) do
+    handle_event("toggle_project_modal", %{}, assign(socket, :show_command_palette, false))
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :action,
+         id: id,
+         event: event,
+         params: %{}
+       })
+       when {id, event} in [
+              {"start_goal", "open_goal_modal"},
+              {"new_task", "toggle_new_task_modal"},
+              {"new-session", "new_session"},
+              {"toggle_swarm", "toggle_swarm"},
+              {"git_fetch", "git_fetch"}
+            ] do
+    handle_event(event, %{}, assign(socket, :show_command_palette, false))
+  end
+
+  defp execute_command_palette_item(socket, _item), do: {:noreply, socket}
+
+  defp palette_open_category(%{"category" => category}), do: normalize_palette_category(category)
+  defp palette_open_category(_), do: "all"
+
+  defp normalize_palette_category(category)
+       when category in ["all", "views", "projects", "sessions", "actions", "settings_account"],
+       do: category
+
+  defp normalize_palette_category(_), do: "all"
+
+  defp palette_results(socket, query, category) do
+    category = normalize_palette_category(category)
+    base = CommandPalette.search(query, socket.assigns[:all_sessions] || [], "all")
+    all_session_rows = CommandPalette.search("", socket.assigns[:all_sessions] || [], "sessions")
+    view_items = Enum.filter(base, &(&1.category == :view))
+    session_items = Enum.filter(base, &(&1.category == :session))
+    new_session = Enum.filter(base, &(&1.id == "new-session"))
+
+    command_items =
+      Enum.reject(base, &(&1.category in [:view, :session] or &1.id == "new-session"))
+
+    projects = CommandPalette.project_items(query, socket.assigns[:all_projects] || [])
+
+    new_project =
+      filter_palette_rows(
+        [
+          %{
+            id: "new-project",
+            category: :action,
+            title: "New project",
+            subtitle: "Open a workspace folder",
+            icon: "hero-folder-plus",
+            event: "toggle_project_modal",
+            params: %{}
+          }
+        ],
+        query
+      )
+
+    confirmations =
+      all_session_rows
+      |> Enum.map(&delete_session_item/1)
+      |> filter_palette_rows(query)
+
+    navigation = palette_navigation_items(socket, query, category)
+
+    rows =
+      case category do
+        "views" ->
+          view_items ++ navigation
+
+        "projects" ->
+          new_project ++ projects
+
+        "sessions" ->
+          new_session ++ session_items ++ confirmations
+
+        "actions" ->
+          command_items
+
+        "settings_account" ->
+          navigation
+
+        "all" ->
+          view_items ++
+            navigation ++
+            new_project ++
+            projects ++ new_session ++ session_items ++ confirmations ++ command_items
+      end
+
+    Enum.uniq_by(rows, & &1.id)
+  end
+
+  defp delete_session_item(item) do
+    %{
+      id: "delete-session-#{item.session_id}",
+      category: :confirmation,
+      title: "Delete #{item.title}",
+      subtitle: "Permanently remove this session",
+      icon: "hero-trash",
+      event: "delete_session",
+      params: %{"id" => item.session_id},
+      confirmation: "Delete #{item.title}? This cannot be undone."
+    }
+  end
+
+  defp filter_palette_rows(rows, query) do
+    normalized = query |> to_string() |> String.trim() |> String.downcase()
+
+    if normalized == "",
+      do: rows,
+      else:
+        Enum.filter(rows, fn row ->
+          String.contains?(String.downcase(row.title), normalized) or
+            String.contains?(String.downcase(row.id), normalized)
+        end)
+  end
+
+  defp palette_navigation_items(socket, query, category) do
+    route = socket.assigns.workspace_route
+
+    deck = %{
+      id: "all-instruments",
+      category: :navigation,
+      title: "All instruments",
+      subtitle: "Return to instrument deck",
+      icon: "hero-squares-2x2",
+      href: workspace_path(route, "deck")
+    }
+
+    settings =
+      for {id, title, anchor} <- [
+            {"settings-models", "Models & API", "models"},
+            {"settings-execution", "Execution settings", "execution"},
+            {"settings-research", "Research settings", "research"},
+            {"settings-runtime", "Runtime", "runtime"}
+          ],
+          do: %{
+            id: id,
+            category: :navigation,
+            title: title,
+            subtitle: "Open Settings",
+            icon: "hero-cog-6-tooth",
+            href: settings_path(route, anchor)
+          }
+
+    account = %{
+      id: "account-sign-out",
+      category: :account,
+      title: "Sign out",
+      subtitle: "End this session",
+      icon: "hero-arrow-right-start-on-rectangle",
+      event: "palette_submit_logout",
+      params: %{}
+    }
+
+    rows =
+      cond do
+        category == "views" -> [deck]
+        category == "settings_account" -> settings ++ [account]
+        category == "all" -> [deck] ++ settings ++ [account]
+        true -> []
+      end
+
+    q = query || ""
+
+    Enum.filter(rows, fn row ->
+      String.trim(q) == "" or
+        String.contains?(String.downcase(row.title), String.downcase(String.trim(q)))
+    end)
   end
 
   # -- Terminal helpers --------------------------------------------------------
@@ -6730,44 +6924,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> Map.get(provider, %{})
   end
 
-  defp search_lifecycle_tone(:active),
-    do: "border-emerald-500/20 bg-emerald-500/[0.05] text-emerald-300"
-
-  defp search_lifecycle_tone(:sunsetting),
-    do: "border-amber-500/25 bg-amber-500/[0.06] text-amber-300"
-
-  defp search_lifecycle_tone(:retired),
-    do: "border-rose-500/25 bg-rose-500/[0.06] text-rose-300"
-
-  defp search_lifecycle_tone(:unofficial),
-    do: "border-blue-500/20 bg-blue-500/[0.05] text-blue-300"
-
-  defp search_lifecycle_tone(_lifecycle),
-    do: "border-[#303844] bg-[#151b22] text-gray-400"
-
-  defp search_lifecycle_note(%{lifecycle: :active, capabilities: capabilities}) do
-    capabilities
-    |> Enum.take(3)
-    |> Enum.map_join(" · ", &(&1 |> Atom.to_string() |> String.replace("_", " ")))
-  end
-
-  defp search_lifecycle_note(%{lifecycle: :sunsetting, retires_at: retires_at}) do
-    "No new customers · sunsets #{Date.to_iso8601(retires_at)}"
-  end
-
-  defp search_lifecycle_note(%{lifecycle: :retired}),
-    do: "Retired compatibility adapter · explicit API requests only"
-
-  defp search_lifecycle_note(%{lifecycle: :unofficial}),
-    do: "Unofficial credential-free HTML adapter"
-
-  defp search_lifecycle_note(_descriptor), do: "Provider lifecycle not reported"
-
-  defp masked_secret(secret) when is_binary(secret) and byte_size(secret) >= 4,
-    do: "Configured ·•••• #{String.slice(secret, -4, 4)}"
-
-  defp masked_secret(_secret), do: "Not configured"
-
   defp run_manifest(nil), do: %{}
 
   defp run_manifest(%{kind: "deep_research"} = run) do
@@ -6904,9 +7060,6 @@ defmodule IexCodeWeb.WorkspaceLive do
         acc
     end)
   end
-
-  defp credential_configured?(value),
-    do: is_binary(value) and String.trim(value) != ""
 
   defp reset_prompt_form(socket) do
     assign(

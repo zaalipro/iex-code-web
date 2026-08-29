@@ -171,10 +171,12 @@ export const createInstrumentDeckHook = (provided = {}) => ({
 
     this.handleClick = event => this.captureClick(event)
     this.handlePageLoadingStart = event => this.capturePageLoading(event)
+    this.handleBeforeUnload = () => this.captureBeforeUnload()
     this.handlePopState = event => this.capturePopState(event)
 
     this.el?.addEventListener?.("click", this.handleClick, true)
     this.runtime.window?.addEventListener?.("phx:page-loading-start", this.handlePageLoadingStart)
+    this.runtime.window?.addEventListener?.("beforeunload", this.handleBeforeUnload)
     this.runtime.window?.addEventListener?.("popstate", this.handlePopState)
 
     this.syncContext()
@@ -208,6 +210,7 @@ export const createInstrumentDeckHook = (provided = {}) => ({
       "phx:page-loading-start",
       this.handlePageLoadingStart
     )
+    this.runtime?.window?.removeEventListener?.("beforeunload", this.handleBeforeUnload)
     this.runtime?.window?.removeEventListener?.("popstate", this.handlePopState)
     if (this.restoreFrame !== null) {
       this.runtime?.cancelAnimationFrame?.(this.restoreFrame)
@@ -312,12 +315,23 @@ export const createInstrumentDeckHook = (provided = {}) => ({
 
     this.captureState(focusedId || null, scroller?.scrollTop)
 
-    const surface = destinationSurface(event?.detail?.to, this.runtime.location)
+    const target = event?.detail?.target
+    const paletteSurface = target?.closest?.("[data-palette-surface]")?.dataset?.paletteSurface
+    const surface = closedSurface(paletteSurface)
+      ? paletteSurface
+      : destinationSurface(event?.detail?.to, this.runtime.location)
     if (surface) {
       storageSet(this.runtime.localStorage, this.lastInstrumentKey, surface)
       this.runtime.pushEvent?.("restore_last_instrument", {surface})
     }
   },
+
+  captureBeforeUnload() {
+    if (this.el?.dataset?.activeView !== "deck" || !this.deckStateKey) return
+    const previous = parsedSessionState(this.runtime.sessionStorage, this.deckStateKey)
+    this.captureState(previous?.focusedInstrumentId ?? null, this.deckScroller()?.scrollTop)
+  },
+
 
   capturePopState(event) {
     this.pendingPopState = event?.state?.iexcodeDeckState ?? null

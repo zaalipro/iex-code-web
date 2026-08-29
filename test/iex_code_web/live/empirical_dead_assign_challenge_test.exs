@@ -23,7 +23,11 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
         :selected_calendar_day,
         :new_task_time,
         :new_task_schedule_type,
-        :show_usage_history_modal
+        :show_usage_history_modal,
+        :show_settings_modal,
+        :settings_form,
+        :all_usage_history,
+        :show_all_usage_modal
       ]
 
       for dead_key <- dead_assign_keys do
@@ -36,7 +40,6 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
       assert is_binary(assigns.selected_calendar_date)
       assert is_binary(assigns.selected_time_slot)
       assert is_boolean(assigns.show_time_picker)
-      assert is_boolean(assigns.show_settings_modal)
       assert is_list(assigns.tasks)
       assert is_list(assigns.messages)
       assert is_list(assigns.operations)
@@ -49,8 +52,6 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
       render_click(view, "picker_select_day", %{"year" => "2026", "month" => "9", "day" => "1"})
       render_click(view, "select_calendar_date", %{"date" => "2026-09-01"})
       render_click(view, "set_task_schedule_type", %{"type" => "recurring"})
-      render_click(view, "toggle_all_usage_modal")
-      render_click(view, "toggle_settings_modal")
 
       # Re-check socket state after event storm
       new_state = :sys.get_state(view.pid)
@@ -62,6 +63,9 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
       end
 
       assert Process.alive?(view.pid)
+
+      render_click(view, "toggle_settings_modal")
+      assert_redirect(view, "/sessions/#{session.id}/settings#execution")
     end
 
     test "verifies dynamic rendering of credits, canvas files, and calendar stats without static placeholders",
@@ -86,16 +90,6 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
       refute changes_html =~ "pr-5567-proof-of-history.html"
       refute changes_html =~ "pr-22-toll-express.html"
 
-      # Open Settings modal and verify credits are dynamically computed
-      render_click(view, "toggle_settings_modal")
-      settings_html = render(view)
-
-      assert settings_html =~ "OBSERVED SESSION TOKENS"
-      assert settings_html =~ "Provider-reported telemetry only"
-      assert settings_html =~ "Unset budget"
-      # Verify tally tick classes are present
-      assert settings_html =~ "tally-tick"
-
       # Switch to Calendar tab and verify scheduled tasks footer metrics
       render_click(view, "switch_tab", %{"tab" => "calendar"})
       calendar_html = render(view)
@@ -103,6 +97,10 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
       assert calendar_html =~ "SCHEDULED TASKS"
       assert calendar_html =~ "ACTIVE"
       assert calendar_html =~ "MONTHLY RUNS:"
+
+      # Settings are owned by SettingsLive; WorkspaceLive only provides a navigation shim.
+      render_click(view, "toggle_settings_modal")
+      assert_redirect(view, "/sessions/#{session.id}/settings#execution")
     end
 
     test "fuzzes 40 random UI event clicks and ensures LiveView never crashes or enters zombie state",
