@@ -783,198 +783,337 @@
           </div>
         <% end %>
 
-        <!-- TAB 3: SCHEDULED TASKS & CALENDAR VIEW -->
-        <%= if @active_tab == "calendar" do %>
-          <div class="flex-1 flex flex-col h-full overflow-y-auto p-5 space-y-5">
-            <!-- Centered Dark Calendar Container -->
-            <div class="bg-[#11151c] border border-[#21262d] rounded-3xl p-6 shadow-2xl max-w-4xl w-full mx-auto">
-              <!-- Calendar Header Row -->
-              <div class="flex items-center justify-between mb-6">
-                <div class="flex items-center gap-3">
-                  <h2 class="text-xl font-bold text-white tracking-tight font-sans">
-                    {month_name(@calendar_month)}, {@calendar_year}
-                  </h2>
-                  <% today = Date.utc_today() %>
-                  <button
-                    phx-click="select_calendar_day"
-                    phx-value-day={today.day}
-                    phx-value-date={Date.to_iso8601(today)}
-                    class="px-3 py-1 rounded-full bg-[#1c2128] border border-[#30363d] text-xs font-mono text-gray-300 hover:text-white transition-smooth"
-                  >
-                    Today
-                  </button>
-                  <div class="flex items-center gap-1 text-gray-400">
-                    <button
-                      phx-click="calendar_prev_month"
-                      aria-label="Previous month"
-                      class="p-1 rounded-lg hover:bg-[#1c2128] text-gray-400 hover:text-white transition-smooth"
-                    >
-                      <.icon name="hero-chevron-left" class="w-4 h-4" />
-                    </button>
-                    <button
-                      phx-click="calendar_next_month"
-                      aria-label="Next month"
-                      class="p-1 rounded-lg hover:bg-[#1c2128] text-gray-400 hover:text-white transition-smooth"
-                    >
-                      <.icon name="hero-chevron-right" class="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Header Actions -->
-                <div class="flex items-center gap-2">
-                  <button
-                    id="calendar-focus-time-btn"
-                    phx-click="open_time_picker"
-                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1c2128] hover:bg-[#21262d] border border-[#30363d] text-xs font-mono text-gray-300 hover:text-white transition-smooth"
-                    title="Set focus time and availability window"
-                  >
-                    <.icon name="hero-clock" class="w-3.5 h-3.5 text-blue-400" />
-                    <span>Set Focus Time</span>
-                  </button>
-
-                  <!-- Primary Coral Plus Trigger -->
-                  <button
-                    phx-click="toggle_new_task_modal"
-                    aria-label="Create a task for the selected day"
-                    class="w-9 h-9 rounded-full bg-[#ff5e3a] hover:bg-[#ff4e24] text-white flex items-center justify-center shadow-lg shadow-orange-500/25 transition-smooth"
-                    title="Schedule New Task"
-                  >
-                    <.icon name="hero-plus" class="w-5 h-5" />
-                  </button>
-                </div>
+        <%!-- TAB 3: SCHEDULE CHRONOMETER --%>
+        <%= if @active_view == "calendar" do %>
+          <% agenda_items = calendar_agenda_items(@tasks) %>
+          <.workbench_chassis
+            id="instrument-workbench-calendar"
+            surface="calendar"
+            index="04"
+            title="Schedule Chronometer"
+            status={@instrument_summaries["calendar"].primary}
+            return_to={workspace_path(@workspace_route, "deck")}
+            return_instrument_id="instrument-card-calendar"
+          >
+            <:primary_action>
+              <button
+                id="calendar-primary-new-task"
+                type="button"
+                phx-click="toggle_new_task_modal"
+                phx-disable-with="Opening…"
+                class="sf-control min-h-11 px-4 text-sm font-semibold"
+              >
+                Schedule action
+              </button>
+            </:primary_action>
+            <:local_modes>
+              <% today = Date.utc_today() %>
+              <div id="calendar-controls" class="flex flex-wrap items-center gap-2">
+                <button
+                  id="calendar-today"
+                  type="button"
+                  phx-click="select_calendar_day"
+                  phx-value-day={today.day}
+                  phx-value-date={Date.to_iso8601(today)}
+                  class="sf-control min-h-11 px-3 text-xs font-semibold"
+                >
+                  Today
+                </button>
+                <button
+                  id="calendar-prev-month"
+                  type="button"
+                  phx-click="calendar_prev_month"
+                  aria-label="Previous month"
+                  class="sf-control inline-flex min-h-11 min-w-11 items-center justify-center p-2"
+                >
+                  <.icon name="hero-chevron-left" class="size-4" />
+                </button>
+                <button
+                  id="calendar-next-month"
+                  type="button"
+                  phx-click="calendar_next_month"
+                  aria-label="Next month"
+                  class="sf-control inline-flex min-h-11 min-w-11 items-center justify-center p-2"
+                >
+                  <.icon name="hero-chevron-right" class="size-4" />
+                </button>
+                <button
+                  id="calendar-focus-time-btn"
+                  type="button"
+                  phx-click="open_time_picker"
+                  phx-disable-with="Opening…"
+                  class="sf-control inline-flex min-h-11 items-center gap-2 px-3 text-xs font-semibold"
+                  title="Set focus time and availability window"
+                >
+                  <.icon name="hero-clock" class="size-4" />
+                  <span>Set focus time</span>
+                </button>
               </div>
-
-              <!-- Day of Week Headers -->
-              <div id="calendar-weekdays" class="grid grid-cols-7 gap-2 mb-2 text-center">
-                <%= for day_name <- ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] do %>
-                  <div
-                    id={"calendar-weekday-#{String.downcase(day_name)}"}
-                    class="py-1.5 rounded-xl bg-[#1c2128]/60 text-[10px] font-mono font-semibold text-gray-400 tracking-wider"
-                  >
-                    {day_name}
-                  </div>
-                <% end %>
-              </div>
-
-              <!-- Monthly Calendar Grid -->
-              <div id="calendar-grid" class="grid grid-cols-7 gap-2">
-                <%= for cell <- calendar_grid_cells(@calendar_year, @calendar_month, @selected_calendar_date) do %>
-                  <% day_tasks =
-                    if cell.is_current_month, do: tasks_for_day(@tasks, cell), else: []
-
-                  date_str =
-                    "#{cell.year}-#{String.pad_leading("#{cell.month}", 2, "0")}-#{String.pad_leading("#{cell.day}", 2, "0")}"
-
-                  cell_id =
-                    if cell.is_current_month,
-                      do: "calendar-day-#{cell.day}",
-                      else: "calendar-day-pad-#{cell.year}-#{cell.month}-#{cell.day}" %>
-                  <div
-                    id={cell_id}
-                    class={[
-                      "relative min-h-[76px] rounded-2xl p-2 transition-smooth flex flex-col justify-between group select-none",
-                      cell.is_today &&
-                        "bg-[#1c2128] border-2 border-[#ff5e3a] shadow-lg shadow-orange-500/10",
-                      cell.is_selected && !cell.is_today &&
-                        "bg-[#1c2128] border border-[#ff5e3a]/60",
-                      !cell.is_today && !cell.is_selected && cell.is_current_month &&
-                        "bg-[#161b22] border border-[#21262d] hover:border-[#38404a] hover:bg-[#1a2029]",
-                      !cell.is_current_month &&
-                        "bg-[#11151c]/40 border border-[#21262d]/50 text-gray-600"
-                    ]}
-                  >
-                    <button
-                      type="button"
-                      id={"#{cell_id}-select"}
-                      phx-click="select_calendar_day"
-                      phx-value-day={cell.day}
-                      phx-value-date={date_str}
-                      aria-label={"Schedule task on #{date_str}"}
-                      aria-pressed={cell.is_selected}
-                      class="absolute inset-0 z-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff5e3a] focus-visible:ring-offset-2 focus-visible:ring-offset-[#11151c]"
-                      title={"Click to schedule task on #{date_str}"}
-                    >
-                      <span class="sr-only">Schedule task on {date_str}</span>
-                    </button>
-
-                    <!-- Day Header Row -->
-                    <div class="relative z-[1] flex items-center justify-between pointer-events-none">
-                      <span class={[
-                        "font-mono text-xs",
-                        cell.is_today && "font-bold text-[#ff5e3a]",
-                        cell.is_current_month && !cell.is_today &&
-                          "text-gray-400 group-hover:text-white",
-                        !cell.is_current_month && "text-gray-600"
-                      ]}>
-                        {cell.day}
-                      </span>
-                      <%= if cell.is_today do %>
-                        <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(34,197,94,0.8)]"></span>
-                      <% else %>
-                        <%= if day_tasks != [] do %>
-                          <span class="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_4px_rgba(168,85,247,0.6)]"></span>
-                        <% end %>
-                      <% end %>
+            </:local_modes>
+            <:primary_field>
+              <div class="calendar-workbench">
+                <section
+                  id="calendar-mobile-agenda"
+                  data-mobile-default="true"
+                  aria-labelledby="calendar-mobile-agenda-title"
+                  class="sm:hidden"
+                >
+                  <header class="calendar-agenda-heading">
+                    <div>
+                      <p class="sf-metadata">UTC-forward schedule</p>
+                      <h3 id="calendar-mobile-agenda-title" class="calendar-section-title">
+                        Upcoming actions
+                      </h3>
                     </div>
-
-                    <!-- Tasks on this Day -->
-                    <div class="relative z-10 space-y-1 my-auto">
-                      <%= for task <- day_tasks do %>
+                    <span class="calendar-agenda-limit">Earliest 100</span>
+                  </header>
+                  <div id="calendar-mobile-agenda-items" class="calendar-agenda-list">
+                    <p
+                      :if={agenda_items == []}
+                      id="calendar-mobile-agenda-empty"
+                      class="calendar-empty-state"
+                    >
+                      No scheduled actions
+                    </p>
+                    <%= for task <- agenda_items do %>
+                      <article
+                        id={"calendar-mobile-agenda-item-#{task.id}"}
+                        class="calendar-agenda-row"
+                      >
                         <button
+                          id={"calendar-mobile-agenda-open-#{task.id}"}
                           type="button"
-                          id={"calendar-task-#{cell.day}-#{task.id}"}
                           phx-click="show_scheduled_task"
                           phx-value-id={task.id}
-                          class="w-full text-left py-0.5 px-1.5 rounded-lg bg-[#21262d] hover:bg-[#2c333d] border border-white/10 text-[10px] font-mono text-gray-200 transition-smooth flex items-center justify-between shadow-xs truncate"
-                          title={task.title}
+                          phx-disable-with="Opening…"
+                          aria-label={"Open #{task.title}"}
+                          class="calendar-agenda-open min-h-11"
                         >
-                          <span class="truncate font-semibold">{task.title}</span>
-                          <span class="text-orange-400 text-[9px] shrink-0 ml-1">✦</span>
+                          <span class="calendar-agenda-meta">
+                            <span>{String.upcase(task.status)}</span>
+                            <span>{String.upcase(task.priority || "medium")} priority</span>
+                          </span>
+                          <span class="calendar-agenda-title">{task.title}</span>
+                          <time
+                            id={"calendar-local-time-#{task.id}"}
+                            phx-hook="LocalTime"
+                            phx-update="ignore"
+                            data-utc={DateTime.to_iso8601(task.scheduled_at)}
+                            datetime={DateTime.to_iso8601(task.scheduled_at)}
+                            class="calendar-agenda-time"
+                          >{DateTime.to_iso8601(task.scheduled_at)} UTC</time>
                         </button>
-                      <% end %>
-                    </div>
+                        <div class="calendar-agenda-actions" aria-label={"Actions for #{task.title}"}>
+                          <button
+                            id={"calendar-mobile-agenda-run-#{task.id}"}
+                            type="button"
+                            phx-click="run_scheduled_task"
+                            phx-value-id={task.id}
+                            phx-disable-with="Running…"
+                            aria-label={"Run #{task.title} now"}
+                            class="sf-control min-h-11 px-3 text-xs font-semibold"
+                          >Run now</button>
+                          <button
+                            id={"calendar-mobile-agenda-edit-#{task.id}"}
+                            type="button"
+                            phx-click="open_edit_scheduled_task"
+                            phx-value-id={task.id}
+                            phx-disable-with="Opening…"
+                            aria-label={"Edit #{task.title}"}
+                            class="sf-control min-h-11 px-3 text-xs font-semibold"
+                          >Edit</button>
+                          <button
+                            id={"calendar-mobile-agenda-delete-trigger-#{task.id}"}
+                            type="button"
+                            phx-click="request_calendar_task_delete"
+                            phx-value-id={task.id}
+                            phx-value-source="mobile"
+                            phx-disable-with="Opening…"
+                            aria-label={"Delete #{task.title}"}
+                            class="sf-control calendar-delete-control min-h-11 px-3 text-xs font-semibold"
+                          >Delete</button>
+                        </div>
+                      </article>
+                    <% end %>
+                  </div>
+                </section>
 
-                    <!-- Day Subtitle / Status -->
-                    <div class="relative z-[1] text-[9px] font-mono text-gray-500 pointer-events-none">
-                      <%= if cell.is_today do %>
-                        <span class="text-emerald-400 font-semibold">Live</span>
-                      <% else %>
-                        <%= if day_tasks == [] && cell.is_current_month do %>
-                          <span class="opacity-0 group-hover:opacity-100 text-gray-400 transition-smooth">+ Add</span>
+                <section
+                  id="calendar-month-view"
+                  aria-labelledby="calendar-month-title"
+                  class="hidden sm:block"
+                >
+                  <div class="calendar-desktop-layout">
+                    <div class="calendar-month-field">
+                      <header class="calendar-month-heading">
+                        <p class="sf-metadata">Monday-first month</p>
+                        <h3 id="calendar-month-title" class="calendar-section-title">
+                          {month_name(@calendar_month)}, {@calendar_year}
+                        </h3>
+                      </header>
+
+                      <div id="calendar-weekdays" class="calendar-weekdays">
+                        <%= for day_name <- ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] do %>
+                          <div
+                            id={"calendar-weekday-#{String.downcase(day_name)}"}
+                            class="calendar-weekday"
+                          >
+                            {day_name}
+                          </div>
                         <% end %>
-                      <% end %>
+                      </div>
+
+                      <div id="calendar-grid" class="calendar-grid">
+                        <%= for cell <- calendar_grid_cells(@calendar_year, @calendar_month, @selected_calendar_date) do %>
+                          <% day_tasks =
+                            if cell.is_current_month, do: tasks_for_day(@tasks, cell), else: []
+
+                          date_str =
+                            "#{cell.year}-#{String.pad_leading("#{cell.month}", 2, "0")}-#{String.pad_leading("#{cell.day}", 2, "0")}"
+
+                          cell_id =
+                            if cell.is_current_month,
+                              do: "calendar-day-#{cell.day}",
+                              else: "calendar-day-pad-#{cell.year}-#{cell.month}-#{cell.day}" %>
+                          <div
+                            id={cell_id}
+                            class={[
+                              "calendar-day",
+                              cell.is_current_month && "calendar-day--current-month",
+                              !cell.is_current_month && "calendar-day--padding",
+                              cell.is_selected && "calendar-day--selected",
+                              cell.is_today && "calendar-day--today"
+                            ]}
+                          >
+                            <button
+                              type="button"
+                              id={"#{cell_id}-select"}
+                              phx-click="select_calendar_day"
+                              phx-value-day={cell.day}
+                              phx-value-date={date_str}
+                              aria-label={"Schedule task on #{date_str}"}
+                              aria-pressed={cell.is_selected}
+                              class="calendar-day-select"
+                              title={"Schedule task on #{date_str}"}
+                            >
+                              <span class="sr-only">Schedule task on {date_str}</span>
+                            </button>
+                            <div class="calendar-day-header" aria-hidden="true">
+                              <span>{cell.day}</span>
+                              <span :if={cell.is_today}>Today</span>
+                            </div>
+                            <div class="calendar-day-tasks">
+                              <%= for task <- day_tasks do %>
+                                <button
+                                  type="button"
+                                  id={"calendar-task-#{cell.day}-#{task.id}"}
+                                  phx-click="show_scheduled_task"
+                                  phx-value-id={task.id}
+                                  phx-disable-with="Opening…"
+                                  class="calendar-day-task"
+                                  title={task.title}
+                                >
+                                  <span>{task.title}</span>
+                                </button>
+                              <% end %>
+                            </div>
+                          </div>
+                        <% end %>
+                      </div>
                     </div>
+
+                    <aside
+                      id="calendar-desktop-agenda"
+                      aria-labelledby="calendar-desktop-agenda-title"
+                      class="calendar-desktop-agenda"
+                    >
+                      <header class="calendar-agenda-heading">
+                        <div>
+                          <p class="sf-metadata">UTC-forward schedule</p>
+                          <h3 id="calendar-desktop-agenda-title" class="calendar-section-title">
+                            Agenda
+                          </h3>
+                        </div>
+                        <span class="calendar-agenda-limit">Earliest 100</span>
+                      </header>
+                      <div id="calendar-desktop-agenda-items" class="calendar-agenda-list">
+                        <p
+                          :if={agenda_items == []}
+                          id="calendar-desktop-agenda-empty"
+                          class="calendar-empty-state"
+                        >
+                          No scheduled actions
+                        </p>
+                        <%= for task <- agenda_items do %>
+                          <article
+                            id={"calendar-desktop-agenda-item-#{task.id}"}
+                            class="calendar-agenda-row"
+                          >
+                            <button
+                              id={"calendar-desktop-agenda-open-#{task.id}"}
+                              type="button"
+                              phx-click="show_scheduled_task"
+                              phx-value-id={task.id}
+                              phx-disable-with="Opening…"
+                              aria-label={"Open #{task.title}"}
+                              class="calendar-agenda-open min-h-11"
+                            >
+                              <span class="calendar-agenda-meta">
+                                <span>{String.upcase(task.status)}</span>
+                                <span>{String.upcase(task.priority || "medium")} priority</span>
+                              </span>
+                              <span class="calendar-agenda-title">{task.title}</span>
+                              <time
+                                id={"calendar-local-time-desktop-#{task.id}"}
+                                phx-hook="LocalTime"
+                                phx-update="ignore"
+                                data-utc={DateTime.to_iso8601(task.scheduled_at)}
+                                datetime={DateTime.to_iso8601(task.scheduled_at)}
+                                class="calendar-agenda-time"
+                              >{DateTime.to_iso8601(task.scheduled_at)} UTC</time>
+                            </button>
+                            <div class="calendar-agenda-actions" aria-label={"Actions for #{task.title}"}>
+                              <button
+                                id={"calendar-desktop-agenda-run-#{task.id}"}
+                                type="button"
+                                phx-click="run_scheduled_task"
+                                phx-value-id={task.id}
+                                phx-disable-with="Running…"
+                                aria-label={"Run #{task.title} now"}
+                                class="sf-control min-h-11 px-3 text-xs font-semibold"
+                              >Run</button>
+                              <button
+                                id={"calendar-desktop-agenda-edit-#{task.id}"}
+                                type="button"
+                                phx-click="open_edit_scheduled_task"
+                                phx-value-id={task.id}
+                                phx-disable-with="Opening…"
+                                aria-label={"Edit #{task.title}"}
+                                class="sf-control min-h-11 px-3 text-xs font-semibold"
+                              >Edit</button>
+                              <button
+                                id={"calendar-desktop-agenda-delete-trigger-#{task.id}"}
+                                type="button"
+                                phx-click="request_calendar_task_delete"
+                                phx-value-id={task.id}
+                                phx-value-source="desktop"
+                                phx-disable-with="Opening…"
+                                aria-label={"Delete #{task.title}"}
+                                class="sf-control calendar-delete-control min-h-11 px-3 text-xs font-semibold"
+                              >Delete</button>
+                            </div>
+                          </article>
+                        <% end %>
+                      </div>
+                    </aside>
                   </div>
-                <% end %>
+                </section>
               </div>
-
-              <!-- Calendar Footer Bar -->
-              <div class="mt-6 pt-4 border-t border-[#21262d] flex items-center justify-between text-xs font-mono text-gray-400">
-                <div class="flex items-center gap-4">
-                  <div class="flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full bg-purple-400"></span>
-                    <span>ONE-SHOT TIMER</span>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-                    <span>CRON RECURRING</span>
-                  </div>
-                </div>
-
-                <% scheduled_count = length(@tasks)
-
-                active_count =
-                  Enum.count(@tasks, &(&1.status in ["in_progress", "running", "scheduled"]))
-
-                monthly_runs_count = max(scheduled_count * 12 + length(@operations), 1) %>
-                <div class="flex items-center gap-6">
-                  <span>{scheduled_count} SCHEDULED TASKS · {active_count} ACTIVE</span>
-                  <span class="text-white font-semibold">MONTHLY RUNS: {monthly_runs_count}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+            </:primary_field>
+            <:command_dock>
+              <.shared_command_dock workspace_assigns={assigns} />
+            </:command_dock>
+          </.workbench_chassis>
         <% end %>
 
         <!-- TAB 4: CHANGES & 3-TIER GIT STAGING HUB -->
@@ -2429,12 +2568,70 @@
       </div>
 
       <%!-- Shared command dock --%>
-      <%= if @active_view != "kanban" do %>
+      <%= if @active_view not in ["kanban", "calendar"] do %>
         <.shared_command_dock workspace_assigns={assigns} />
       <% end %>
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>
     </main>
   </div>
+
+  <%= if @pending_calendar_task_delete do %>
+    <% pending_calendar_delete = @pending_calendar_task_delete %>
+    <div
+      id={"calendar-delete-confirmation-#{pending_calendar_delete.task_id}"}
+      phx-hook="ResponsiveSheet"
+      role="presentation"
+      data-sheet-close-event="cancel_calendar_task_delete"
+      data-sheet-return-id={pending_calendar_delete.return_id}
+      data-sheet-background-id={pending_calendar_delete.background_id}
+      class="calendar-confirmation-overlay fixed inset-0 z-[70] flex items-end justify-center bg-[var(--sf-shadow)] p-4 sm:items-center"
+    >
+      <div
+        id={"calendar-delete-confirmation-dialog-#{pending_calendar_delete.task_id}"}
+        phx-hook="ModalFocus"
+        data-modal-focus
+        data-cancel-event="cancel_calendar_task_delete"
+        data-initial-focus="#cancel-calendar-task-delete"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="calendar-delete-confirmation-title"
+        tabindex="-1"
+        class="sf-chassis sf-sheet-scroll w-full max-w-md overflow-y-auto p-6"
+      >
+        <p class="sf-metadata">Destructive schedule action</p>
+        <h2
+          id="calendar-delete-confirmation-title"
+          class="mt-2 text-lg font-semibold text-[var(--sf-text-primary)]"
+        >
+          Delete scheduled task?
+        </h2>
+        <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
+          This permanently removes the selected task and its future schedule. This action cannot
+          be undone.
+        </p>
+        <div class="mt-6 flex justify-end gap-3 pb-[env(safe-area-inset-bottom)]">
+          <button
+            id="cancel-calendar-task-delete"
+            type="button"
+            phx-click="cancel_calendar_task_delete"
+            class="sf-control min-h-11 px-4 text-sm"
+          >
+            Cancel
+          </button>
+          <button
+            id="confirm-calendar-task-delete"
+            type="button"
+            phx-click="delete_scheduled_task"
+            phx-value-id={pending_calendar_delete.task_id}
+            phx-disable-with="Deleting…"
+            class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
+          >
+            Delete task
+          </button>
+        </div>
+      </div>
+    </div>
+  <% end %>
 
   <%= if match?({:task, _}, @pending_task_confirmation) do %>
     <% {:task, pending_task} = @pending_task_confirmation %>
@@ -2964,7 +3161,7 @@
           <button
             phx-click="close_scheduled_task_modal"
             aria-label="Close scheduled task details"
-            class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-[#1c2128] transition-smooth"
+            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-gray-400 transition-smooth hover:bg-[#1c2128] hover:text-white"
             title="Close"
           >
             ✕
@@ -3029,11 +3226,13 @@
         <%!-- Modal Actions --%>
         <div class="flex items-center justify-between pt-3 border-t border-[#21262d]">
           <button
+            id={"calendar-detail-delete-trigger-#{@selected_scheduled_task.id}"}
             type="button"
-            phx-click="delete_scheduled_task"
+            phx-click="request_calendar_task_delete"
             phx-value-id={@selected_scheduled_task.id}
-            data-confirm="Delete this scheduled task? Future runs will be removed."
-            class="px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-mono transition-smooth flex items-center gap-1.5"
+            phx-value-source="detail"
+            phx-disable-with="Opening…"
+            class="min-h-11 px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-mono transition-smooth flex items-center gap-1.5"
           >
             <.icon name="hero-trash" class="w-3.5 h-3.5" />
             <span>Delete Task</span>
@@ -3044,7 +3243,8 @@
               type="button"
               phx-click="open_edit_scheduled_task"
               phx-value-id={@selected_scheduled_task.id}
-              class="px-3.5 py-2 bg-[#1c2128] hover:bg-[#21262d] text-cyan-300 rounded-xl text-xs font-mono border border-cyan-500/30 transition-smooth flex items-center gap-1.5"
+              phx-disable-with="Opening…"
+              class="min-h-11 px-3.5 py-2 bg-[#1c2128] hover:bg-[#21262d] text-cyan-300 rounded-xl text-xs font-mono border border-cyan-500/30 transition-smooth flex items-center gap-1.5"
             >
               <.icon name="hero-pencil-square" class="w-3.5 h-3.5" />
               <span>Edit Task</span>
@@ -3053,7 +3253,8 @@
               type="button"
               phx-click="run_scheduled_task"
               phx-value-id={@selected_scheduled_task.id}
-              class="px-4 py-2 bg-[#ff5e3a] hover:bg-[#ff4e24] text-white rounded-xl text-xs font-mono font-bold shadow-lg shadow-orange-500/20 transition-smooth flex items-center gap-1.5"
+              phx-disable-with="Running…"
+              class="min-h-11 px-4 py-2 bg-[#ff5e3a] hover:bg-[#ff4e24] text-white rounded-xl text-xs font-mono font-bold shadow-lg shadow-orange-500/20 transition-smooth flex items-center gap-1.5"
             >
               <.icon name="hero-play" class="w-3.5 h-3.5" />
               <span>Run Now</span>
@@ -3089,95 +3290,70 @@
           <button
             phx-click="close_edit_scheduled_task"
             aria-label="Close edit scheduled task modal"
-            class="text-gray-400 hover:text-white p-1 rounded-lg"
+            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-gray-400 hover:text-white"
           >✕</button>
         </div>
 
         <.form
-          for={to_form(%{})}
+          for={@scheduled_task_form}
           id="edit-scheduled-task-form"
           phx-submit="update_scheduled_task"
           class="space-y-3 font-mono text-xs"
         >
-          <input type="hidden" name="task[id]" value={@selected_scheduled_task.id} />
-          <div>
-            <label for="edit-scheduled-task-title" class="block text-gray-400 mb-1">Title</label>
-            <input
-              id="edit-scheduled-task-title"
-              type="text"
-              name="task[title]"
-              value={@selected_scheduled_task.title}
-              class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-2 text-white font-sans text-xs focus:outline-none focus:border-cyan-500"
-              required
+          <.input field={@scheduled_task_form[:id]} type="hidden" />
+          <.input
+            field={@scheduled_task_form[:title]}
+            id="edit-scheduled-task-title"
+            type="text"
+            label="Title"
+            required
+            class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 font-sans text-xs text-white focus:border-cyan-500 focus:outline-none"
+          />
+          <.input
+            field={@scheduled_task_form[:description]}
+            id="edit-scheduled-task-description"
+            type="textarea"
+            label="Description / Instructions"
+            rows="2"
+            class="min-h-20 w-full resize-y rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 font-sans text-xs text-white focus:border-cyan-500 focus:outline-none"
+          />
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <.input
+              field={@scheduled_task_form[:priority]}
+              id="edit-scheduled-task-priority"
+              type="select"
+              label="Priority"
+              options={Enum.map(["low", "medium", "high", "critical"], &{String.capitalize(&1), &1})}
+              class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 text-xs text-white"
+            />
+            <.input
+              field={@scheduled_task_form[:assignee]}
+              id="edit-scheduled-task-assignee"
+              type="select"
+              label="Assignee"
+              options={["default", "planner", "coder", "verifier"]}
+              class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 text-xs text-white"
             />
           </div>
-          <div>
-            <label for="edit-scheduled-task-description" class="block text-gray-400 mb-1">
-              Description / Instructions
-            </label>
-            <textarea
-              id="edit-scheduled-task-description"
-              name="task[description]"
-              rows="2"
-              class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-2 text-white font-sans text-xs focus:outline-none focus:border-cyan-500 resize-none"
-            ><%= @selected_scheduled_task.description %></textarea>
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label for="edit-scheduled-task-priority" class="block text-gray-400 mb-1">
-                Priority
-              </label>
-              <select
-                id="edit-scheduled-task-priority"
-                name="task[priority]"
-                class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-2 text-white text-xs"
-              >
-                <%= for p <- ["low", "medium", "high", "critical"] do %>
-                  <option value={p} selected={@selected_scheduled_task.priority == p}>
-                    {String.capitalize(p)}
-                  </option>
-                <% end %>
-              </select>
-            </div>
-            <div>
-              <label for="edit-scheduled-task-assignee" class="block text-gray-400 mb-1">
-                Assignee
-              </label>
-              <select
-                id="edit-scheduled-task-assignee"
-                name="task[assignee]"
-                class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-2 text-white text-xs"
-              >
-                <%= for a <- ["default", "planner", "coder", "verifier"] do %>
-                  <option value={a} selected={@selected_scheduled_task.assignee == a}>{a}</option>
-                <% end %>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label for="edit-scheduled-task-cron" class="block text-gray-400 mb-1">
-              Cron Expression (Optional)
-            </label>
-            <input
-              id="edit-scheduled-task-cron"
-              type="text"
-              name="task[cron_expression]"
-              value={@selected_scheduled_task.cron_expression || ""}
-              placeholder="e.g. 0 0 * * *"
-              class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-2 text-amber-300 font-mono text-xs"
-            />
-          </div>
+          <.input
+            field={@scheduled_task_form[:cron_expression]}
+            id="edit-scheduled-task-cron"
+            type="text"
+            label="Cron Expression (Optional)"
+            placeholder="e.g. 0 0 * * *"
+            class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 font-mono text-xs text-amber-300"
+          />
           <div class="flex justify-end gap-2 pt-3 border-t border-[#21262d]">
             <button
               type="button"
               phx-click="close_edit_scheduled_task"
-              class="px-4 py-2 bg-[#21262d] text-gray-300 rounded-xl"
+              class="sf-control min-h-11 px-4 text-sm"
             >Cancel</button>
             <button
               type="submit"
-              phx-disable-with="Saving..."
-              class="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-bold"
-            >Save Changes</button>
+              phx-disable-with="Saving…"
+              class="sf-control min-h-11 border-cyan-500 bg-cyan-600 px-5 font-bold text-white hover:bg-cyan-500"
+            >Save changes</button>
           </div>
         </.form>
       </div>
@@ -3210,7 +3386,7 @@
           <button
             phx-click="toggle_new_task_modal"
             aria-label="Close create task modal"
-            class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-[#1c2128]"
+            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-gray-400 hover:bg-[#1c2128] hover:text-white"
           >✕</button>
         </div>
 
@@ -3687,12 +3863,12 @@
             <button
               type="button"
               phx-click="toggle_new_task_modal"
-              class="px-4 py-2 bg-[#21262d] hover:bg-[#2c333d] text-gray-300 rounded-xl transition-smooth cursor-pointer"
+              class="min-h-11 px-4 py-2 bg-[#21262d] hover:bg-[#2c333d] text-gray-300 rounded-xl transition-smooth cursor-pointer"
             >Cancel</button>
             <button
               type="submit"
               phx-disable-with="Creating..."
-              class="px-5 py-2 bg-[#ff5e3a] hover:bg-[#ff4e24] text-white rounded-xl font-bold shadow-lg shadow-orange-500/25 transition-smooth cursor-pointer"
+              class="min-h-11 px-5 py-2 bg-[#ff5e3a] hover:bg-[#ff4e24] text-white rounded-xl font-bold shadow-lg shadow-orange-500/25 transition-smooth cursor-pointer"
             >Create Task</button>
           </div>
         </.form>
@@ -3737,7 +3913,7 @@
             type="button"
             phx-click="close_time_picker"
             aria-label="Close time picker"
-            class="text-gray-400 hover:text-white p-1 rounded-lg transition-smooth cursor-pointer"
+            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-gray-400 transition-smooth hover:text-white"
             title="Close"
           >
             <.icon name="hero-x-mark" class="w-5 h-5" />
@@ -3871,14 +4047,14 @@
             <button
               type="button"
               phx-click="close_time_picker"
-              class="px-4 py-2 rounded-xl bg-[#1c2128] hover:bg-[#21262d] text-gray-300 text-xs font-mono font-medium transition-smooth"
+              class="min-h-11 px-4 py-2 rounded-xl bg-[#1c2128] hover:bg-[#21262d] text-gray-300 text-xs font-mono font-medium transition-smooth"
             >
               Cancel
             </button>
             <button
               type="button"
               phx-click="apply_time_picker"
-              class="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-mono font-bold shadow-lg shadow-blue-500/25 transition-smooth"
+              class="min-h-11 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-mono font-bold shadow-lg shadow-blue-500/25 transition-smooth"
             >
               Apply
             </button>

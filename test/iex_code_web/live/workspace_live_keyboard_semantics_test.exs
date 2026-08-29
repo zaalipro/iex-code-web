@@ -133,6 +133,42 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
            )
   end
 
+  test "calendar agenda actions are sibling controls and delete returns focus to its source", %{
+    view: view,
+    task: task
+  } do
+    view |> element("#instrument-card-calendar") |> render_click()
+
+    row = "#calendar-mobile-agenda-item-#{task.id}"
+    assert has_element?(view, "#{row} > button[aria-label='Open Keyboard accessible card']")
+
+    assert has_element?(
+             view,
+             "#{row} > div > button[aria-label='Run Keyboard accessible card now']"
+           )
+
+    assert has_element?(view, "#{row} > div > button[aria-label='Edit Keyboard accessible card']")
+
+    assert has_element?(
+             view,
+             "#{row} > div > button[aria-label='Delete Keyboard accessible card']"
+           )
+
+    refute has_element?(view, "#{row} button button")
+
+    view |> element("#calendar-mobile-agenda-delete-trigger-#{task.id}") |> render_click()
+
+    assert has_element?(
+             view,
+             "#calendar-delete-confirmation-#{task.id}[data-sheet-return-id='calendar-mobile-agenda-delete-trigger-#{task.id}'][data-sheet-background-id='workspace-shell'][data-sheet-close-event='cancel_calendar_task_delete']"
+           )
+
+    assert has_element?(
+             view,
+             "#calendar-delete-confirmation-dialog-#{task.id}[role='dialog'][aria-modal='true'][aria-labelledby='calendar-delete-confirmation-title']"
+           )
+  end
+
   test "chat minimap nodes and schedule triggers are keyboard controls", %{
     view: view,
     message: message

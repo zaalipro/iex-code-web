@@ -339,6 +339,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:expanded_message_id, nil)
       |> assign(:expanded_message, nil)
       |> assign(:selected_scheduled_task, nil)
+      |> assign(:scheduled_task_form, nil)
+      |> assign(:pending_calendar_task_delete, nil)
       |> assign(:selected_calendar_date, today_str)
       |> assign(:calendar_year, today.year)
       |> assign(:calendar_month, today.month)
@@ -1067,12 +1069,13 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("show_scheduled_task", %{"id" => task_id}, socket) do
-    case Kanban.get_task(socket.assigns.project.id, task_id) do
+    case scoped_task(socket, task_id) do
       nil ->
         {:noreply,
          socket
          |> assign(:selected_scheduled_task, nil)
          |> assign(:show_scheduled_task_modal, false)
+         |> assign(:pending_calendar_task_delete, nil)
          |> put_flash(:error, "Scheduled task not found")}
 
       task ->
@@ -1085,30 +1088,38 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("close_scheduled_task_modal", _params, socket) do
-    {:noreply, assign(socket, :show_scheduled_task_modal, false)}
+    {:noreply,
+     socket
+     |> assign(:show_scheduled_task_modal, false)
+     |> assign(:pending_calendar_task_delete, nil)}
   end
 
   @impl true
   def handle_event("open_edit_scheduled_task", %{"id" => task_id}, socket) do
-    case Kanban.get_task(socket.assigns.project.id, task_id) do
+    case scoped_task(socket, task_id) do
       nil ->
         {:noreply,
          socket
          |> assign(:selected_scheduled_task, nil)
          |> assign(:show_edit_scheduled_task_modal, false)
+         |> assign(:scheduled_task_form, nil)
          |> put_flash(:error, "Scheduled task not found")}
 
       task ->
         {:noreply,
          socket
          |> assign(:selected_scheduled_task, task)
+         |> assign(:scheduled_task_form, scheduled_task_form(task))
          |> assign(:show_edit_scheduled_task_modal, true)}
     end
   end
 
   @impl true
   def handle_event("close_edit_scheduled_task", _params, socket) do
-    {:noreply, assign(socket, :show_edit_scheduled_task_modal, false)}
+    {:noreply,
+     socket
+     |> assign(:show_edit_scheduled_task_modal, false)
+     |> assign(:scheduled_task_form, nil)}
   end
 
   @impl true
@@ -1120,7 +1131,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         (socket.assigns.selected_scheduled_task && socket.assigns.selected_scheduled_task.id)
 
     if id do
-      case Kanban.get_task(socket.assigns.project.id, id) do
+      case scoped_task(socket, id) do
         nil ->
           {:noreply, put_flash(socket, :error, "Scheduled task not found")}
 
@@ -1155,10 +1166,15 @@ defmodule IexCodeWeb.WorkspaceLive do
                |> assign(:tasks, tasks)
                |> assign(:selected_scheduled_task, updated)
                |> assign(:show_edit_scheduled_task_modal, false)
+               |> assign(:scheduled_task_form, nil)
+               |> refresh_kanban_summary()
                |> put_flash(:info, "Scheduled task updated")}
 
             {:error, reason} ->
-              {:noreply, put_flash(socket, :error, "Failed to update task: #{inspect(reason)}")}
+              {:noreply,
+               socket
+               |> assign(:scheduled_task_form, to_form(task_params, as: :task))
+               |> put_flash(:error, "Failed to update task: #{inspect(reason)}")}
           end
       end
     else
@@ -1168,7 +1184,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("run_scheduled_task", %{"id" => task_id}, socket) do
-    case Kanban.get_task(socket.assigns.project.id, task_id) do
+    case scoped_task(socket, task_id) do
       nil ->
         {:noreply, put_flash(socket, :error, "Scheduled task not found")}
 
@@ -1220,6 +1236,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                |> assign(:selected_task, updated)
                |> assign(:show_scheduled_task_modal, false)
                |> select_run_projection(run)
+               |> assign(:pending_calendar_task_delete, nil)
+               |> refresh_kanban_summary()
                |> assign(:active_tab, "swarm")
                |> put_flash(
                  :info,
@@ -1250,10 +1268,40 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event(
+        "request_calendar_task_delete",
+        %{"id" => task_id, "source" => source},
+        socket
+      )
+      when source in ["mobile", "desktop", "detail"] do
+    case scoped_task(socket, task_id) do
+      %Kanban.Task{} = task ->
+        {return_id, background_id} = calendar_delete_context(source, task.id)
+
+        {:noreply,
+         assign(socket, :pending_calendar_task_delete, %{
+           task_id: task.id,
+           return_id: return_id,
+           background_id: background_id
+         })}
+
+      _ ->
+        {:noreply, assign(socket, :pending_calendar_task_delete, nil)}
+    end
+  end
+
+  def handle_event("request_calendar_task_delete", _params, socket),
+    do: {:noreply, assign(socket, :pending_calendar_task_delete, nil)}
+
+  @impl true
+  def handle_event("cancel_calendar_task_delete", _params, socket),
+    do: {:noreply, assign(socket, :pending_calendar_task_delete, nil)}
+
+  @impl true
   def handle_event("delete_scheduled_task", %{"id" => task_id}, socket) do
-    case Kanban.get_task(socket.assigns.project.id, task_id) do
+    case scoped_task(socket, task_id) do
       nil ->
-        {:noreply, socket}
+        {:noreply, maybe_clear_deleted_scheduled_task(socket, task_id)}
 
       task ->
         case Kanban.delete_task(task) do
@@ -1264,6 +1312,9 @@ defmodule IexCodeWeb.WorkspaceLive do
              socket
              |> assign(:tasks, tasks)
              |> assign(:show_scheduled_task_modal, false)
+             |> assign(:selected_scheduled_task, nil)
+             |> assign(:pending_calendar_task_delete, nil)
+             |> refresh_kanban_summary()
              |> put_flash(:info, "Scheduled task removed")}
 
           {:error, reason} ->
@@ -4376,10 +4427,25 @@ defmodule IexCodeWeb.WorkspaceLive do
           do: updated_task,
           else: socket.assigns.selected_task
 
+      selected_scheduled =
+        if socket.assigns.selected_scheduled_task &&
+             socket.assigns.selected_scheduled_task.id == updated_task.id,
+           do: updated_task,
+           else: socket.assigns.selected_scheduled_task
+
+      scheduled_task_form =
+        if socket.assigns.show_edit_scheduled_task_modal &&
+             socket.assigns.selected_scheduled_task &&
+             socket.assigns.selected_scheduled_task.id == updated_task.id,
+           do: scheduled_task_form(updated_task),
+           else: socket.assigns.scheduled_task_form
+
       {:noreply,
        socket
        |> assign(:tasks, tasks)
        |> assign(:selected_task, selected)
+       |> assign(:selected_scheduled_task, selected_scheduled)
+       |> assign(:scheduled_task_form, scheduled_task_form)
        |> maybe_clear_pending_task(updated_task.id)
        |> refresh_kanban_summary()}
     else
@@ -4396,6 +4462,7 @@ defmodule IexCodeWeb.WorkspaceLive do
        socket
        |> assign(:tasks, tasks)
        |> maybe_clear_pending_task(deleted_task.id)
+       |> maybe_clear_deleted_scheduled_task(deleted_task.id)
        |> refresh_kanban_summary()}
     else
       {:noreply, socket}
@@ -4769,6 +4836,11 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:task_move_form, nil)
     |> assign(:task_move_announcement, nil)
     |> assign(:pending_task_confirmation, nil)
+    |> assign(:selected_scheduled_task, nil)
+    |> assign(:scheduled_task_form, nil)
+    |> assign(:show_scheduled_task_modal, false)
+    |> assign(:show_edit_scheduled_task_modal, false)
+    |> assign(:pending_calendar_task_delete, nil)
     |> assign(:open_buffers, [])
     |> assign(:active_editor_path, nil)
     |> assign(:active_editor_content, nil)
@@ -5125,6 +5197,19 @@ defmodule IexCodeWeb.WorkspaceLive do
         else: socket
 
     socket = if view == "changes", do: refresh_git_state(socket), else: socket
+
+    socket =
+      if previous_view == "calendar" and view != "calendar" do
+        socket
+        |> assign(:pending_calendar_task_delete, nil)
+        |> assign(:selected_scheduled_task, nil)
+        |> assign(:scheduled_task_form, nil)
+        |> assign(:show_scheduled_task_modal, false)
+        |> assign(:show_edit_scheduled_task_modal, false)
+      else
+        socket
+      end
+
     socket = if view == "deck", do: request_deck_git_refresh(socket), else: socket
     socket = if view == "files", do: ensure_workspace_files_loaded(socket), else: socket
     socket = if view == "swarm", do: refresh_run_fleet(socket), else: socket
@@ -5160,6 +5245,51 @@ defmodule IexCodeWeb.WorkspaceLive do
     else
       _ -> nil
     end
+  end
+
+  defp calendar_delete_context("mobile", task_id),
+    do: {"calendar-mobile-agenda-delete-trigger-#{task_id}", "workspace-shell"}
+
+  defp calendar_delete_context("desktop", task_id),
+    do: {"calendar-desktop-agenda-delete-trigger-#{task_id}", "workspace-shell"}
+
+  defp calendar_delete_context("detail", task_id),
+    do: {"calendar-detail-delete-trigger-#{task_id}", "scheduled-task-detail-modal"}
+
+  defp maybe_clear_pending_calendar_delete(socket, task_id) do
+    case socket.assigns.pending_calendar_task_delete do
+      %{task_id: ^task_id} -> assign(socket, :pending_calendar_task_delete, nil)
+      _ -> socket
+    end
+  end
+
+  defp maybe_clear_deleted_scheduled_task(socket, task_id) do
+    socket = maybe_clear_pending_calendar_delete(socket, task_id)
+
+    if socket.assigns.selected_scheduled_task &&
+         socket.assigns.selected_scheduled_task.id == task_id do
+      socket
+      |> assign(:selected_scheduled_task, nil)
+      |> assign(:scheduled_task_form, nil)
+      |> assign(:show_scheduled_task_modal, false)
+      |> assign(:show_edit_scheduled_task_modal, false)
+    else
+      socket
+    end
+  end
+
+  defp scheduled_task_form(task) do
+    to_form(
+      %{
+        "id" => task.id,
+        "title" => task.title || "",
+        "description" => task.description || "",
+        "priority" => task.priority || "medium",
+        "assignee" => task.assignee || "default",
+        "cron_expression" => task.cron_expression || ""
+      },
+      as: :task
+    )
   end
 
   defp clear_task_move_state(socket) do
@@ -6114,6 +6244,18 @@ defmodule IexCodeWeb.WorkspaceLive do
         |> rebuild_instrument_summaries()
         |> request_deck_git_refresh()
     end
+  end
+
+  defp calendar_agenda_items(tasks, from_date \\ Date.utc_today()) do
+    tasks
+    |> Enum.filter(fn task ->
+      match?(%DateTime{}, task.scheduled_at) and
+        Date.compare(DateTime.to_date(task.scheduled_at), from_date) != :lt
+    end)
+    |> Enum.sort_by(fn task ->
+      {DateTime.to_unix(task.scheduled_at, :microsecond), task.id}
+    end)
+    |> Enum.take(100)
   end
 
   defp tasks_for_day(tasks, %Date{} = date) do

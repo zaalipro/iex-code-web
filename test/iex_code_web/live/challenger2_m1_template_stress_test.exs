@@ -78,10 +78,12 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # Switch to calendar tab
-      html = render_click(view, "switch_tab", %{"tab" => "calendar"})
-      assert html =~ "SCHEDULED TASKS"
-      assert html =~ "MONTHLY RUNS:"
+      # Switch to the factual responsive calendar presentations.
+      render_click(view, "switch_tab", %{"tab" => "calendar"})
+      assert has_element?(view, "#instrument-workbench-calendar")
+      assert has_element?(view, "#calendar-desktop-agenda")
+      assert has_element?(view, "#calendar-mobile-agenda[data-mobile-default='true']")
+      refute has_element?(view, "#instrument-workbench-calendar", "MONTHLY RUNS")
     end
 
     test "handles changes tab dynamic canvas and diff rendering", %{

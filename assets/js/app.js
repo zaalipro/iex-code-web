@@ -11,6 +11,7 @@ import ResponsiveSheet, {
 } from "./hooks/responsive_sheet_hook.mjs"
 import TaskMoveFocus from "./hooks/task_move_focus_hook.js"
 import TaskMoveReturn from "./hooks/task_move_return_hook.mjs"
+import LocalTime from "./hooks/local_time_hook"
 import {modalSheetReturnId, restoreModalFocus} from "./hooks/modal_focus_return.mjs"
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
@@ -76,6 +77,7 @@ const Hooks = {
   ResponsiveSheet,
   TaskMoveFocus,
   TaskMoveReturn,
+  LocalTime,
   ModalFocus: {
     mounted() {
       this.mobileSheetDelegated = responsiveSheetOwnsFocus(

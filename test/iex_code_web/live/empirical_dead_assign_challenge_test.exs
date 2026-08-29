@@ -90,13 +90,12 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
       refute changes_html =~ "pr-5567-proof-of-history.html"
       refute changes_html =~ "pr-22-toll-express.html"
 
-      # Switch to Calendar tab and verify scheduled tasks footer metrics
+      # Switch to Calendar and verify the factual chassis presentations.
       render_click(view, "switch_tab", %{"tab" => "calendar"})
-      calendar_html = render(view)
-
-      assert calendar_html =~ "SCHEDULED TASKS"
-      assert calendar_html =~ "ACTIVE"
-      assert calendar_html =~ "MONTHLY RUNS:"
+      assert has_element?(view, "#instrument-workbench-calendar")
+      assert has_element?(view, "#calendar-month-view #calendar-grid")
+      assert has_element?(view, "#calendar-mobile-agenda-items")
+      refute has_element?(view, "#instrument-workbench-calendar", "MONTHLY RUNS")
 
       # Settings are owned by SettingsLive; WorkspaceLive only provides a navigation shim.
       render_click(view, "toggle_settings_modal")

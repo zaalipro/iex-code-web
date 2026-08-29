@@ -224,10 +224,16 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     render_click(view, "switch_tab", %{"tab" => "calendar"})
-    html = render(view)
 
-    assert html =~ "August target task"
-    refute html =~ "September same-day task"
+    calendar_grid =
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#calendar-grid")
+      |> LazyHTML.text()
+
+    assert calendar_grid =~ "August target task"
+    refute calendar_grid =~ "September same-day task"
   end
 
   defp live_assigns(view) do
