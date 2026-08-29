@@ -202,6 +202,17 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
         agent_count: 1,
         fleet_summary: %{active: 1, paused: 0, attention: 1, recovering: 0, tokens: 0},
         fleet_loading: false,
+        agent_receipts: %{
+          "agent-legacy" => [
+            %{
+              id: "agent-control-legacy",
+              sequence: 1,
+              kind: "steer",
+              status: "applied",
+              result: %{"status" => "consumed"}
+            }
+          ]
+        },
         mode: "overview",
         phase: "Verify persisted state",
         dag_projection: nil,
@@ -221,6 +232,11 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
           "#async-run-heading",
           "#async-dispatcher-status",
           "#workspace-lock-overview",
+          "#workspace-lock-heading",
+          "#workspace-lock-summary",
+          "#workspace-lock-context",
+          "#workspace-lock-held-count",
+          "#workspace-lock-waiting-count",
           "#workspace-lock-details",
           "#workspace-lock-lock-legacy",
           "#async-run-metrics",
@@ -235,6 +251,13 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
           "#run-agent-fleet-list[phx-update='stream']",
           "#run-agent-agent-legacy",
           "#run-agent-error-agent-legacy",
+          "#pause-run-agent-agent-legacy[phx-click='control_run_agent'][phx-value-action='pause']",
+          "#cancel-run-agent-agent-legacy[phx-click='control_run_agent'][phx-value-action='cancel']",
+          "#run-agent-steering-form-agent-legacy[phx-submit='steer_run_agent']",
+          "#run-agent-steering-agent-id-agent-legacy",
+          "#run-agent-steering-input-agent-legacy",
+          "#run-agent-steering-submit-agent-legacy",
+          "#run-agent-control-receipt-agent-legacy[data-control-status='applied'][data-control-result-status='consumed']",
           "#async-run-graph-and-controls[data-graph-mode='legacy']",
           "#async-run-steps",
           "#async-run-step-step-legacy",
@@ -254,6 +277,68 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
           "#async-run-artifact-source-artifact-legacy-0"
         ] do
       assert node_count(doc, selector) == 1, "expected one durable node matching #{selector}"
+    end
+
+    for selector <- [
+          "#pause-async-run[phx-click='pause_async_run']",
+          "#cancel-async-run[phx-click='cancel_async_run']",
+          "#async-run-steering-form[phx-submit='steer_async_run']",
+          "#async-run-steering-run-id",
+          "#async-run-steering-input",
+          "#async-run-steering-submit",
+          "#async-run-token-budget [role='progressbar']",
+          "#async-run-cost-budget [role='progressbar']",
+          "#async-run-time-budget [role='progressbar']"
+        ] do
+      assert node_count(doc, selector) == 1, "expected one execution control matching #{selector}"
+    end
+
+    panel_allocations = %{
+      "overview" => [
+        "#async-dispatcher-status",
+        "#workspace-lock-overview",
+        "#async-run-metrics",
+        "#async-run-list",
+        "#async-run-detail"
+      ],
+      "topology" => ["#run-agent-fleet", "#async-run-graph-and-controls", "#async-run-steps"],
+      "execution" => [
+        "#async-run-actions",
+        "#async-run-steering-form",
+        "#async-run-budget-meters",
+        "#async-run-control-timeline",
+        "#async-run-approval-approval-legacy",
+        "#mission-control-interactive-slot"
+      ],
+      "journal" => ["#async-run-events", "#async-run-artifacts"]
+    }
+
+    for {mode, selectors} <- panel_allocations,
+        selector <- selectors do
+      assert node_count(doc, "#mission-control-panel-#{mode} #{selector}") == 1,
+             "expected #{selector} only in the #{mode} panel"
+    end
+
+    for {selector, label} <- [
+          {"#mission-control-panel-overview > details:nth-of-type(1) > summary",
+           "Mission status and workspace safety"},
+          {"#mission-control-panel-overview > details:nth-of-type(2) > summary",
+           "Run ledger and selected mission"},
+          {"#mission-control-panel-topology > details:nth-of-type(1) > summary",
+           "Persisted agent fleet"},
+          {"#mission-control-panel-topology > details:nth-of-type(2) > summary",
+           "Execution dependency projection"},
+          {"#mission-control-panel-execution > details:nth-of-type(1) > summary",
+           "Selected-run controls and budgets"},
+          {"#mission-control-panel-execution > details:nth-of-type(2) > summary",
+           "Durable controls and approval gates"},
+          {"#mission-control-panel-execution > details:nth-of-type(3) > summary",
+           "Interactive session plane"},
+          {"#mission-control-panel-journal > details:nth-of-type(1) > summary",
+           "Ordered event journal"},
+          {"#async-run-artifacts > summary", "Evidence and artifacts · 1 saved"}
+        ] do
+      assert compact_text(LazyHTML.query(doc, selector)) == label
     end
 
     refute node_count(doc, "#async-run-dag-projection") > 0
@@ -284,74 +369,129 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
     end
   end
 
-  test "DAG projection renders authorized persisted layers once and fails closed without one" do
-    run =
-      "dag-run"
-      |> run_fixture("DAG objective", "running", 34)
-      |> Map.put(:execution_engine, "dag_v1")
+  test "fleet action matrix exposes status-specific agent controls and durable receipt hooks" do
+    run = run_fixture("fleet-run", "Fleet objective", "running", 20)
 
-    projection = %{
-      engine: "dag_v1",
-      available?: true,
-      summary: %{
-        ready: 1,
-        running: 1,
-        blocked: 0,
-        approval: 0,
-        retrying: 0,
-        completed: 1,
-        failed: 0
-      },
-      layers: [
-        [
-          %{
-            id: "step-plan",
-            key: "plan",
-            title: "Plan",
-            kind: "planner",
-            status: "completed",
-            readiness: :terminal,
-            progress: 100,
-            attempt: 1,
-            max_attempts: 1,
-            depends_on: []
-          }
-        ],
-        [
-          %{
-            id: "step-code",
-            key: "code",
-            title: "Code",
-            kind: "coder",
-            status: "running",
-            readiness: :leased,
-            progress: 34,
-            attempt: 1,
-            max_attempts: 3,
-            depends_on: ["plan"]
-          }
-        ]
-      ]
-    }
+    agents =
+      for {id, status} <- [
+            {"agent-running", "running"},
+            {"agent-paused", "paused"},
+            {"agent-interrupted", "interrupted"},
+            {"agent-pending", "pending"}
+          ] do
+        {"run-agent-#{id}",
+         %RunAgent{
+           id: id,
+           run_id: run.id,
+           key: id,
+           role: "worker",
+           display_name: id,
+           status: status,
+           attempt: if(status == "interrupted", do: 1, else: 0),
+           max_attempts: 3,
+           progress: 20
+         }}
+      end
 
-    doc = run_control_document(run, projection)
-    assert node_count(doc, "#async-run-dag-projection") == 1
-    assert node_count(doc, "#dag-execution-projection[data-engine='dag_v1']") == 1
-    assert node_count(doc, "#dag-layer-0") == 1
-    assert node_count(doc, "#dag-layer-1") == 1
-    assert node_count(doc, "#dag-node-step-code-desktop[data-node-key='code']") == 1
-    assert compact_text(LazyHTML.query(doc, "#dag-node-step-code-desktop")) =~ "After plan"
-    assert node_count(doc, "#async-run-steps") == 0
-    assert node_count(doc, "#async-run-dag-unavailable") == 0
+    html =
+      render_component(&RunComponents.agent_fleet/1,
+        run: run,
+        agents: agents,
+        agent_count: 4,
+        summary: %{active: 2, paused: 1, attention: 1, recovering: 0, tokens: 0},
+        guidance: %{},
+        receipts: %{
+          "agent-running" => [
+            %{
+              id: "receipt-running",
+              sequence: 2,
+              kind: "steer",
+              status: "applied",
+              result: %{"status" => "consumed"}
+            }
+          ]
+        }
+      )
 
-    unavailable = run_control_document(run, nil)
-    assert node_count(unavailable, "#async-run-dag-unavailable[role='status']") == 1
-    assert node_count(unavailable, "#async-run-dag-projection") == 0
-    assert node_count(unavailable, "#dag-execution-projection") == 0
-    assert node_count(unavailable, "#async-run-steps") == 0
+    document = LazyHTML.from_fragment(html)
 
-    assert compact_text(LazyHTML.query(unavailable, "#async-run-dag-unavailable")) ==
-             "Execution topology unavailable"
+    for selector <- [
+          "#run-agent-fleet[data-fleet-state='attention']",
+          "#run-agent-fleet-list[phx-update='stream']",
+          "#run-agent-agent-running",
+          "#run-agent-agent-paused",
+          "#run-agent-agent-interrupted",
+          "#run-agent-agent-pending",
+          "#pause-run-agent-agent-running[phx-click='control_run_agent'][phx-value-action='pause']",
+          "#cancel-run-agent-agent-running[phx-click='control_run_agent'][phx-value-action='cancel']",
+          "#resume-run-agent-agent-paused[phx-click='control_run_agent'][phx-value-action='resume']",
+          "#cancel-run-agent-agent-paused[phx-click='control_run_agent'][phx-value-action='cancel']",
+          "#restart-run-agent-agent-interrupted[phx-click='control_run_agent'][phx-value-action='restart']",
+          "#cancel-run-agent-agent-pending[phx-click='control_run_agent'][phx-value-action='cancel']",
+          "#run-agent-steering-form-agent-running[phx-change='update_run_agent_guidance'][phx-submit='steer_run_agent']",
+          "#run-agent-steering-input-agent-running",
+          "#run-agent-steering-submit-agent-running",
+          "#run-agent-control-receipt-agent-running[data-control-status='applied'][data-control-result-status='consumed']"
+        ] do
+      assert node_count(document, selector) == 1, "missing fleet control #{selector}"
+    end
+
+    for selector <- [
+          "#resume-run-agent-agent-running",
+          "#restart-run-agent-agent-running",
+          "#run-agent-steering-form-agent-interrupted",
+          "#run-agent-steering-form-agent-pending"
+        ] do
+      assert node_count(document, selector) == 0, "unexpected status control #{selector}"
+    end
+  end
+
+  test "run lifecycle action matrix preserves exact IDs events and empty ledger ownership" do
+    cases = [
+      {"draft",
+       [
+         "#start-async-run[phx-click='start_async_run']",
+         "#cancel-async-run[phx-click='cancel_async_run']"
+       ]},
+      {"running",
+       [
+         "#pause-async-run[phx-click='pause_async_run']",
+         "#cancel-async-run[phx-click='cancel_async_run']"
+       ]},
+      {"paused",
+       [
+         "#resume-async-run[phx-click='resume_async_run']",
+         "#cancel-async-run[phx-click='cancel_async_run']"
+       ]},
+      {"failed", ["#retry-async-run[phx-click='retry_async_run']"]}
+    ]
+
+    for {status, expected_controls} <- cases do
+      run = run_fixture("run-#{status}", "#{status} objective", status, 20)
+      document = run_control_document(run, nil)
+
+      for selector <- expected_controls do
+        assert node_count(document, "#mission-control-panel-execution #{selector}") == 1,
+               "missing #{status} action #{selector}"
+      end
+
+      assert node_count(document, "#mission-control-panel-execution #async-run-actions") == 1
+    end
+
+    empty =
+      render_component(&RunComponents.run_control_plane/1,
+        runs: [],
+        run_count: 0,
+        selected_run: nil,
+        events: [],
+        stats: %{online: true, capacity: 1}
+      )
+      |> LazyHTML.from_fragment()
+
+    assert node_count(empty, "#mission-control-panel-overview #async-run-list #async-runs-empty") ==
+             1
+
+    assert compact_text(LazyHTML.query(empty, "#async-runs-empty")) == "No durable runs yet"
   end
 
   test "signal panel uses truthful precedence and exact no-action fallback" do

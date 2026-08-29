@@ -4,6 +4,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
   alias IexCode.{Repo, Runs}
   alias IexCode.Engine.FleetSupervisor
+  alias IexCode.Runs.{DagScheduler, RunStepAttempt}
 
   setup %{conn: conn} do
     {:ok, conn: %{conn | host: "localhost"}}
@@ -33,6 +34,8 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-swarm") |> render_click()
+    view |> element("#mission-control-mode-execution") |> render_click()
+    assert_patch(view, ~p"/sessions/#{session.id}?view=swarm")
 
     for mode <- ~w(overview topology execution journal) do
       view |> element("#mission-control-mode-#{mode}") |> render_click()
@@ -53,6 +56,14 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     active_view_before = state_before.active_view
     assert has_element?(view, "#run-agent-#{agent.id}")
 
+    document_before = view |> render() |> LazyHTML.from_fragment()
+
+    stream_before = %{
+      parents: live_node_count(document_before, "#run-agent-fleet-list[phx-update='stream']"),
+      agents: live_node_count(document_before, "#run-agent-#{agent.id}"),
+      content: document_before |> LazyHTML.query("#run-agent-#{agent.id}") |> LazyHTML.text()
+    }
+
     render_click(view, "switch_mission_control_mode", %{"mode" => "__invalid_mode__"})
     render_click(view, "switch_mission_control_mode", %{})
     render_click(view, "switch_mission_control_mode", %{"mode" => %{"journal" => "true"}})
@@ -66,6 +77,17 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert state_after.workspace_route == route_before
     assert state_after.active_view == active_view_before
     assert has_element?(view, "#run-agent-#{agent.id}")
+    refute_receive {_, {:patch, _, _}}, 50
+
+    document_after = view |> render() |> LazyHTML.from_fragment()
+
+    assert %{
+             parents:
+               live_node_count(document_after, "#run-agent-fleet-list[phx-update='stream']"),
+             agents: live_node_count(document_after, "#run-agent-#{agent.id}"),
+             content:
+               document_after |> LazyHTML.query("#run-agent-#{agent.id}") |> LazyHTML.text()
+           } == stream_before
   end
 
   test "Mission Control phase prefers running then paused persisted steps", %{
@@ -82,7 +104,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
         objective: "Phase precedence",
         kind: "analysis",
         mode: "single",
-        status: "queued"
+        status: "draft"
       })
 
     {:ok, _completed} =
@@ -273,6 +295,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-swarm") |> render_click()
+    view |> element("#mission-control-mode-execution") |> render_click()
 
     assert has_element?(view, "#async-run-#{runs["running"].id}[aria-pressed='true']")
 
@@ -527,6 +550,74 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     end
   end
 
+  test "Execution session actions navigate to terminal and clear only current history", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    other_session = create_session_fixture(project)
+
+    {:ok, _current_operation} =
+      IexCode.Sessions.create_operation(%{
+        session_id: session.id,
+        agent_name: "VerifierAgent",
+        op_type: "verify",
+        title: "Clear current operation",
+        status: "completed",
+        progress: 100
+      })
+
+    {:ok, _other_operation} =
+      IexCode.Sessions.create_operation(%{
+        session_id: other_session.id,
+        agent_name: "ExplorerAgent",
+        op_type: "scan",
+        title: "Retain foreign operation",
+        status: "completed",
+        progress: 100
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    view |> element("#mission-control-mode-execution") |> render_click()
+    view |> element("#coach-actions-toggle") |> render_click()
+
+    assert has_element?(
+             view,
+             "#coach-actions-disclosure button[phx-click='switch_tab'][phx-value-tab='terminal']"
+           )
+
+    view
+    |> element("#coach-actions-disclosure button[phx-value-tab='terminal']")
+    |> render_click()
+
+    assert_patch(view, ~p"/sessions/#{session.id}?view=terminal")
+    assert :sys.get_state(view.pid).socket.assigns.active_view == "terminal"
+
+    render_patch(view, ~p"/sessions/#{session.id}?view=swarm")
+    view |> element("#mission-control-mode-execution") |> render_click()
+
+    unless has_element?(view, "#coach-actions-disclosure") do
+      view |> element("#coach-actions-toggle") |> render_click()
+    end
+
+    assert has_element?(
+             view,
+             "#coach-actions-disclosure button[phx-click='clear_operations']"
+           )
+
+    view
+    |> element("#coach-actions-disclosure button[phx-click='clear_operations']")
+    |> render_click()
+
+    assert IexCode.Sessions.list_operations(session.id) == []
+
+    assert [%{title: "Retain foreign operation"}] =
+             IexCode.Sessions.list_operations(other_session.id)
+
+    assert has_element?(view, "#operation-tree-root", "No operations recorded in this session")
+  end
+
   test "stale operations-cleared messages reconcile the current session", %{
     conn: conn,
     workspace_path: path
@@ -563,6 +654,103 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     _ = :sys.get_state(view.pid)
     assert has_element?(view, "#operation-tree-root", "Current session operation")
     refute has_element?(view, "#operation-tree-root", "Old session operation")
+  end
+
+  test "Mission Control reconnect replays one full durable selected-run projection", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Replay the full Mission Control projection",
+        kind: "analysis",
+        mode: "single",
+        status: "running"
+      })
+
+    {:ok, step} =
+      Runs.create_step(run, %{
+        key: "replay-step",
+        kind: "analysis",
+        title: "Replay step",
+        status: "running"
+      })
+
+    {:ok, [agent]} =
+      Runs.create_run_agents(run, [
+        %{key: "replay-agent", role: "verifier", display_name: "Replay verifier"}
+      ])
+
+    {:ok, control} =
+      Runs.enqueue_control(run, "replay-control", %{
+        kind: "steer",
+        payload: %{"guidance" => "Replay exact state"}
+      })
+
+    {:ok, approval} =
+      Runs.request_approval(run, %{
+        key: "replay-approval",
+        action: "workspace_write",
+        resource: "lib/replay.ex",
+        reason: "Replay approval"
+      })
+
+    {:ok, artifact} =
+      Runs.create_artifact(run, %{
+        run_step_id: step.id,
+        kind: "report",
+        name: "replay.txt",
+        uri: "artifact://replay",
+        metadata: %{"preview" => "Replay artifact"}
+      })
+
+    {:ok, event} = Runs.append_event(run, "run.replay_fixture", %{"message" => "Replay event"})
+
+    {:ok, lock_envelope} =
+      Runs.acquire_workspace_lock(%{
+        project_id: project.id,
+        session_id: session.id,
+        run_id: run.id,
+        owner_id: "mission-replay-owner",
+        resource_type: "project",
+        resource_key: ".",
+        mode: "exclusive"
+      })
+
+    lock = hd(lock_envelope.locks)
+
+    for reconnect <- 1..2 do
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+      document = view |> render() |> LazyHTML.from_fragment()
+
+      for selector <- [
+            "#async-run-list",
+            "#async-run-#{run.id}",
+            "#workspace-lock-overview",
+            "#workspace-lock-#{lock.id}",
+            "#run-agent-fleet-list[phx-update='stream']",
+            "#run-agent-#{agent.id}",
+            "#async-run-steps",
+            "#async-run-step-#{step.id}",
+            "#async-run-control-timeline",
+            "#async-run-control-entry-#{control.id}",
+            "#async-run-events",
+            "#run-event-#{event.id}",
+            "#async-run-approval-#{approval.id}",
+            "#async-run-artifacts",
+            "#async-run-artifact-#{artifact.id}"
+          ] do
+        assert live_node_count(document, selector) == 1,
+               "reconnect #{reconnect} expected one #{selector}"
+      end
+
+      refute has_element?(view, "#async-run-dag-projection")
+    end
   end
 
   test "queues a durable background run and renders its replayable control plane", %{
@@ -675,6 +863,187 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     html = render(reconnected)
     refute html =~ "receipt-payload-must-not-render"
     refute html =~ "private-result-must-not-render"
+  end
+
+  test "Mission Control projects persisted DAG layers and attempts through the strict producer",
+       %{
+         conn: conn,
+         workspace_path: path
+       } do
+    File.write!(Path.join(path, "README.md"), "durable DAG fixture\n")
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    timestamp = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    {:ok, run} =
+      Runs.create_run_with_steps(
+        %{
+          project_id: project.id,
+          session_id: session.id,
+          objective: "Persisted DAG strict projection",
+          kind: "analysis",
+          mode: "workflow",
+          execution_engine: "dag_v1",
+          status: "running",
+          attempt: 1,
+          lease_generation: 1,
+          lease_owner: "strict-dag-test-owner",
+          lease_expires_at: DateTime.add(timestamp, 60, :second),
+          heartbeat_at: timestamp,
+          started_at: timestamp
+        },
+        [
+          dag_node("inventory", "project_inventory", [], %{}),
+          dag_node("read", "read_file", ["inventory"], %{"path" => "README.md"}),
+          dag_node("join", "aggregate", ["read"], %{})
+        ]
+      )
+
+    assert {:ok, claim} = DagScheduler.claim_ready(run, "strict-dag-test-owner", 1)
+    assert %RunStepAttempt{} = claim.attempt
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    assert has_element?(view, "#async-run-dag-projection")
+    assert has_element?(view, "#dag-execution-projection[data-engine='dag_v1']")
+    assert has_element?(view, "#dag-layer-0")
+    assert has_element?(view, "#dag-layer-1")
+    assert has_element?(view, "#dag-layer-2")
+    read_step = Enum.find(Runs.list_steps(run), &(&1.key == "read"))
+    assert has_element?(view, "#dag-node-#{read_step.id}-desktop[data-node-key='read']")
+
+    read_text = LazyHTML.text(LazyHTML.query(document, "#dag-node-#{read_step.id}-desktop"))
+    assert read_text =~ "Blocked by"
+    assert read_text =~ "inventory"
+
+    assert has_element?(
+             view,
+             "#dag-node-#{claim.step.id}-desktop[data-node-readiness='leased']"
+           )
+
+    assert LazyHTML.text(LazyHTML.query(document, "#dag-node-#{claim.step.id}-desktop")) =~
+             "Attempt 1/2"
+
+    refute has_element?(view, "#async-run-steps")
+
+    assert document
+           |> LazyHTML.query("#dag-execution-projection")
+           |> LazyHTML.to_tree()
+           |> length() == 1
+  end
+
+  test "strict DAG projection fails closed for durable cycle, missing dependency, and cross-run input",
+       %{
+         conn: conn,
+         workspace_path: path
+       } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, cycle_run} =
+      Runs.create_run_with_steps(
+        %{
+          project_id: project.id,
+          session_id: session.id,
+          objective: "Cycle",
+          kind: "analysis",
+          mode: "workflow",
+          execution_engine: "dag_v1"
+        },
+        [
+          dag_node("a", "project_inventory", [], %{"path" => "."}),
+          dag_node("b", "aggregate", ["a"], %{})
+        ]
+      )
+
+    {:ok, missing_run} =
+      Runs.create_run_with_steps(
+        %{
+          project_id: project.id,
+          session_id: session.id,
+          objective: "Missing",
+          kind: "analysis",
+          mode: "workflow",
+          execution_engine: "dag_v1"
+        },
+        [dag_node("a", "project_inventory", [], %{"path" => "."})]
+      )
+
+    {:ok, foreign_run} =
+      Runs.create_run_with_steps(
+        %{
+          project_id: project.id,
+          session_id: session.id,
+          objective: "Foreign",
+          kind: "analysis",
+          mode: "workflow",
+          execution_engine: "dag_v1"
+        },
+        [dag_node("foreign", "project_inventory", [], %{"path" => "."})]
+      )
+
+    foreign_step = hd(Runs.list_steps(foreign_run))
+    cycle_step = hd(Runs.list_steps(cycle_run))
+    missing_step = hd(Runs.list_steps(missing_run))
+
+    Ecto.Query.from(step in IexCode.Runs.RunStep, where: step.id == ^cycle_step.id)
+    |> Repo.update_all(set: [depends_on: ["b"]])
+
+    Ecto.Query.from(step in IexCode.Runs.RunStep, where: step.id == ^missing_step.id)
+    |> Repo.update_all(set: [depends_on: ["missing"]])
+
+    cycle_steps = Runs.list_steps(cycle_run)
+    [missing_step] = Runs.list_steps(missing_run)
+
+    # The public strict builder rejects cross-run rows without touching the DOM.
+    assert {:error, {:dag_step_scope_mismatch, _}} =
+             IexCode.Runs.DagProjection.build(cycle_run, [foreign_step], [])
+
+    assert {:error, :cyclic_dag_projection} =
+             IexCode.Runs.DagProjection.build(cycle_run, cycle_steps, [])
+
+    assert {:error, {:missing_dependencies, "a", ["missing"]}} =
+             IexCode.Runs.DagProjection.build(missing_run, [missing_step], [])
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+
+    view |> element("#async-run-#{cycle_run.id}") |> render_click()
+    assert has_element?(view, "#dag-projection-error", "projection_cycle_detected")
+    refute has_element?(view, "#async-run-steps")
+
+    view |> element("#async-run-#{missing_run.id}") |> render_click()
+    assert has_element?(view, "#dag-projection-error", "projection_dependency_missing")
+    refute has_element?(view, "#async-run-steps")
+  end
+
+  test "strict DAG projection renders unavailable when persisted scheduler rows disappear", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run_with_steps(
+        %{
+          project_id: project.id,
+          session_id: session.id,
+          objective: "Unavailable",
+          kind: "analysis",
+          mode: "workflow",
+          execution_engine: "dag_v1"
+        },
+        [dag_node("only", "project_inventory", [], %{"path" => "."})]
+      )
+
+    Ecto.Query.from(step in IexCode.Runs.RunStep, where: step.run_id == ^run.id)
+    |> Repo.delete_all()
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    assert has_element?(view, "#dag-projection-error", "projection_unavailable")
+    assert has_element?(view, "#dag-execution-projection[data-scheduler-state='unavailable']")
+    refute has_element?(view, "#async-run-steps")
   end
 
   test "rejects malformed cyclic and unsupported DAG manifests without inserting a run", %{
@@ -987,6 +1356,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-swarm") |> render_click()
+    view |> element("#mission-control-mode-execution") |> render_click()
 
     view |> element("#async-run-#{newest_run.id}") |> render_click()
 
@@ -1066,6 +1436,148 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     view |> element("#deny-run-action-#{denied.id}") |> render_click()
     assert Runs.get_approval(denied.id).status == "denied"
     assert has_element?(view, "#flash-info", "Approval decision persisted")
+  end
+
+  test "Execution run controls persist pause resume steer cancel and retry outcomes", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    Process.register(self(), IexCode.RunDispatcherTestReceiver)
+
+    on_exit(fn ->
+      if Process.whereis(IexCode.RunDispatcherTestReceiver) == self(),
+        do: Process.unregister(IexCode.RunDispatcherTestReceiver)
+    end)
+
+    start_supervised!(
+      {IexCode.Runs.RunDispatcher,
+       name: IexCode.Runs.RunDispatcher,
+       worker_id: "mission-execution-matrix-#{System.unique_integer([:positive])}",
+       executor: IexCode.RunDispatcherTestExecutor,
+       max_concurrency: 1,
+       poll_interval: 60_000,
+       heartbeat_interval: 60_000,
+       lease_ms: 120_000,
+       workspace_lock_retry_interval: 60_000,
+       workspace_lock_lease_seconds: 120}
+    )
+
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Exercise every execution control",
+        kind: "analysis",
+        mode: "single",
+        status: "queued",
+        max_attempts: 3
+      })
+
+    run_id = run.id
+
+    {:ok, _prepare} =
+      Runs.create_step(run, %{
+        key: "prepare",
+        kind: "prepare",
+        title: "Prepare execution controls",
+        status: "ready"
+      })
+
+    {:ok, _execute} =
+      Runs.create_step(run, %{
+        key: "execute",
+        kind: "execute",
+        title: "Exercise execution controls",
+        status: "pending",
+        position: 1,
+        depends_on: ["prepare"]
+      })
+
+    {:ok, sibling} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Sibling remains untouched",
+        kind: "analysis",
+        mode: "single",
+        status: "draft"
+      })
+
+    send(Process.whereis(IexCode.Runs.RunDispatcher), :drain)
+    _ = :sys.get_state(Process.whereis(IexCode.Runs.RunDispatcher))
+    assert_receive {:test_run_started, ^run_id, _worker_pid}, 2_000
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    view |> element("#mission-control-mode-execution") |> render_click()
+    assert has_element?(view, "#start-async-run") == false
+    _ = :sys.get_state(view.pid)
+    assert Runs.get_run!(run.id).status == "running"
+    assert has_element?(view, "#pause-async-run[phx-click='pause_async_run']")
+
+    view |> element("#pause-async-run") |> render_click()
+    assert_receive {:test_run_paused, ^run_id}, 2_000
+    assert Runs.get_run!(run.id).status == "paused"
+    assert [%{kind: "pause", status: status}] = Runs.list_controls(run)
+    assert status in ["applied", "claimed"]
+    assert has_element?(view, "#resume-async-run[phx-click='resume_async_run']")
+
+    view |> element("#resume-async-run") |> render_click()
+    assert_receive {:test_run_resumed, ^run_id}, 2_000
+    assert Runs.get_run!(run.id).status == "running"
+
+    view
+    |> form("#async-run-steering-form", %{"steering" => "Keep the verifier scoped"})
+    |> render_submit()
+
+    assert_receive {:test_run_steered, ^run_id, "Keep the verifier scoped"}, 2_000
+    assert Enum.any?(Runs.list_controls(run), &(&1.kind == "steer"))
+    assert has_element?(view, "#flash-info", "Run-scoped guidance dispatched and journaled")
+
+    view |> element("#cancel-async-run") |> render_click()
+    assert_receive {:test_run_cancelled, ^run_id}, 2_000
+    assert Runs.get_run!(run.id).status == "cancelled"
+    assert Enum.any?(Runs.list_controls(run), &(&1.kind == "cancel"))
+    assert has_element?(view, "#flash-info", "Cancellation request persisted")
+    assert Runs.get_run!(sibling.id).status == "draft"
+    refute has_element?(view, "#async-run-#{sibling.id}[aria-pressed='true']")
+
+    {:ok, failed} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Retryable failed execution",
+        kind: "analysis",
+        mode: "single",
+        status: "failed",
+        max_attempts: 3
+      })
+
+    view |> element("#async-run-#{failed.id}") |> render_click()
+    assert has_element?(view, "#retry-async-run[phx-click='retry_async_run']")
+    view |> element("#retry-async-run") |> render_click()
+    retried = Runs.get_run!(failed.id)
+    assert retried.status == "queued"
+    assert retried.attempt == 0
+    assert has_element?(view, "#flash-info", "Retry request persisted")
+
+    {:ok, draft} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Startable execution draft",
+        kind: "analysis",
+        mode: "single",
+        status: "draft"
+      })
+
+    view |> element("#async-run-#{draft.id}") |> render_click()
+    assert has_element?(view, "#start-async-run[phx-click='start_async_run']")
+    view |> element("#start-async-run") |> render_click()
+    assert Runs.get_run!(draft.id).status in ["queued", "running"]
+    assert has_element?(view, "#flash-info", "Draft queued for execution")
   end
 
   test "durable run PubSub updates refresh mission summary without changing explicit selection",
@@ -1398,6 +1910,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-swarm") |> render_click()
+    view |> element("#mission-control-mode-execution") |> render_click()
 
     assert has_element?(view, "#pause-run-agent-#{target_id}")
     view |> element("#pause-run-agent-#{target_id}") |> render_click()
@@ -1433,6 +1946,17 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
              view,
              "#run-agent-control-receipt-#{target_id}[data-control-result-status='consumed']"
            )
+
+    assert has_element?(view, "#resume-run-agent-#{target_id}[phx-value-action='resume']")
+    view |> element("#resume-run-agent-#{target_id}") |> render_click()
+    assert Runs.get_run_agent(target_id).status in ["idle", "running"]
+    assert Enum.any?(Runs.list_run_agent_controls(target_id), &(&1.kind == "resume"))
+
+    assert has_element?(view, "#cancel-run-agent-#{target_id}[phx-value-action='cancel']")
+    view |> element("#cancel-run-agent-#{target_id}") |> render_click()
+    assert Runs.get_run_agent(target_id).status in ["stopping", "cancelled"]
+    assert Enum.any?(Runs.list_run_agent_controls(target_id), &(&1.kind == "cancel"))
+    assert Runs.get_run_agent(untouched_id).status == "idle"
   end
 
   test "preserves agent guidance and does not push a client reset when dispatch fails", %{
@@ -1467,6 +1991,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-swarm") |> render_click()
+    view |> element("#mission-control-mode-execution") |> render_click()
 
     guidance = "Keep this exact guidance after the dispatcher error"
 
@@ -1533,6 +2058,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-swarm") |> render_click()
+    view |> element("#mission-control-mode-execution") |> render_click()
 
     assert has_element?(view, "#restart-run-agent-#{interrupted.agent_id}")
     view |> element("#restart-run-agent-#{interrupted.agent_id}") |> render_click()

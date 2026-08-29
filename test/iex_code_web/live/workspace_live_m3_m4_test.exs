@@ -211,6 +211,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
     } do
       start_run_dispatcher!()
       render_click(view, "switch_tab", %{"tab" => "swarm"})
+      view |> element("#mission-control-mode-execution") |> render_click()
       render_click(view, "open_goal_modal")
 
       view
@@ -251,6 +252,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
     } do
       start_run_dispatcher!()
       render_click(view, "switch_tab", %{"tab" => "swarm"})
+      view |> element("#mission-control-mode-execution") |> render_click()
       render_click(view, "open_goal_modal")
 
       view
@@ -335,15 +337,42 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
     test "pauses, resumes, and cancels active session execution", %{view: view} do
       # 1. Switch to Swarm tab
       view |> element("#instrument-card-swarm") |> render_click()
+      view |> element("#mission-control-mode-execution") |> render_click()
+      assert has_element?(view, "#mission-control-panel-execution:not([hidden])")
+
+      assert has_element?(
+               view,
+               "#mission-control-panel-execution button[phx-click='resume_session']"
+             )
+
+      assert has_element?(
+               view,
+               "#mission-control-panel-execution button[phx-click='open_cancel_modal']"
+             )
+
+      assert has_element?(
+               view,
+               "#mission-control-panel-execution #steering-form[phx-submit='send_steering']"
+             )
 
       # 2. Pause session
       render_click(view, "pause_session")
-      assert render(view) =~ "PAUSED"
+      assert has_element?(view, "#interactive-session-status", "Session status · PAUSED")
+
+      assert has_element?(
+               view,
+               "#mission-control-panel-execution button[phx-click='resume_session']"
+             )
 
       # 3. Resume session — with no active run it never phantom-resumes into
       # running; the session settles back to IDLE
       render_click(view, "resume_session")
-      assert render(view) =~ "IDLE"
+      assert has_element?(view, "#interactive-session-status", "Session status · IDLE")
+
+      assert has_element?(
+               view,
+               "#mission-control-panel-execution button[phx-click='resume_session']"
+             )
 
       # 4. Open cancel modal
       render_click(view, "open_cancel_modal")
@@ -357,12 +386,19 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       # 5. Cancel with rollback
       render_click(view, "cancel_session", %{"mode" => "rollback"})
       refute render(view) =~ "Stop & Cancel Session"
-      assert render(view) =~ "Session stopped"
+      assert has_element?(view, "#flash-info", "Session stopped")
     end
 
     test "delivers real-time steering directive to active swarm", %{view: view} do
-      render_click(view, "send_steering", %{"text" => "Focus on AST parser error recovery"})
-      assert render(view) =~ "Steering guidance delivered"
+      view |> element("#instrument-card-swarm") |> render_click()
+      view |> element("#mission-control-mode-execution") |> render_click()
+
+      view
+      |> form("#steering-form", %{"steering" => "Focus on AST parser error recovery"})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-info", "Steering guidance delivered")
+      assert has_element?(view, "#session-steering-input[value='']")
     end
   end
 
