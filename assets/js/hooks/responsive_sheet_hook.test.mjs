@@ -93,7 +93,7 @@ class FakeMedia extends FakeTarget {
   change(matches) { this.matches = matches; this.emit("change", {matches, media: this.media}) }
 }
 
-function setup({mobile = true, backgroundAria, backgroundInert = false, noFocusables = false} = {}) {
+function setup({mobile = true, backgroundAria, backgroundInert = false, noFocusables = false, dialog = false} = {}) {
   const media = new FakeMedia(mobile)
   const document = new FakeTarget()
   const root = new FakeElement("root")
@@ -104,7 +104,8 @@ function setup({mobile = true, backgroundAria, backgroundInert = false, noFocusa
   const sheet = new FakeElement("sheet", {dataset: {
     sheetCloseEvent: "close_sheet",
     sheetReturnId: "open-sheet",
-    sheetBackgroundId: "workspace-shell"
+    sheetBackgroundId: "workspace-shell",
+    ...(dialog ? {sheetDialog: "true"} : {})
   }})
   sheet.setAttribute("tabindex", "-1")
   const first = new FakeElement("first")
@@ -185,6 +186,19 @@ test("desktop mount is inert and media changes activate then fully clean up with
   assert.equal(h.document.listenerCount("keydown"), 0)
   h.flushFrames()
   assert.equal(h.trigger.focusCalls.length, 0)
+})
+
+test("mobile-only dialog semantics activate and restore truthfully", () => {
+  const h = setup({mobile: false, dialog: true})
+  h.hook.mounted()
+  assert.equal(h.sheet.getAttribute("role"), null)
+  assert.equal(h.sheet.getAttribute("aria-modal"), null)
+  h.media.change(true)
+  assert.equal(h.sheet.getAttribute("role"), "dialog")
+  assert.equal(h.sheet.getAttribute("aria-modal"), "true")
+  h.media.change(false)
+  assert.equal(h.sheet.getAttribute("role"), null)
+  assert.equal(h.sheet.getAttribute("aria-modal"), null)
 })
 
 test("cleanup restores the exact prior background state and composes sibling owners", () => {

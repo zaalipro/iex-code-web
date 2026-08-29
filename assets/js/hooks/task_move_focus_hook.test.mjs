@@ -5,7 +5,7 @@ import TaskMoveFocus, {TaskMoveFocus as NamedTaskMoveFocus} from "./task_move_fo
 const uuid = "123e4567-e89b-12d3-a456-426614174000"
 
 function harness({element = null} = {}) {
-  const listeners = new Map()
+  const registrations = []
   const frames = new Map()
   let nextFrame = 1
   const calls = {lookups: [], focuses: [], cancelled: []}
@@ -35,11 +35,12 @@ function harness({element = null} = {}) {
     calls.cancelled.push(id)
     frames.delete(id)
   }
-  context.handleEvent = (name, callback) => listeners.set(name, callback)
+  context.handleEvent = (name, callback) => registrations.push({name, callback})
   return {
     context,
     calls,
-    listeners,
+    registrations,
+    handler(name) { return registrations.find(registration => registration.name === name)?.callback },
     runFrame(id = 1) { frames.get(id)?.(); frames.delete(id) },
     restore() {
       globalThis.document = previous.document
@@ -57,7 +58,7 @@ test("mounted registers exactly one focus_task handler", () => {
   const h = harness()
   try {
     TaskMoveFocus.mounted.call(h.context)
-    assert.deepEqual([...h.listeners.keys()], ["focus_task"])
+    assert.deepEqual(h.registrations.map(registration => registration.name), ["focus_task"])
   } finally { h.restore() }
 })
 
@@ -66,7 +67,7 @@ test("valid card payload waits one RAF then focuses with preventScroll", () => {
   const h = harness({element: target})
   try {
     TaskMoveFocus.mounted.call(h.context)
-    h.listeners.get("focus_task")({id: target.id})
+    h.handler("focus_task")({id: target.id})
     assert.deepEqual(h.calls.lookups, [target.id])
     assert.deepEqual(h.calls.focuses, [])
     h.runFrame()
@@ -78,9 +79,19 @@ test("malformed, trigger, non-UUID and missing payloads are no-ops", () => {
   const h = harness()
   try {
     TaskMoveFocus.mounted.call(h.context)
-    const handler = h.listeners.get("focus_task")
+    const handler = h.handler("focus_task")
     for (const payload of [null, {}, {id: "move-task-trigger-" + uuid}, {id: "task-card-not-a-uuid"}, {id: `task-card-${uuid}-extra`}]) handler(payload)
     assert.deepEqual(h.calls.lookups, [])
+    assert.deepEqual(h.calls.focuses, [])
+  } finally { h.restore() }
+})
+
+test("valid canonical missing target is a lookup-only no-op", () => {
+  const h = harness()
+  try {
+    TaskMoveFocus.mounted.call(h.context)
+    h.handler("focus_task")({id: `task-card-${uuid}`})
+    assert.deepEqual(h.calls.lookups, [`task-card-${uuid}`])
     assert.deepEqual(h.calls.focuses, [])
   } finally { h.restore() }
 })
@@ -94,7 +105,7 @@ test("a newer valid event cancels the prior frame and wins", () => {
     const originalGet = h.context.el.ownerDocument.getElementById
     h.context.el.ownerDocument.getElementById = id => id === first.id ? first : id === second.id ? second : originalGet(id)
     TaskMoveFocus.mounted.call(h.context)
-    const handler = h.listeners.get("focus_task")
+    const handler = h.handler("focus_task")
     handler({id: first.id})
     handler({id: second.id})
     assert.ok(h.calls.cancelled.length >= 1)
@@ -108,7 +119,7 @@ test("destroyed cancels pending RAF and is idempotent", () => {
   const h = harness({element: target})
   try {
     TaskMoveFocus.mounted.call(h.context)
-    h.listeners.get("focus_task")({id: target.id})
+    h.handler("focus_task")({id: target.id})
     TaskMoveFocus.destroyed.call(h.context)
     TaskMoveFocus.destroyed.call(h.context)
     assert.equal(h.calls.cancelled.length, 1)

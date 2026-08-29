@@ -80,8 +80,7 @@
               </button>
             </:primary_action>
             <:primary_field>
-          <div class="kanban-workbench flex min-h-0 flex-1 flex-col overflow-hidden">
-            <% filter_form = to_form(@kanban_filter) %>
+          <div class="kanban-workbench flex min-h-0 flex-1 flex-col">
             <header class="kanban-toolbar">
               <div>
                 <p class="sf-metadata">Project-wide mission queue</p>
@@ -90,21 +89,22 @@
                 </h3>
               </div>
               <.form
-                for={filter_form}
+                for={@kanban_filter_form}
                 id="kanban-filter-form"
                 phx-change="filter_kanban"
                 class="kanban-filter-form"
               >
                 <.input
-                  field={filter_form[:search]}
+                  field={@kanban_filter_form[:search]}
                   id="kanban-filter-search"
                   type="text"
+                  label="Filter tasks"
                   placeholder="Filter tasks"
                   autocomplete="off"
                   class="kanban-filter-control"
                 />
                 <.input
-                  field={filter_form[:priority]}
+                  field={@kanban_filter_form[:priority]}
                   id="kanban-filter-priority"
                   type="select"
                   aria-label="Filter by priority"
@@ -112,7 +112,7 @@
                   class="kanban-filter-control"
                 />
                 <.input
-                  field={filter_form[:status]}
+                  field={@kanban_filter_form[:status]}
                   id="kanban-filter-status"
                   type="select"
                   aria-label="Filter by status"
@@ -120,7 +120,7 @@
                   class="kanban-filter-control"
                 />
                 <.input
-                  field={filter_form[:assignee]}
+                  field={@kanban_filter_form[:assignee]}
                   id="kanban-filter-assignee"
                   type="select"
                   aria-label="Filter by assignee"
@@ -142,15 +142,15 @@
             <div
               :if={@tasks == [] and kanban_filters_active?}
               id="kanban-filter-empty-state"
-              class="mb-4 flex flex-col items-start justify-between gap-4 rounded-2xl border border-dashed border-[#30363d] bg-[#11151c]/70 px-5 py-4 sm:flex-row sm:items-center"
+              class="kanban-empty-state"
             >
               <div class="flex items-start gap-3">
-                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#30363d] bg-[#161b22] text-gray-400">
+                <span class="kanban-empty-state__icon">
                   <.icon name="hero-funnel" class="h-4 w-4" />
                 </span>
                 <div>
-                  <p class="text-sm font-semibold text-gray-100">No tasks match these filters</p>
-                  <p class="mt-1 max-w-xl text-xs leading-5 text-gray-400">
+                  <p class="text-sm font-semibold text-[var(--sf-text-primary)]">No tasks match these filters</p>
+                  <p class="mt-1 max-w-xl text-sm leading-5 text-[var(--sf-text-secondary)]">
                     Your tasks are still here. Clear the active search and filters to show the full board.
                   </p>
                 </div>
@@ -159,7 +159,7 @@
                 id="kanban-clear-filters"
                 type="button"
                 phx-click="clear_kanban_filters"
-                class="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[#30363d] bg-[#161b22] px-3.5 py-2 text-xs font-semibold text-gray-200 transition-smooth hover:border-gray-500 hover:bg-[#1c2128]"
+                class="sf-control inline-flex min-h-11 shrink-0 items-center gap-2 px-3.5 text-sm font-semibold"
               >
                 <.icon name="hero-x-mark" class="h-3.5 w-3.5" /> Clear filters
               </button>
@@ -168,15 +168,15 @@
             <div
               :if={@tasks == [] and !kanban_filters_active?}
               id="kanban-empty-state"
-              class="mb-4 flex flex-col items-start justify-between gap-4 rounded-2xl border border-dashed border-[#30363d] bg-[#11151c]/70 px-5 py-4 sm:flex-row sm:items-center"
+              class="kanban-empty-state"
             >
               <div class="flex items-start gap-3">
-                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#30363d] bg-[#161b22] text-gray-400">
+                <span class="kanban-empty-state__icon">
                   <.icon name="hero-rectangle-stack" class="h-4 w-4" />
                 </span>
                 <div>
-                  <p class="text-sm font-semibold text-gray-100">Your task board is ready</p>
-                  <p class="mt-1 max-w-xl text-xs leading-5 text-gray-400">
+                  <p class="text-sm font-semibold text-[var(--sf-text-primary)]">Your task board is ready</p>
+                  <p class="mt-1 max-w-xl text-sm leading-5 text-[var(--sf-text-secondary)]">
                     This workspace starts empty. Add a task when you are ready—nothing will be
                     scheduled or executed automatically.
                   </p>
@@ -186,7 +186,7 @@
                 id="kanban-empty-create-task"
                 type="button"
                 phx-click="toggle_new_task_modal"
-                class="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[#ff5e3a] px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-orange-950/20 transition-smooth hover:bg-[#ff4e24]"
+                class="sf-control kanban-signal-control inline-flex min-h-11 shrink-0 items-center gap-2 px-3.5 text-sm font-semibold"
               >
                 <.icon name="hero-plus" class="h-3.5 w-3.5" /> Create first task
               </button>
@@ -313,7 +313,7 @@
                             for={@task_move_form}
                             id={"move-task-form-#{task.id}"}
                             phx-submit="move_task"
-                            phx-window-keydown={
+                            phx-keydown={
                               JS.push("cancel_task_move", value: %{id: task.id})
                               |> JS.focus(to: "#move-task-trigger-#{task.id}")
                             }
@@ -427,12 +427,7 @@
               </section>
             </:signal_panel>
             <:command_dock>
-              <div id="kanban-command-dock-slot" class="kanban-command-dock-slot">
-                <span class="sf-metadata">Command dock</span>
-                <span class="text-sm text-[var(--sf-text-secondary)]">
-                  Shared prompt and dispatch controls remain docked below this board.
-                </span>
-              </div>
+              <.shared_command_dock workspace_assigns={assigns} />
             </:command_dock>
           </.workbench_chassis>
         <% end %>
@@ -2092,11 +2087,10 @@
           <aside
             id="task-detail-drawer"
             phx-hook="ResponsiveSheet"
-            role="dialog"
-            aria-modal="true"
             aria-label="Task details"
             aria-labelledby="task-detail-title"
             tabindex="-1"
+            data-sheet-dialog="true"
             data-sheet-close-event="close_task_drawer"
             data-sheet-return-id={"task-card-#{@selected_task.id}"}
             data-sheet-background-id="kanban-board"
@@ -2106,7 +2100,7 @@
             <div class={["sf-task-detail-header flex items-center justify-between border-b border-[var(--sf-hairline)] p-4"]}>
               <div class="flex items-center gap-2">
                 <span class={[
-                  "sf-pill flex items-center gap-1.5 px-2 py-0.5 font-mono text-[10px] font-bold uppercase",
+                  "sf-pill flex items-center gap-1.5 px-2 py-0.5 font-mono text-xs font-bold uppercase",
                   @selected_task.status == "running" &&
                     "border-[var(--sf-success-mark)] text-[var(--sf-success-text)]",
                   @selected_task.status != "running" &&
@@ -2122,7 +2116,7 @@
                 <h2 id="task-detail-title" class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}>
                   Task details
                 </h2>
-                <span class={["font-mono text-xs text-[var(--sf-text-secondary)]"]}>#{String.slice(
+                <span class={["font-mono text-sm text-[var(--sf-text-secondary)]"]}>#{String.slice(
                   @selected_task.id,
                   0..5
                 )}</span>
@@ -2139,7 +2133,7 @@
             </div>
 
             <!-- Drawer Body -->
-            <div class="p-5 space-y-5 flex-1 font-mono text-xs">
+            <div class="p-5 space-y-5 flex-1 font-mono text-sm">
               <!-- Inline Task Editing Form -->
               <form
                 phx-submit="update_task"
@@ -2148,7 +2142,7 @@
               >
                 <input type="hidden" name="task_id" value={@selected_task.id} />
                 <div>
-                  <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1 font-mono">Title</label>
+                  <label class="block text-xs text-gray-400 uppercase tracking-wider mb-1 font-mono">Title</label>
                   <input
                     type="text"
                     name="title"
@@ -2159,29 +2153,29 @@
                 </div>
 
                 <div>
-                  <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1 font-mono">Description</label>
+                  <label class="block text-xs text-gray-400 uppercase tracking-wider mb-1 font-mono">Description</label>
                   <textarea
                     name="description"
                     rows="3"
                     placeholder="Task details and requirements..."
-                    class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl p-2.5 text-xs text-gray-300 font-mono focus:border-cyan-500 focus:outline-none"
+                    class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl p-2.5 text-sm text-gray-300 font-mono focus:border-cyan-500 focus:outline-none"
                   >{@selected_task.description}</textarea>
                 </div>
 
                 <div>
-                  <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1 font-mono">Tags (comma-separated)</label>
+                  <label class="block text-xs text-gray-400 uppercase tracking-wider mb-1 font-mono">Tags (comma-separated)</label>
                   <input
                     type="text"
                     name="tags"
                     value={Enum.join(@selected_task.tags || [], ", ")}
                     placeholder="e.g. backend, urgent, liveview"
-                    class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-1.5 text-xs text-gray-300 font-mono focus:border-cyan-500 focus:outline-none"
+                    class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-1.5 text-sm text-gray-300 font-mono focus:border-cyan-500 focus:outline-none"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  class="w-full py-1.5 bg-[#161b22] hover:bg-[#21262d] text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-mono font-medium transition-smooth flex items-center justify-center gap-1.5"
+                  class="w-full py-1.5 bg-[#161b22] hover:bg-[#21262d] text-cyan-300 border border-cyan-500/30 rounded-xl text-sm font-mono font-medium transition-smooth flex items-center justify-center gap-1.5"
                 >
                   <.icon name="hero-check" class="w-3.5 h-3.5" />
                   <span>Save Task Details</span>
@@ -2191,7 +2185,7 @@
               <!-- Subtasks Checklist Section -->
               <div class="pt-3 border-t border-[#21262d] space-y-3">
                 <div class="flex items-center justify-between">
-                  <span class="text-[11px] font-mono text-gray-400 uppercase tracking-wider">
+                  <span class="text-xs font-mono text-gray-400 uppercase tracking-wider">
                     Subtasks ({@selected_task.steps_completed}/{@selected_task.steps_total})
                   </span>
                   <% subtask_pct =
@@ -2203,7 +2197,7 @@
                     else
                       0
                     end %>
-                  <span class="text-[11px] font-mono font-bold text-emerald-400">{subtask_pct}%</span>
+                  <span class="text-xs font-mono font-bold text-emerald-400">{subtask_pct}%</span>
                 </div>
 
                 <!-- Progress Bar -->
@@ -2237,7 +2231,7 @@
                           <% end %>
                         </span>
                         <span class={[
-                          "text-xs font-mono truncate",
+                          "text-sm font-mono truncate",
                           is_done && "line-through text-gray-500",
                           !is_done && "text-gray-200 font-medium"
                         ]}>
@@ -2245,10 +2239,11 @@
                         </span>
                       </button>
                       <button
+                        id={"delete-subtask-trigger-#{sid}"}
                         type="button"
-                        phx-click="delete_subtask"
+                        phx-click="request_delete_subtask"
                         phx-value-id={sid}
-                        data-confirm="Delete this subtask?"
+                        phx-value-task-id={@selected_task.id}
                         aria-label={"Delete subtask " <> (subtask["title"] || subtask[:title])}
                         class="text-gray-500 hover:text-rose-400 p-1 rounded transition-smooth opacity-0 group-hover:opacity-100 focus:opacity-100"
                         title="Delete subtask"
@@ -2267,11 +2262,11 @@
                     name="title"
                     placeholder="Add a subtask..."
                     required
-                    class="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-1.5 text-xs text-white font-mono placeholder-gray-500 focus:border-cyan-500 focus:outline-none"
+                    class="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-1.5 text-sm text-white font-mono placeholder-gray-500 focus:border-cyan-500 focus:outline-none"
                   />
                   <button
                     type="submit"
-                    class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-mono font-medium transition-smooth shrink-0 flex items-center gap-1"
+                    class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-mono font-medium transition-smooth shrink-0 flex items-center gap-1"
                   >
                     <.icon name="hero-plus" class="w-3.5 h-3.5" />
                     <span>Add</span>
@@ -2291,7 +2286,7 @@
                         phx-value-id={@selected_task.id}
                         phx-value-assignee={a}
                         class={[
-                          "px-2 py-0.5 rounded text-[10px] font-mono transition-smooth capitalize",
+                          "px-2 py-0.5 rounded text-xs font-mono transition-smooth capitalize",
                           @selected_task.assignee == a && "bg-purple-600 text-white font-bold",
                           @selected_task.assignee != a &&
                             "bg-[#161b22] text-gray-400 hover:text-white"
@@ -2313,7 +2308,7 @@
                         phx-value-id={@selected_task.id}
                         phx-value-priority={p}
                         class={[
-                          "px-2 py-0.5 rounded text-[10px] font-mono transition-smooth uppercase",
+                          "px-2 py-0.5 rounded text-xs font-mono transition-smooth uppercase",
                           @selected_task.priority == p && p == "critical" &&
                             "bg-red-600 text-white font-bold",
                           @selected_task.priority == p && p == "high" &&
@@ -2340,7 +2335,7 @@
 
               <!-- Status Transition Dropdown Across 8 Columns -->
               <div class="pt-3 border-t border-[#21262d] space-y-1.5">
-                <div class="text-[11px] text-gray-400 uppercase tracking-wider">
+                <div class="text-xs text-gray-400 uppercase tracking-wider">
                   Move Status
                 </div>
                 <div class="grid grid-cols-4 gap-1">
@@ -2351,7 +2346,7 @@
                       phx-value-id={@selected_task.id}
                       phx-value-status={s}
                       class={[
-                        "px-2 py-1 rounded text-[10px] uppercase font-bold transition-smooth text-center",
+                        "px-2 py-1 rounded text-xs uppercase font-bold transition-smooth text-center",
                         @selected_task.status == s && "bg-emerald-600 text-white shadow-sm",
                         @selected_task.status != s &&
                           "bg-[#161b22] hover:bg-[#21262d] text-gray-400 hover:text-white"
@@ -2365,18 +2360,18 @@
 
               <!-- Effort Estimate Button -->
               <div class="pt-3 border-t border-[#21262d]">
-                <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-2">
+                <div class="text-xs font-mono text-gray-400 uppercase tracking-wider mb-2">
                   Estimate
                 </div>
                 <%= if @selected_task.estimate do %>
-                  <div class="p-2.5 bg-[#161b22] border border-[#21262d] rounded-xl font-mono text-xs text-amber-300">
+                  <div class="p-2.5 bg-[#161b22] border border-[#21262d] rounded-xl font-mono text-sm text-amber-300">
                     {@selected_task.estimate}
                   </div>
                 <% else %>
                   <button
                     phx-click="estimate_task"
                     phx-value-id={@selected_task.id}
-                    class="w-full flex items-center justify-center gap-2 py-2 px-3 bg-[#161b22] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-xs font-mono text-gray-300 transition-smooth"
+                    class="w-full flex items-center justify-center gap-2 py-2 px-3 bg-[#161b22] hover:bg-[#21262d] border border-[#30363d] rounded-xl text-sm font-mono text-gray-300 transition-smooth"
                   >
                     <.icon name="hero-calculator" class="w-3.5 h-3.5 text-amber-400" />
                     Estimate effort (makes model call)
@@ -2387,10 +2382,10 @@
               <!-- Latest Summary -->
               <%= if @selected_task.latest_summary do %>
                 <div class="pt-3 border-t border-[#21262d]">
-                  <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-2">
+                  <div class="text-xs font-mono text-gray-400 uppercase tracking-wider mb-2">
                     Latest Summary
                   </div>
-                  <div class="p-3 bg-[#161b22] border border-[#21262d] rounded-xl font-mono text-xs text-gray-300">
+                  <div class="p-3 bg-[#161b22] border border-[#21262d] rounded-xl font-mono text-sm text-gray-300">
                     {@selected_task.latest_summary}
                   </div>
                 </div>
@@ -2402,7 +2397,7 @@
                   <button
                     phx-click="claim_task"
                     phx-value-id={@selected_task.id}
-                    class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-mono font-medium transition-smooth"
+                    class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-mono font-medium transition-smooth"
                   >
                     Claim & Run Worker
                   </button>
@@ -2410,17 +2405,17 @@
                     phx-click="move_task"
                     phx-value-id={@selected_task.id}
                     phx-value-status="done"
-                    class="px-3 py-2 bg-[#21262d] hover:bg-gray-700 text-gray-300 rounded-xl text-xs font-mono transition-smooth"
+                    class="px-3 py-2 bg-[#21262d] hover:bg-gray-700 text-gray-300 rounded-xl text-sm font-mono transition-smooth"
                   >
                     Mark Done
                   </button>
                 </div>
                 <button
+                  id={"delete-task-trigger-#{@selected_task.id}"}
                   type="button"
-                  phx-click="delete_task"
+                  phx-click="request_delete_task"
                   phx-value-id={@selected_task.id}
-                  data-confirm="Delete this task? This action cannot be undone."
-                  class="w-full py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 rounded-xl text-xs font-mono transition-smooth flex items-center justify-center gap-1.5"
+                  class="sf-control min-h-11 w-full justify-center border-[var(--sf-live-mark)] text-[var(--sf-live-text)]"
                 >
                   <.icon name="hero-trash" class="w-3.5 h-3.5" />
                   <span>Delete Task</span>
@@ -2430,554 +2425,87 @@
           </aside>
           <% end %>
         <% end %>
+
+
       </div>
 
-      <%!-- Shared command dock --%>
-      <footer
-        id="prompt-composer"
-        aria-label="Agent prompt composer"
-        data-command-dock-state={
-          if(@run_setup_open? or @active_view == "chat",
-            do: "expanded",
-            else: if(@active_view == "deck", do: "compact", else: "focus-expand")
-          )
-        }
-        class="sf-command-composer max-h-[calc(100dvh-3.5rem)] shrink-0 overflow-y-auto overscroll-contain p-2 pt-0 sm:p-3 sm:pt-0 xl:p-5 xl:pt-0"
-      >
-        <div class="max-w-4xl mx-auto">
-          <%!-- Setup tray and prompt form stay siblings inside one shared vertical shell. --%>
-          <div class={["sf-command-dock-shell"]}>
-            <section
-              :if={@run_setup_open?}
-              id="run-setup-tray"
-              aria-label="Run setup"
-              class={["sf-sheet-scroll sf-run-setup-tray"]}
+        <%= if match?({:task, _}, @pending_task_confirmation) do %>
+          <% {:task, pending_task} = @pending_task_confirmation %>
+          <div
+            id={"task-delete-confirmation-#{pending_task.id}"}
+            phx-hook="ResponsiveSheet"
+            role="presentation"
+            data-sheet-close-event="cancel_task_delete"
+            data-sheet-return-id={"delete-task-trigger-#{pending_task.id}"}
+            data-sheet-background-id="workspace-views"
+            class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] p-4 sm:items-center"
+          >
+            <div
+              id={"task-delete-confirmation-dialog-#{pending_task.id}"}
+              phx-hook="ModalFocus"
+              data-modal-focus
+              data-cancel-event="cancel_task_delete"
+              data-initial-focus="#cancel-task-delete"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="task-delete-confirmation-title"
+              tabindex="-1"
+              class="sf-chassis w-full max-w-md p-6"
             >
-              <.form
-                for={@run_setup_form}
-                id="run-setup-panel"
-                phx-change="update_run_setup"
-                class={["sf-run-setup-form mb-3 max-h-[min(60dvh,42rem)] overflow-y-auto overscroll-contain border-b pb-3 pr-1"]}
-              >
-                <div class="mb-3 flex items-start justify-between gap-4">
-                  <div>
-                    <p class={["font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--sf-live-text)]"]}>
-                      Durable execution manifest
-                    </p>
-                    <p class={["mt-1 text-[11px] leading-5 text-[var(--sf-text-secondary)]"]}>
-                      Persist mode, evidence providers, attempt policy, enforced token/time limits, and reported-cost budget.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    phx-click="toggle_run_setup"
-                    aria-label="Close run setup"
-                    class={["sf-control sf-run-setup-close inline-flex min-h-11 min-w-11 items-center justify-center p-2 text-[var(--sf-text-secondary)] transition-colors"]}
-                  >
-                    <.icon name="hero-x-mark" class="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <.input
-                    field={@run_setup_form[:mode]}
-                    id="run-setup-mode"
-                    type="select"
-                    label="Mission type"
-                    options={[
-                      "Single agent": "single",
-                      "Coding swarm": "swarm",
-                      "Deep research": "research",
-                      "Typed DAG (non-mutating)": "dag"
-                    ]}
-                    value={@run_setup_form[:mode].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:priority]}
-                    id="run-setup-priority"
-                    type="select"
-                    label="Queue priority"
-                    options={[Low: "low", Normal: "normal", High: "high", Critical: "critical"]}
-                    value={@run_setup_form[:priority].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    :if={@run_setup_mode != "research"}
-                    field={@run_setup_form[:max_attempts]}
-                    id="run-setup-max-attempts"
-                    type="number"
-                    min="1"
-                    max="10"
-                    label="Manual retry ceiling"
-                    value={@run_setup_form[:max_attempts].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <div
-                    :if={@run_setup_mode == "research"}
-                    id="run-setup-research-attempt-policy"
-                    class={["sf-run-setup-policy sf-control px-3 py-2"]}
-                  >
-                    <p class={["text-xs font-semibold text-[var(--sf-live-text)]"]}>One paid run attempt</p>
-                    <p class={["mt-1 text-[10px] leading-4 text-[var(--sf-text-secondary)]"]}>
-                      Whole-run replay is disabled. Review failures before launching a new research run.
-                    </p>
-                  </div>
-                  <.input
-                    field={@run_setup_form[:time_budget_minutes]}
-                    id="run-setup-time-budget"
-                    type="number"
-                    min="1"
-                    max="10080"
-                    label="Time budget (min)"
-                    value={@run_setup_form[:time_budget_minutes].value}
-                    placeholder="Unset"
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:token_budget]}
-                    id="run-setup-token-budget"
-                    type="number"
-                    min="1"
-                    label="Token budget"
-                    value={@run_setup_form[:token_budget].value}
-                    placeholder="Unset"
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:cost_budget_cents]}
-                    id="run-setup-cost-budget"
-                    type="number"
-                    min="1"
-                    label="Reported cost budget (¢)"
-                    value={@run_setup_form[:cost_budget_cents].value}
-                    placeholder="Unset"
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:agent_max_turns]}
-                    id="run-setup-agent-max-turns"
-                    type="number"
-                    min="1"
-                    max="20"
-                    label="Agent / coder turn limit"
-                    aria-description="Applies to the single-agent loop or each durable swarm coding and diagnostic repair pass."
-                    value={@run_setup_form[:agent_max_turns].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:swarm_agent_count]}
-                    id="run-setup-swarm-agent-count"
-                    type="number"
-                    min="4"
-                    max="32"
-                    label="Swarm agents"
-                    value={@run_setup_form[:swarm_agent_count].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:swarm_max_retries]}
-                    id="run-setup-swarm-max-retries"
-                    type="number"
-                    min="0"
-                    max="10"
-                    label="Swarm correction retries"
-                    value={@run_setup_form[:swarm_max_retries].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:research_level]}
-                    id="run-setup-research-level"
-                    type="select"
-                    label="Research effort"
-                    options={[Low: "low", Medium: "medium", High: "high", Ultra: "ultra"]}
-                    value={@run_setup_form[:research_level].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                  <.input
-                    field={@run_setup_form[:research_max_sources]}
-                    id="run-setup-research-sources"
-                    type="number"
-                    min="1"
-                    max="40"
-                    label="Maximum sources"
-                    value={@run_setup_form[:research_max_sources].value}
-                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
-                  />
-                </div>
-
-                <p
-                  :if={@run_setup_policy_error}
-                  id="run-setup-policy-error"
-                  role="alert"
-                  class={["mt-3 border border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] px-3 py-2 text-xs leading-5 text-[var(--sf-live-text)]"]}
-                >
-                  {@run_setup_policy_error}. The submitted value is preserved; fix it before queueing work.
-                </p>
-
-                <div
-                  :if={@run_setup_mode == "dag"}
-                  id="run-setup-dag-manifest"
-                  class={["sf-run-setup-dag mt-3 border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-3"]}
-                >
-                  <div class="mb-2 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                      <p class={["font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sf-topology-text)]"]}>
-                        Immutable typed manifest
-                      </p>
-                      <p class={["mt-1 max-w-2xl text-[11px] leading-5 text-[var(--sf-text-secondary)]"]}>
-                        Editable sample for common Phoenix repositories. Missing files fail visibly;
-                        only bounded, registered project-read and research node kinds execute.
-                      </p>
-                    </div>
-                    <span class={["font-mono text-[9px] uppercase tracking-wider text-[var(--sf-text-secondary)]"]}>
-                      256 KB raw limit · 128 nodes
-                    </span>
-                  </div>
-                  <.input
-                    field={@run_setup_form[:dag_manifest_json]}
-                    id="run-setup-dag-manifest-json"
-                    type="textarea"
-                    rows="16"
-                    label="DAG manifest JSON"
-                    value={@run_setup_dag_manifest_json}
-                    spellcheck="false"
-                    class={["sf-run-setup-manifest block min-h-72 w-full resize-y rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-code-surface)] px-3 py-2.5 font-mono text-xs leading-5 text-[var(--sf-code-text)] outline-none transition-colors placeholder:text-[var(--sf-text-secondary)] focus:border-[var(--sf-live-mark)] focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"]}
-                  />
-                  <p
-                    :if={@run_setup_dag_error}
-                    id="run-setup-dag-manifest-error"
-                    role="alert"
-                    class={["mt-2 text-xs text-[var(--sf-live-text)]"]}
-                  >
-                    Manifest JSON exceeds the safe editor boundary. Shorten it before queueing.
-                  </p>
-                </div>
-
-                <fieldset
-                  id="run-setup-providers"
-                  disabled={@run_setup_mode != "research"}
-                  aria-disabled={if(@run_setup_mode != "research", do: "true", else: "false")}
-                  class={[
-                    "sf-run-setup-providers sf-control mt-2 px-3 py-2",
-                    @run_setup_mode != "research" && "cursor-not-allowed opacity-40"
-                  ]}
-                >
-                  <legend class={["px-1 font-mono text-[9px] font-semibold uppercase tracking-wider text-[var(--sf-text-secondary)]"]}>
-                    Federated providers · ordered fan-out
-                  </legend>
-                  <div class="flex flex-wrap gap-x-4 gap-y-1">
-                    <label
-                      :for={provider <- @settings.search_provider_order || ["duckduckgo"]}
-                      class={["inline-flex min-h-8 cursor-pointer items-center gap-1.5 font-mono text-[11px] text-[var(--sf-text-secondary)]"]}
-                    >
-                      <input
-                        type="hidden"
-                        name={"run_setup[providers][#{provider}]"}
-                        value="false"
-                      />
-                      <input
-                        id={"run-setup-provider-#{provider}"}
-                        type="checkbox"
-                        name={"run_setup[providers][#{provider}]"}
-                        value="true"
-                        checked={provider in @run_setup_providers}
-                        class={["h-4 w-4 border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] accent-[var(--sf-live-mark)]"]}
-                      />
-                      {provider |> String.replace("_", " ") |> String.capitalize()}
-                    </label>
-                  </div>
-                </fieldset>
-              </.form>
-            </section>
-
-              <.form
-                for={@prompt_form}
-                id="prompt-form"
-                phx-submit="submit_prompt"
-                data-command-has-context={to_string(MapSet.size(@research_attachments) > 0)}
-                class="sf-command-dock-form"
-              >
-                <input
-                  id="prompt-request-id"
-                  type="hidden"
-                  name="request_id"
-                  value={@prompt_form[:request_id].value}
-                />
-                <label for="prompt-textarea" class="sr-only">Agent prompt or swarm instruction</label>
-                <textarea
-                  id="prompt-textarea"
-                  name="prompt"
-                  rows="2"
-                  required
-                  aria-required="true"
-                  phx-hook="KeyboardSubmit"
-                  placeholder="What's my next task or swarm instruction? (e.g. /swarm fix authentication)"
-                  class={["sf-command-textarea w-full resize-none border-0 bg-transparent px-2 py-1 font-sans text-sm"]}
-                ></textarea>
-
-                <%!-- Bottom Action Toolbar --%>
-                <div class={["sf-command-dock-toolbar flex min-w-0 items-center justify-between gap-2 border-t px-1 pt-2"]}>
-                  <%!-- Left Tool / Model Badges --%>
-                  <div
-                    data-command-context
-                    class={["sf-command-context flex min-w-0 flex-wrap items-center gap-1.5"]}
-                  >
-                    <div
-                      :if={MapSet.size(@research_attachments) > 0}
-                      id="prompt-research-attachments"
-                      data-command-context
-                      class={["sf-command-attachments flex flex-wrap items-center gap-1.5 px-2"]}
-                      aria-label="Attached deep research results"
-                    >
-                      <span class={["mr-1 font-mono text-[9px] uppercase tracking-wider text-[var(--sf-text-secondary)]"]}>
-                        Context
-                      </span>
-                      <button
-                        :for={public_id <- @research_attachments |> MapSet.to_list() |> Enum.sort()}
-                        id={"prompt-research-attachment-#{public_id}"}
-                        type="button"
-                        phx-click="toggle_research_attachment"
-                        phx-value-id={public_id}
-                        title={"Remove ready research result ##{public_id}"}
-                        class={["sf-command-attachment sf-control inline-flex min-h-7 items-center gap-1.5 px-2 font-mono text-[9px] transition-colors"]}
-                      >
-                        <.icon name="hero-document-text" class="h-3 w-3" /> /deep_research {public_id}
-                        <.icon name="hero-x-mark" class="h-3 w-3" />
-                      </button>
-                    </div>
-                    <div data-command-tools class={["flex min-w-0 items-center gap-1.5 sm:gap-2"]}>
-                      <%!-- Dispatch announcement and setup are tools in the compact row. --%>
-                      <div
-                        data-command-announcement
-                        class={["flex shrink-0 items-center gap-1.5 text-[var(--sf-text-secondary)]"]}
-                      >
-                        <span class={["text-xs text-[var(--sf-live-mark)]"]}>◆</span>
-                        <span class={["hidden font-mono text-[10px] xl:inline"]}>
-                          <%= if @dispatch_mode == "background" do %>
-                            Durable mode · queued work continues after you disconnect
-                          <% else %>
-                            Interactive mode · keep this session open for live conversation
-                          <% end %>
-                        </span>
-                      </div>
-                      <button
-                        id="toggle-run-setup"
-                        type="button"
-                        phx-click="toggle_run_setup"
-                        data-run-setup-toggle
-                        data-command-setup
-                        aria-expanded={@run_setup_open?}
-                        aria-controls="run-setup-tray"
-                        aria-label={if @run_setup_open?, do: "Close run setup", else: "Open run setup"}
-                        class={["sf-control inline-flex min-h-11 shrink-0 items-center gap-1.5 px-3 font-mono text-xs transition-colors"]}
-                      >
-                        <.icon name="hero-adjustments-horizontal" class="h-3 w-3 text-[var(--sf-live-mark)]" />
-                        <span class={["sr-only sm:not-sr-only"]}>Run setup</span>
-                      </button>
-
-                      <%!-- Model Pill Dropdown --%>
-                      <div
-                        class="relative"
-                        phx-click-away={@open_dropdown == "model" && "close_dropdowns"}
-                      >
-                        <button
-                          type="button"
-                          phx-click="toggle_dropdown"
-                          phx-value-name="model"
-                          aria-haspopup="listbox"
-                          aria-expanded={@open_dropdown == "model"}
-                          aria-controls={
-                            if(@open_dropdown == "model", do: "model-picker-listbox", else: nil)
-                          }
-                          aria-label="Select AI model"
-                          class={["sf-command-model sf-control flex min-w-0 max-w-28 items-center rounded-xl px-2.5 py-1 font-mono text-xs transition-smooth sm:max-w-none"]}
-                        >
-                          <.icon name="hero-sparkles" class="mr-1.5 h-3.5 w-3.5 text-[var(--sf-live-mark)]" />
-                          <span class="truncate">{@session.model_name}</span>
-                          <.icon name="hero-chevron-up-down" class="ml-1.5 h-3 w-3 text-[var(--sf-text-secondary)]" />
-                        </button>
-
-                        <%= if @open_dropdown == "model" do %>
-                          <div
-                            id="model-picker-listbox"
-                            role="listbox"
-                            aria-label="AI model"
-                            class={["sf-command-model-list absolute bottom-full left-0 z-50 mb-2 w-64 rounded-2xl border p-1.5 shadow-[0_24px_72px_-38px_var(--sf-shadow)] backdrop-blur-xl animate-in fade-in zoom-in-95"]}
-                          >
-                            <div class={["sf-command-model-list-heading mb-1 border-b px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"]}>
-                              Select AI Model
-                            </div>
-                            <%= for {model_id, label, provider_label, provider_id} <- [
-                              {"ox-alpha", "OX Alpha", "LLMotions · OpenAI-compatible", "openai"},
-                              {"gemini-3.7-flash-high", "Gemini 3.7 Flash High", "OpenAI-compatible", "openai"},
-                              {"deepseek-v4-pro", "DeepSeek V4 Pro", "OpenAI-compatible", "openai"},
-                              {"gpt-5.4-turbo", "GPT 5.4 Turbo", "OpenAI", "openai"},
-                              {"claude-3.7-sonnet", "Claude 3.7 Sonnet", "Anthropic", "anthropic"}
-                            ] do %>
-                              <button
-                                type="button"
-                                role="option"
-                                aria-selected={@session.model_name == model_id}
-                                phx-click="change_model"
-                                phx-value-model={model_id}
-                                phx-value-provider={provider_id}
-                                class={["sf-command-option flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs transition-smooth"]}
-                              >
-                                <div class="text-left">
-                                  <div class={["font-medium text-[var(--sf-text-primary)]"]}>{label}</div>
-                                  <div class={["font-mono text-[10px] text-[var(--sf-text-secondary)]"]}>
-                                    {provider_label}
-                                  </div>
-                                </div>
-                                <%= if @session.model_name == model_id do %>
-                                  <.icon name="hero-check" class="h-3.5 w-3.5 text-[var(--sf-success-mark)]" />
-                                <% end %>
-                              </button>
-                            <% end %>
-                          </div>
-                        <% end %>
-                      </div>
-
-                      <%!-- Interactive Tool Pills --%>
-                      <div class="tooltip-trigger">
-                        <button
-                          type="button"
-                          phx-click="toggle_tool"
-                          phx-value-tool="ast_search"
-                          aria-label="Toggle AST search tool"
-                          aria-pressed={MapSet.member?(@active_tools, "ast_search")}
-                          class={[
-                            "sf-control sf-command-tool p-1.5 rounded-lg transition-smooth",
-                            MapSet.member?(@active_tools, "ast_search") &&
-                              "sf-command-tool-active",
-                            !MapSet.member?(@active_tools, "ast_search") &&
-                              "sf-command-tool-idle"
-                          ]}
-                        >
-                          <.icon name="hero-magnifying-glass" class="w-3.5 h-3.5" />
-                        </button>
-                        <div class={["sf-command-tooltip luxury-tooltip"]}>
-                          <div class={["sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"]}>
-                            AST Search Engine
-                          </div>
-                          <div class={["sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"]}>
-                            <span class={["text-[var(--sf-text-secondary)]"]}>Semantic AST Query</span>
-                            <span class={["text-[var(--sf-topology-text)] font-semibold"]}>{if MapSet.member?(
-                                                                            @active_tools,
-                                                                            "ast_search"
-                                                                          ),
-                                                                          do: "Active",
-                                                                          else: "Disabled"}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div class="tooltip-trigger">
-                        <button
-                          type="button"
-                          phx-click="toggle_tool"
-                          phx-value-tool="web_search"
-                          aria-label="Toggle live web search tool"
-                          aria-pressed={MapSet.member?(@active_tools, "web_search")}
-                          class={[
-                            "sf-control sf-command-tool p-1.5 rounded-lg transition-smooth",
-                            MapSet.member?(@active_tools, "web_search") &&
-                              "sf-command-tool-active",
-                            !MapSet.member?(@active_tools, "web_search") &&
-                              "sf-command-tool-idle"
-                          ]}
-                        >
-                          <.icon name="hero-globe-alt" class="w-3.5 h-3.5" />
-                        </button>
-                        <div class={["sf-command-tooltip luxury-tooltip"]}>
-                          <div class={["sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"]}>
-                            Live Web Search
-                          </div>
-                          <div class={["sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"]}>
-                            <span class={["text-[var(--sf-text-secondary)]"]}>Federated providers & safe fetch</span>
-                            <span class={["text-[var(--sf-success-text)] font-semibold"]}>{if MapSet.member?(
-                                                                               @active_tools,
-                                                                               "web_search"
-                                                                             ),
-                                                                             do: "Active",
-                                                                             else: "Disabled"}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <%!-- Prompt dispatch mode --%>
-                  <div
-                      id="dispatch-mode-switcher"
-                      data-command-dispatch
-                      class={["flex shrink-0 items-center border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] p-0.5"]}
-                      role="group"
-                      aria-label="Prompt dispatch mode"
-                    >
-                      <button
-                        id="dispatch-mode-background"
-                        type="button"
-                        phx-click="set_dispatch_mode"
-                        phx-value-mode="background"
-                        aria-pressed={to_string(@dispatch_mode == "background")}
-                        aria-label="Use background dispatch mode"
-                        title="Persist and run asynchronously"
-                        class={[
-                          "sf-control sf-command-dispatch-button flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
-                          @dispatch_mode == "background" && "sf-command-dispatch-active",
-                          @dispatch_mode != "background" && "sf-command-dispatch-idle"
-                        ]}
-                      >
-                        <.icon name="hero-queue-list" class="h-3 w-3" />
-                        <span class="hidden lg:inline">Background</span>
-                      </button>
-                      <button
-                        id="dispatch-mode-interactive"
-                        type="button"
-                        phx-click="set_dispatch_mode"
-                        phx-value-mode="interactive"
-                        aria-pressed={to_string(@dispatch_mode == "interactive")}
-                        aria-label="Use interactive dispatch mode"
-                        title="Send to the live session"
-                        class={[
-                          "sf-control sf-command-dispatch-button flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
-                          @dispatch_mode == "interactive" && "sf-command-dispatch-active",
-                          @dispatch_mode != "interactive" && "sf-command-dispatch-idle"
-                        ]}
-                      >
-                        <.icon name="hero-bolt" class="h-3 w-3" />
-                        <span class="hidden lg:inline">Interactive</span>
-                      </button>
-                    </div>
-
-                  <%!-- Right Send Button --%>
-                  <div data-command-send class={["tooltip-trigger shrink-0"]}>
-                    <button
-                      type="submit"
-                      phx-disable-with="Executing..."
-                      class={["sf-control sf-command-send min-h-11 px-4 text-xs font-semibold transition-colors"]}
-                    >
-                      {if @dispatch_mode == "background", do: "Queue run", else: "Send"}
-                    </button>
-                    <div class={["sf-command-tooltip luxury-tooltip luxury-tooltip-left"]}>
-                      <div class={["sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"]}>
-                        {if @dispatch_mode == "background",
-                          do: "Start durable background run",
-                          else: "Send live prompt"}
-                      </div>
-                      <div class={["sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"]}>
-                        <span class={["text-[var(--sf-text-secondary)]"]}>Trigger Pipeline</span>
-                        <span class={["text-[var(--sf-live-text)] font-semibold"]}>↵ Enter</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </.form>
+              <h2 id="task-delete-confirmation-title" class="text-lg font-semibold text-[var(--sf-text-primary)]">
+                Delete task?
+              </h2>
+              <p class="mt-2 text-sm text-[var(--sf-text-secondary)]">
+                This permanently removes <strong>{pending_task.title}</strong> and its subtasks.
+              </p>
+              <div class="mt-6 flex justify-end gap-3">
+                <button id="cancel-task-delete" type="button" phx-click="cancel_task_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
+                <button id="confirm-task-delete" type="button" phx-click="confirm_task_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete task</button>
+              </div>
+            </div>
           </div>
-        </div>
-      </footer>
+        <% end %>
+
+        <%= if match?({:subtask, _, _}, @pending_task_confirmation) do %>
+          <% {:subtask, pending_subtask_task, pending_subtask_id} = @pending_task_confirmation %>
+          <div
+            id={"subtask-delete-confirmation-#{pending_subtask_id}"}
+            phx-hook="ResponsiveSheet"
+            role="presentation"
+            data-sheet-close-event="cancel_subtask_delete"
+            data-sheet-return-id={"delete-subtask-trigger-#{pending_subtask_id}"}
+            data-sheet-background-id="workspace-views"
+            class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] p-4 sm:items-center"
+          >
+            <div
+              id={"subtask-delete-confirmation-dialog-#{pending_subtask_id}"}
+              phx-hook="ModalFocus"
+              data-modal-focus
+              data-cancel-event="cancel_subtask_delete"
+              data-initial-focus="#cancel-subtask-delete"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="subtask-delete-confirmation-title"
+              tabindex="-1"
+              class="sf-chassis w-full max-w-md p-6"
+            >
+              <h2 id="subtask-delete-confirmation-title" class="text-lg font-semibold text-[var(--sf-text-primary)]">
+                Delete subtask?
+              </h2>
+              <p class="mt-2 text-sm text-[var(--sf-text-secondary)]">This removes the selected checklist item.</p>
+              <div class="mt-6 flex justify-end gap-3">
+                <button id="cancel-subtask-delete" type="button" phx-click="cancel_subtask_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
+                <button id="confirm-subtask-delete" type="button" phx-click="confirm_subtask_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete subtask</button>
+              </div>
+            </div>
+          </div>
+        <% end %>
+
+      <%!-- Shared command dock --%>
+      <%= if @active_view != "kanban" do %>
+        <.shared_command_dock workspace_assigns={assigns} />
+      <% end %>
+      <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>
     </main>
   </div>
 

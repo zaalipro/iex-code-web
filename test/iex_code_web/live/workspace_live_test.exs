@@ -783,9 +783,10 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     assert task_toggled.steps_completed == 1
 
     # Delete subtask
-    view
-    |> element("button[phx-click='delete_subtask'][phx-value-id='#{sid}']")
-    |> render_click()
+    render_click(view, "request_delete_subtask", %{"id" => sid, "task_id" => task.id})
+
+    assert has_element?(view, "[id^='subtask-delete-confirmation-']")
+    render_click(view, "confirm_subtask_delete")
 
     task_deleted = IexCode.Kanban.get_task!(task.id)
     assert task_deleted.subtasks == []

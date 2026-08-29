@@ -244,6 +244,10 @@ defmodule IexCodeWeb.WorkspaceLive do
         "assignee" => "",
         "search" => ""
       })
+      |> assign(
+        :kanban_filter_form,
+        to_form(%{"status" => "", "priority" => "", "assignee" => "", "search" => ""})
+      )
       # Inline Editor assigns
       |> assign(:open_buffers, [])
       |> assign(:active_editor_path, nil)
@@ -400,6 +404,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:command_palette_results, [])
       |> assign(:command_palette_selected_index, 0)
       |> assign(:pending_session_delete, nil)
+      |> assign(:pending_task_confirmation, nil)
       # Git Branch & Staging Hub assigns
       |> assign(:git_branches, [])
       |> assign(:current_branch, "main")
@@ -773,6 +778,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(:kanban_filter, new_filter)
+     |> assign(:kanban_filter_form, to_form(new_filter))
      |> assign(:tasks, tasks)
      |> assign(:open_dropdown, nil)}
   end
@@ -785,6 +791,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(:kanban_filter, filters)
+     |> assign(:kanban_filter_form, to_form(filters))
      |> assign(:tasks, tasks)
      |> assign(:open_dropdown, nil)}
   end
@@ -1726,6 +1733,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     socket =
       socket
+      |> then(fn socket -> if show?, do: clear_task_move_state(socket), else: socket end)
       |> assign(:show_command_palette, show?)
       |> assign(:command_palette_query, query)
       |> assign(:command_palette_form, to_form(%{"query" => query}, as: :palette))
@@ -2039,7 +2047,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("open_goal_modal", _params, socket) do
-    {:noreply, assign(socket, :show_goal_modal, true)}
+    {:noreply, socket |> clear_task_move_state() |> assign(:show_goal_modal, true)}
   end
 
   @impl true
@@ -2210,7 +2218,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("open_cancel_modal", _params, socket) do
-    {:noreply, assign(socket, :show_cancel_modal, true)}
+    {:noreply, socket |> clear_task_move_state() |> assign(:show_cancel_modal, true)}
   end
 
   @impl true
@@ -2310,7 +2318,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("open_task_drawer", %{"id" => task_id}, socket) do
-    case Kanban.get_task(socket.assigns.project.id, task_id) do
+    case scoped_task(socket, task_id) do
       nil ->
         {:noreply,
          socket
@@ -2322,11 +2330,14 @@ defmodule IexCodeWeb.WorkspaceLive do
         {:noreply,
          socket
          |> ensure_kanban_view()
+         |> clear_task_move_state()
          |> assign(:selected_task, task)
          |> assign(:expanded_task_status, task.status)
          |> assign(:show_task_drawer, true)}
     end
   end
+
+  def handle_event("open_task_drawer", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("close_task_drawer", _params, socket) do
@@ -2335,8 +2346,11 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("toggle_new_task_modal", _params, socket) do
+    opening? = !socket.assigns.show_new_task_modal
+
     {:noreply,
      socket
+     |> then(fn socket -> if opening?, do: clear_task_move_state(socket), else: socket end)
      |> assign(:show_new_task_modal, !socket.assigns.show_new_task_modal)
      |> assign(:open_modal_dropdown, nil)}
   end
@@ -2445,10 +2459,14 @@ defmodule IexCodeWeb.WorkspaceLive do
     expand_task_status(socket, status)
   end
 
+  def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("set_expanded_column", %{"status" => status}, socket) do
     expand_task_status(socket, status)
   end
+
+  def handle_event("set_expanded_column", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("expand_task_status", %{"status" => status}, socket) do
@@ -2683,29 +2701,81 @@ defmodule IexCodeWeb.WorkspaceLive do
     task_id =
       params["task_id"] || (socket.assigns.selected_task && socket.assigns.selected_task.id)
 
-    if task_id do
-      case Kanban.get_task(socket.assigns.project.id, task_id) do
-        nil ->
-          {:noreply, put_flash(socket, :error, "Task not found")}
+    case scoped_task(socket, task_id) do
+      %Kanban.Task{} = task ->
+        case Kanban.delete_subtask(task, subtask_id) do
+          {:ok, updated} ->
+            tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
 
-        task ->
-          case Kanban.delete_subtask(task, subtask_id) do
-            {:ok, updated} ->
-              tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+            {:noreply,
+             socket
+             |> assign(:tasks, tasks)
+             |> assign(:selected_task, updated)
+             |> put_flash(:info, "Subtask deleted")}
 
-              {:noreply,
-               socket
-               |> assign(:tasks, tasks)
-               |> assign(:selected_task, updated)
-               |> put_flash(:info, "Subtask deleted")}
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "Failed to delete subtask: #{inspect(reason)}")}
+        end
 
-            {:error, reason} ->
-              {:noreply,
-               put_flash(socket, :error, "Failed to delete subtask: #{inspect(reason)}")}
-          end
-      end
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("delete_subtask", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("request_delete_subtask", %{"id" => subtask_id} = params, socket) do
+    task_id = params["task_id"] || params["task-id"]
+
+    with {:ok, canonical_id} <- canonical_task_id(task_id),
+         {:ok, canonical_subtask_id} <- canonical_task_id(subtask_id),
+         %Kanban.Task{} = task <- Kanban.get_task(socket.assigns.project.id, canonical_id),
+         true <-
+           Enum.any?(
+             task.subtasks || [],
+             &(to_string(&1["id"] || &1[:id]) == canonical_subtask_id)
+           ) do
+      {:noreply,
+       socket
+       |> clear_task_move_state()
+       |> assign(:pending_task_confirmation, {:subtask, task, canonical_subtask_id})}
     else
-      {:noreply, socket}
+      _ -> {:noreply, put_flash(socket, :error, "Task not found")}
+    end
+  end
+
+  def handle_event("request_delete_subtask", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("cancel_subtask_delete", _params, socket),
+    do: {:noreply, assign(socket, :pending_task_confirmation, nil)}
+
+  @impl true
+  def handle_event("confirm_subtask_delete", _params, socket) do
+    case socket.assigns.pending_task_confirmation do
+      {:subtask, %Kanban.Task{id: task_id}, subtask_id} ->
+        socket = assign(socket, :pending_task_confirmation, nil)
+
+        with %Kanban.Task{} = task <- scoped_task(socket, task_id),
+             {:ok, updated} <- Kanban.delete_subtask(task, subtask_id) do
+          tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+          {:noreply,
+           socket
+           |> assign(:tasks, tasks)
+           |> assign(:selected_task, updated)
+           |> put_flash(:info, "Subtask deleted")}
+        else
+          nil ->
+            {:noreply, put_flash(socket, :error, "Task not found")}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "Failed to delete subtask: #{inspect(reason)}")}
+        end
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -2766,26 +2836,68 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("delete_task", %{"id" => id}, socket) do
-    case Kanban.get_task(socket.assigns.project.id, id) do
-      nil ->
+    case scoped_task(socket, id) do
+      %Kanban.Task{} = task -> delete_authorized_task(socket, task)
+      _ -> {:noreply, put_flash(socket, :error, "Task not found")}
+    end
+  end
+
+  def handle_event("delete_task", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("request_delete_task", %{"id" => id}, socket) do
+    case scoped_task(socket, id) do
+      %Kanban.Task{} = task ->
+        {:noreply,
+         socket
+         |> clear_task_move_state()
+         |> assign(:pending_task_confirmation, {:task, task})}
+
+      _ ->
         {:noreply, put_flash(socket, :error, "Task not found")}
+    end
+  end
 
-      task ->
-        case Kanban.delete_task(task) do
-          {:ok, _deleted} ->
-            tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+  def handle_event("request_delete_task", _params, socket), do: {:noreply, socket}
 
-            {:noreply,
-             socket
-             |> assign(:tasks, tasks)
-             |> assign(:selected_task, nil)
-             |> assign(:show_task_drawer, false)
-             |> refresh_kanban_summary()
-             |> put_flash(:info, "Task deleted")}
+  @impl true
+  def handle_event("cancel_task_delete", _params, socket),
+    do: {:noreply, assign(socket, :pending_task_confirmation, nil)}
 
-          {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to delete task: #{inspect(reason)}")}
+  @impl true
+  def handle_event("confirm_task_delete", _params, socket) do
+    case socket.assigns.pending_task_confirmation do
+      {:task, %Kanban.Task{id: task_id}} ->
+        socket = assign(socket, :pending_task_confirmation, nil)
+
+        case scoped_task(socket, task_id) do
+          %Kanban.Task{} = task ->
+            delete_authorized_task(socket, task)
+
+          _ ->
+            {:noreply, put_flash(socket, :error, "Task not found")}
         end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  defp delete_authorized_task(socket, task) do
+    case Kanban.delete_task(task) do
+      {:ok, _deleted} ->
+        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+        {:noreply,
+         socket
+         |> assign(:tasks, tasks)
+         |> assign(:selected_task, nil)
+         |> assign(:show_task_drawer, false)
+         |> refresh_kanban_summary()
+         |> put_flash(:info, "Task deleted")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to delete task: #{inspect(reason)}")}
     end
   end
 
@@ -2845,7 +2957,12 @@ defmodule IexCodeWeb.WorkspaceLive do
     }
 
     tasks = Kanban.list_tasks(socket.assigns.project.id, filters)
-    {:noreply, socket |> assign(:kanban_filter, filters) |> assign(:tasks, tasks)}
+
+    {:noreply,
+     socket
+     |> assign(:kanban_filter, filters)
+     |> assign(:kanban_filter_form, to_form(filters))
+     |> assign(:tasks, tasks)}
   end
 
   # ============================================================================
@@ -3709,7 +3826,12 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("toggle_project_modal", _params, socket) do
-    {:noreply, assign(socket, :show_project_modal, !socket.assigns.show_project_modal)}
+    opening? = !socket.assigns.show_project_modal
+
+    {:noreply,
+     socket
+     |> then(fn socket -> if opening?, do: clear_task_move_state(socket), else: socket end)
+     |> assign(:show_project_modal, opening?)}
   end
 
   @impl true
@@ -3772,7 +3894,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("open_project_modal", _params, socket) do
-    {:noreply, assign(socket, :show_project_modal, true)}
+    {:noreply, socket |> clear_task_move_state() |> assign(:show_project_modal, true)}
   end
 
   @impl true
@@ -4276,6 +4398,7 @@ defmodule IexCodeWeb.WorkspaceLive do
        socket
        |> assign(:tasks, tasks)
        |> assign(:selected_task, selected)
+       |> maybe_clear_pending_task(updated_task.id)
        |> refresh_kanban_summary()}
     else
       {:noreply, socket}
@@ -4286,7 +4409,12 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_info({:task_deleted, deleted_task}, socket) do
     if deleted_task.project_id == socket.assigns.project.id do
       tasks = Enum.reject(socket.assigns.tasks, &(&1.id == deleted_task.id))
-      {:noreply, socket |> assign(:tasks, tasks) |> refresh_kanban_summary()}
+
+      {:noreply,
+       socket
+       |> assign(:tasks, tasks)
+       |> maybe_clear_pending_task(deleted_task.id)
+       |> refresh_kanban_summary()}
     else
       {:noreply, socket}
     end
@@ -4658,6 +4786,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:moving_task_id, nil)
     |> assign(:task_move_form, nil)
     |> assign(:task_move_announcement, nil)
+    |> assign(:pending_task_confirmation, nil)
     |> assign(:open_buffers, [])
     |> assign(:active_editor_path, nil)
     |> assign(:active_editor_content, nil)
@@ -5006,7 +5135,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp activate_workspace_view_change(socket, previous_view, view) do
     socket =
       if previous_view == "kanban" and view != "kanban",
-        do: socket |> clear_task_move_state() |> assign(:show_task_drawer, false),
+        do:
+          socket
+          |> clear_task_move_state()
+          |> assign(:show_task_drawer, false)
+          |> assign(:pending_task_confirmation, nil),
         else: socket
 
     socket = if view == "changes", do: refresh_git_state(socket), else: socket
@@ -5051,6 +5184,19 @@ defmodule IexCodeWeb.WorkspaceLive do
     socket
     |> assign(:moving_task_id, nil)
     |> assign(:task_move_form, nil)
+  end
+
+  defp maybe_clear_pending_task(socket, task_id) do
+    case socket.assigns.pending_task_confirmation do
+      {:task, %Kanban.Task{id: ^task_id}} ->
+        assign(socket, :pending_task_confirmation, nil)
+
+      {:subtask, %Kanban.Task{id: ^task_id}, _subtask_id} ->
+        assign(socket, :pending_task_confirmation, nil)
+
+      _ ->
+        socket
+    end
   end
 
   defp ensure_kanban_view(%{assigns: %{active_view: "kanban"}} = socket), do: socket
@@ -7367,5 +7513,654 @@ defmodule IexCodeWeb.WorkspaceLive do
     else
       message
     end
+  end
+
+  attr :workspace_assigns, :map, required: true
+
+  def shared_command_dock(assigns) do
+    assigns = assigns.workspace_assigns
+
+    ~H"""
+    <%!-- Shared command dock --%>
+    <div
+      id="prompt-composer"
+      aria-label="Agent prompt composer"
+      data-command-dock-state={
+        if(@run_setup_open? or @active_view == "chat",
+          do: "expanded",
+          else: if(@active_view == "deck", do: "compact", else: "focus-expand")
+        )
+      }
+      class="sf-command-composer max-h-[calc(100dvh-3.5rem)] shrink-0 overflow-y-auto overscroll-contain p-2 pt-0 sm:p-3 sm:pt-0 xl:p-5 xl:pt-0"
+    >
+      <div class="max-w-4xl mx-auto">
+        <%!-- Setup tray and prompt form stay siblings inside one shared vertical shell. --%>
+        <div class={["sf-command-dock-shell"]}>
+          <section
+            :if={@run_setup_open?}
+            id="run-setup-tray"
+            aria-label="Run setup"
+            class={["sf-sheet-scroll sf-run-setup-tray"]}
+          >
+            <.form
+              for={@run_setup_form}
+              id="run-setup-panel"
+              phx-change="update_run_setup"
+              class={[
+                "sf-run-setup-form mb-3 max-h-[min(60dvh,42rem)] overflow-y-auto overscroll-contain border-b pb-3 pr-1"
+              ]}
+            >
+              <div class="mb-3 flex items-start justify-between gap-4">
+                <div>
+                  <p class={[
+                    "font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--sf-live-text)]"
+                  ]}>
+                    Durable execution manifest
+                  </p>
+                  <p class={["mt-1 text-[11px] leading-5 text-[var(--sf-text-secondary)]"]}>
+                    Persist mode, evidence providers, attempt policy, enforced token/time limits, and reported-cost budget.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  phx-click="toggle_run_setup"
+                  aria-label="Close run setup"
+                  class={[
+                    "sf-control sf-run-setup-close inline-flex min-h-11 min-w-11 items-center justify-center p-2 text-[var(--sf-text-secondary)] transition-colors"
+                  ]}
+                >
+                  <.icon name="hero-x-mark" class="h-4 w-4" />
+                </button>
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <.input
+                  field={@run_setup_form[:mode]}
+                  id="run-setup-mode"
+                  type="select"
+                  label="Mission type"
+                  options={[
+                    "Single agent": "single",
+                    "Coding swarm": "swarm",
+                    "Deep research": "research",
+                    "Typed DAG (non-mutating)": "dag"
+                  ]}
+                  value={@run_setup_form[:mode].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:priority]}
+                  id="run-setup-priority"
+                  type="select"
+                  label="Queue priority"
+                  options={[Low: "low", Normal: "normal", High: "high", Critical: "critical"]}
+                  value={@run_setup_form[:priority].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  :if={@run_setup_mode != "research"}
+                  field={@run_setup_form[:max_attempts]}
+                  id="run-setup-max-attempts"
+                  type="number"
+                  min="1"
+                  max="10"
+                  label="Manual retry ceiling"
+                  value={@run_setup_form[:max_attempts].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <div
+                  :if={@run_setup_mode == "research"}
+                  id="run-setup-research-attempt-policy"
+                  class={["sf-run-setup-policy sf-control px-3 py-2"]}
+                >
+                  <p class={["text-xs font-semibold text-[var(--sf-live-text)]"]}>
+                    One paid run attempt
+                  </p>
+                  <p class={["mt-1 text-[10px] leading-4 text-[var(--sf-text-secondary)]"]}>
+                    Whole-run replay is disabled. Review failures before launching a new research run.
+                  </p>
+                </div>
+                <.input
+                  field={@run_setup_form[:time_budget_minutes]}
+                  id="run-setup-time-budget"
+                  type="number"
+                  min="1"
+                  max="10080"
+                  label="Time budget (min)"
+                  value={@run_setup_form[:time_budget_minutes].value}
+                  placeholder="Unset"
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:token_budget]}
+                  id="run-setup-token-budget"
+                  type="number"
+                  min="1"
+                  label="Token budget"
+                  value={@run_setup_form[:token_budget].value}
+                  placeholder="Unset"
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:cost_budget_cents]}
+                  id="run-setup-cost-budget"
+                  type="number"
+                  min="1"
+                  label="Reported cost budget (¢)"
+                  value={@run_setup_form[:cost_budget_cents].value}
+                  placeholder="Unset"
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:agent_max_turns]}
+                  id="run-setup-agent-max-turns"
+                  type="number"
+                  min="1"
+                  max="20"
+                  label="Agent / coder turn limit"
+                  aria-description="Applies to the single-agent loop or each durable swarm coding and diagnostic repair pass."
+                  value={@run_setup_form[:agent_max_turns].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:swarm_agent_count]}
+                  id="run-setup-swarm-agent-count"
+                  type="number"
+                  min="4"
+                  max="32"
+                  label="Swarm agents"
+                  value={@run_setup_form[:swarm_agent_count].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:swarm_max_retries]}
+                  id="run-setup-swarm-max-retries"
+                  type="number"
+                  min="0"
+                  max="10"
+                  label="Swarm correction retries"
+                  value={@run_setup_form[:swarm_max_retries].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:research_level]}
+                  id="run-setup-research-level"
+                  type="select"
+                  label="Research effort"
+                  options={[Low: "low", Medium: "medium", High: "high", Ultra: "ultra"]}
+                  value={@run_setup_form[:research_level].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+                <.input
+                  field={@run_setup_form[:research_max_sources]}
+                  id="run-setup-research-sources"
+                  type="number"
+                  min="1"
+                  max="40"
+                  label="Maximum sources"
+                  value={@run_setup_form[:research_max_sources].value}
+                  class={[
+                    "sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"
+                  ]}
+                />
+              </div>
+
+              <p
+                :if={@run_setup_policy_error}
+                id="run-setup-policy-error"
+                role="alert"
+                class={[
+                  "mt-3 border border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] px-3 py-2 text-xs leading-5 text-[var(--sf-live-text)]"
+                ]}
+              >
+                {@run_setup_policy_error}. The submitted value is preserved; fix it before queueing work.
+              </p>
+
+              <div
+                :if={@run_setup_mode == "dag"}
+                id="run-setup-dag-manifest"
+                class={[
+                  "sf-run-setup-dag mt-3 border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-3"
+                ]}
+              >
+                <div class="mb-2 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p class={[
+                      "font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sf-topology-text)]"
+                    ]}>
+                      Immutable typed manifest
+                    </p>
+                    <p class={["mt-1 max-w-2xl text-[11px] leading-5 text-[var(--sf-text-secondary)]"]}>
+                      Editable sample for common Phoenix repositories. Missing files fail visibly;
+                      only bounded, registered project-read and research node kinds execute.
+                    </p>
+                  </div>
+                  <span class={[
+                    "font-mono text-[9px] uppercase tracking-wider text-[var(--sf-text-secondary)]"
+                  ]}>
+                    256 KB raw limit · 128 nodes
+                  </span>
+                </div>
+                <.input
+                  field={@run_setup_form[:dag_manifest_json]}
+                  id="run-setup-dag-manifest-json"
+                  type="textarea"
+                  rows="16"
+                  label="DAG manifest JSON"
+                  value={@run_setup_dag_manifest_json}
+                  spellcheck="false"
+                  class={[
+                    "sf-run-setup-manifest block min-h-72 w-full resize-y rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-code-surface)] px-3 py-2.5 font-mono text-xs leading-5 text-[var(--sf-code-text)] outline-none transition-colors placeholder:text-[var(--sf-text-secondary)] focus:border-[var(--sf-live-mark)] focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
+                  ]}
+                />
+                <p
+                  :if={@run_setup_dag_error}
+                  id="run-setup-dag-manifest-error"
+                  role="alert"
+                  class={["mt-2 text-xs text-[var(--sf-live-text)]"]}
+                >
+                  Manifest JSON exceeds the safe editor boundary. Shorten it before queueing.
+                </p>
+              </div>
+
+              <fieldset
+                id="run-setup-providers"
+                disabled={@run_setup_mode != "research"}
+                aria-disabled={if(@run_setup_mode != "research", do: "true", else: "false")}
+                class={[
+                  "sf-run-setup-providers sf-control mt-2 px-3 py-2",
+                  @run_setup_mode != "research" && "cursor-not-allowed opacity-40"
+                ]}
+              >
+                <legend class={[
+                  "px-1 font-mono text-[9px] font-semibold uppercase tracking-wider text-[var(--sf-text-secondary)]"
+                ]}>
+                  Federated providers · ordered fan-out
+                </legend>
+                <div class="flex flex-wrap gap-x-4 gap-y-1">
+                  <label
+                    :for={provider <- @settings.search_provider_order || ["duckduckgo"]}
+                    class={[
+                      "inline-flex min-h-8 cursor-pointer items-center gap-1.5 font-mono text-[11px] text-[var(--sf-text-secondary)]"
+                    ]}
+                  >
+                    <input
+                      type="hidden"
+                      name={"run_setup[providers][#{provider}]"}
+                      value="false"
+                    />
+                    <input
+                      id={"run-setup-provider-#{provider}"}
+                      type="checkbox"
+                      name={"run_setup[providers][#{provider}]"}
+                      value="true"
+                      checked={provider in @run_setup_providers}
+                      class={[
+                        "h-4 w-4 border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] accent-[var(--sf-live-mark)]"
+                      ]}
+                    />
+                    {provider |> String.replace("_", " ") |> String.capitalize()}
+                  </label>
+                </div>
+              </fieldset>
+            </.form>
+          </section>
+
+          <.form
+            for={@prompt_form}
+            id="prompt-form"
+            phx-submit="submit_prompt"
+            data-command-has-context={to_string(MapSet.size(@research_attachments) > 0)}
+            class="sf-command-dock-form"
+          >
+            <input
+              id="prompt-request-id"
+              type="hidden"
+              name="request_id"
+              value={@prompt_form[:request_id].value}
+            />
+            <label for="prompt-textarea" class="sr-only">Agent prompt or swarm instruction</label>
+            <textarea
+              id="prompt-textarea"
+              name="prompt"
+              rows="2"
+              required
+              aria-required="true"
+              phx-hook="KeyboardSubmit"
+              placeholder="What's my next task or swarm instruction? (e.g. /swarm fix authentication)"
+              class={[
+                "sf-command-textarea w-full resize-none border-0 bg-transparent px-2 py-1 font-sans text-sm"
+              ]}
+            ></textarea>
+
+            <%!-- Bottom Action Toolbar --%>
+            <div class={[
+              "sf-command-dock-toolbar flex min-w-0 items-center justify-between gap-2 border-t px-1 pt-2"
+            ]}>
+              <%!-- Left Tool / Model Badges --%>
+              <div
+                data-command-context
+                class={["sf-command-context flex min-w-0 flex-wrap items-center gap-1.5"]}
+              >
+                <div
+                  :if={MapSet.size(@research_attachments) > 0}
+                  id="prompt-research-attachments"
+                  data-command-context
+                  class={["sf-command-attachments flex flex-wrap items-center gap-1.5 px-2"]}
+                  aria-label="Attached deep research results"
+                >
+                  <span class={[
+                    "mr-1 font-mono text-[9px] uppercase tracking-wider text-[var(--sf-text-secondary)]"
+                  ]}>
+                    Context
+                  </span>
+                  <button
+                    :for={public_id <- @research_attachments |> MapSet.to_list() |> Enum.sort()}
+                    id={"prompt-research-attachment-#{public_id}"}
+                    type="button"
+                    phx-click="toggle_research_attachment"
+                    phx-value-id={public_id}
+                    title={"Remove ready research result ##{public_id}"}
+                    class={[
+                      "sf-command-attachment sf-control inline-flex min-h-7 items-center gap-1.5 px-2 font-mono text-[9px] transition-colors"
+                    ]}
+                  >
+                    <.icon name="hero-document-text" class="h-3 w-3" /> /deep_research {public_id}
+                    <.icon name="hero-x-mark" class="h-3 w-3" />
+                  </button>
+                </div>
+                <div data-command-tools class={["flex min-w-0 items-center gap-1.5 sm:gap-2"]}>
+                  <%!-- Dispatch announcement and setup are tools in the compact row. --%>
+                  <div
+                    data-command-announcement
+                    class={["flex shrink-0 items-center gap-1.5 text-[var(--sf-text-secondary)]"]}
+                  >
+                    <span class={["text-xs text-[var(--sf-live-mark)]"]}>◆</span>
+                    <span class={["hidden font-mono text-[10px] xl:inline"]}>
+                      <%= if @dispatch_mode == "background" do %>
+                        Durable mode · queued work continues after you disconnect
+                      <% else %>
+                        Interactive mode · keep this session open for live conversation
+                      <% end %>
+                    </span>
+                  </div>
+                  <button
+                    id="toggle-run-setup"
+                    type="button"
+                    phx-click="toggle_run_setup"
+                    data-run-setup-toggle
+                    data-command-setup
+                    aria-expanded={@run_setup_open?}
+                    aria-controls="run-setup-tray"
+                    aria-label={if @run_setup_open?, do: "Close run setup", else: "Open run setup"}
+                    class={[
+                      "sf-control inline-flex min-h-11 shrink-0 items-center gap-1.5 px-3 font-mono text-xs transition-colors"
+                    ]}
+                  >
+                    <.icon
+                      name="hero-adjustments-horizontal"
+                      class="h-3 w-3 text-[var(--sf-live-mark)]"
+                    />
+                    <span class={["sr-only sm:not-sr-only"]}>Run setup</span>
+                  </button>
+
+                  <%!-- Model Pill Dropdown --%>
+                  <div
+                    class="relative"
+                    phx-click-away={@open_dropdown == "model" && "close_dropdowns"}
+                  >
+                    <button
+                      type="button"
+                      phx-click="toggle_dropdown"
+                      phx-value-name="model"
+                      aria-haspopup="listbox"
+                      aria-expanded={@open_dropdown == "model"}
+                      aria-controls={
+                        if(@open_dropdown == "model", do: "model-picker-listbox", else: nil)
+                      }
+                      aria-label="Select AI model"
+                      class={[
+                        "sf-command-model sf-control flex min-w-0 max-w-28 items-center rounded-xl px-2.5 py-1 font-mono text-xs transition-smooth sm:max-w-none"
+                      ]}
+                    >
+                      <.icon
+                        name="hero-sparkles"
+                        class="mr-1.5 h-3.5 w-3.5 text-[var(--sf-live-mark)]"
+                      />
+                      <span class="truncate">{@session.model_name}</span>
+                      <.icon
+                        name="hero-chevron-up-down"
+                        class="ml-1.5 h-3 w-3 text-[var(--sf-text-secondary)]"
+                      />
+                    </button>
+
+                    <%= if @open_dropdown == "model" do %>
+                      <div
+                        id="model-picker-listbox"
+                        role="listbox"
+                        aria-label="AI model"
+                        class={[
+                          "sf-command-model-list absolute bottom-full left-0 z-50 mb-2 w-64 rounded-2xl border p-1.5 shadow-[0_24px_72px_-38px_var(--sf-shadow)] backdrop-blur-xl animate-in fade-in zoom-in-95"
+                        ]}
+                      >
+                        <div class={[
+                          "sf-command-model-list-heading mb-1 border-b px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"
+                        ]}>
+                          Select AI Model
+                        </div>
+                        <%= for {model_id, label, provider_label, provider_id} <- [
+                        {"ox-alpha", "OX Alpha", "LLMotions · OpenAI-compatible", "openai"},
+                        {"gemini-3.7-flash-high", "Gemini 3.7 Flash High", "OpenAI-compatible", "openai"},
+                        {"deepseek-v4-pro", "DeepSeek V4 Pro", "OpenAI-compatible", "openai"},
+                        {"gpt-5.4-turbo", "GPT 5.4 Turbo", "OpenAI", "openai"},
+                        {"claude-3.7-sonnet", "Claude 3.7 Sonnet", "Anthropic", "anthropic"}
+                      ] do %>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={@session.model_name == model_id}
+                            phx-click="change_model"
+                            phx-value-model={model_id}
+                            phx-value-provider={provider_id}
+                            class={[
+                              "sf-command-option flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs transition-smooth"
+                            ]}
+                          >
+                            <div class="text-left">
+                              <div class={["font-medium text-[var(--sf-text-primary)]"]}>{label}</div>
+                              <div class={["font-mono text-[10px] text-[var(--sf-text-secondary)]"]}>
+                                {provider_label}
+                              </div>
+                            </div>
+                            <%= if @session.model_name == model_id do %>
+                              <.icon
+                                name="hero-check"
+                                class="h-3.5 w-3.5 text-[var(--sf-success-mark)]"
+                              />
+                            <% end %>
+                          </button>
+                        <% end %>
+                      </div>
+                    <% end %>
+                  </div>
+
+                  <%!-- Interactive Tool Pills --%>
+                  <div class="tooltip-trigger">
+                    <button
+                      type="button"
+                      phx-click="toggle_tool"
+                      phx-value-tool="ast_search"
+                      aria-label="Toggle AST search tool"
+                      aria-pressed={MapSet.member?(@active_tools, "ast_search")}
+                      class={[
+                        "sf-control sf-command-tool p-1.5 rounded-lg transition-smooth",
+                        MapSet.member?(@active_tools, "ast_search") &&
+                          "sf-command-tool-active",
+                        !MapSet.member?(@active_tools, "ast_search") &&
+                          "sf-command-tool-idle"
+                      ]}
+                    >
+                      <.icon name="hero-magnifying-glass" class="w-3.5 h-3.5" />
+                    </button>
+                    <div class={["sf-command-tooltip luxury-tooltip"]}>
+                      <div class={[
+                        "sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"
+                      ]}>
+                        AST Search Engine
+                      </div>
+                      <div class={[
+                        "sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"
+                      ]}>
+                        <span class={["text-[var(--sf-text-secondary)]"]}>Semantic AST Query</span>
+                        <span class={["text-[var(--sf-topology-text)] font-semibold"]}>{if MapSet.member?(
+                                                                                             @active_tools,
+                                                                                             "ast_search"
+                                                                                           ),
+                                                                                           do:
+                                                                                             "Active",
+                                                                                           else:
+                                                                                             "Disabled"}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="tooltip-trigger">
+                    <button
+                      type="button"
+                      phx-click="toggle_tool"
+                      phx-value-tool="web_search"
+                      aria-label="Toggle live web search tool"
+                      aria-pressed={MapSet.member?(@active_tools, "web_search")}
+                      class={[
+                        "sf-control sf-command-tool p-1.5 rounded-lg transition-smooth",
+                        MapSet.member?(@active_tools, "web_search") &&
+                          "sf-command-tool-active",
+                        !MapSet.member?(@active_tools, "web_search") &&
+                          "sf-command-tool-idle"
+                      ]}
+                    >
+                      <.icon name="hero-globe-alt" class="w-3.5 h-3.5" />
+                    </button>
+                    <div class={["sf-command-tooltip luxury-tooltip"]}>
+                      <div class={[
+                        "sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"
+                      ]}>
+                        Live Web Search
+                      </div>
+                      <div class={[
+                        "sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"
+                      ]}>
+                        <span class={["text-[var(--sf-text-secondary)]"]}>Federated providers & safe fetch</span>
+                        <span class={["text-[var(--sf-success-text)] font-semibold"]}>{if MapSet.member?(
+                                                                                            @active_tools,
+                                                                                            "web_search"
+                                                                                          ),
+                                                                                          do:
+                                                                                            "Active",
+                                                                                          else:
+                                                                                            "Disabled"}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <%!-- Prompt dispatch mode --%>
+              <div
+                id="dispatch-mode-switcher"
+                data-command-dispatch
+                class={[
+                  "flex shrink-0 items-center border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] p-0.5"
+                ]}
+                role="group"
+                aria-label="Prompt dispatch mode"
+              >
+                <button
+                  id="dispatch-mode-background"
+                  type="button"
+                  phx-click="set_dispatch_mode"
+                  phx-value-mode="background"
+                  aria-pressed={to_string(@dispatch_mode == "background")}
+                  aria-label="Use background dispatch mode"
+                  title="Persist and run asynchronously"
+                  class={[
+                    "sf-control sf-command-dispatch-button flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
+                    @dispatch_mode == "background" && "sf-command-dispatch-active",
+                    @dispatch_mode != "background" && "sf-command-dispatch-idle"
+                  ]}
+                >
+                  <.icon name="hero-queue-list" class="h-3 w-3" />
+                  <span class="hidden lg:inline">Background</span>
+                </button>
+                <button
+                  id="dispatch-mode-interactive"
+                  type="button"
+                  phx-click="set_dispatch_mode"
+                  phx-value-mode="interactive"
+                  aria-pressed={to_string(@dispatch_mode == "interactive")}
+                  aria-label="Use interactive dispatch mode"
+                  title="Send to the live session"
+                  class={[
+                    "sf-control sf-command-dispatch-button flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
+                    @dispatch_mode == "interactive" && "sf-command-dispatch-active",
+                    @dispatch_mode != "interactive" && "sf-command-dispatch-idle"
+                  ]}
+                >
+                  <.icon name="hero-bolt" class="h-3 w-3" />
+                  <span class="hidden lg:inline">Interactive</span>
+                </button>
+              </div>
+
+              <%!-- Right Send Button --%>
+              <div data-command-send class={["tooltip-trigger shrink-0"]}>
+                <button
+                  type="submit"
+                  phx-disable-with="Executing..."
+                  class={[
+                    "sf-control sf-command-send min-h-11 px-4 text-xs font-semibold transition-colors"
+                  ]}
+                >
+                  {if @dispatch_mode == "background", do: "Queue run", else: "Send"}
+                </button>
+                <div class={["sf-command-tooltip luxury-tooltip luxury-tooltip-left"]}>
+                  <div class={["sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"]}>
+                    {if @dispatch_mode == "background",
+                      do: "Start durable background run",
+                      else: "Send live prompt"}
+                  </div>
+                  <div class={[
+                    "sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"
+                  ]}>
+                    <span class={["text-[var(--sf-text-secondary)]"]}>Trigger Pipeline</span>
+                    <span class={["text-[var(--sf-live-text)] font-semibold"]}>↵ Enter</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </.form>
+        </div>
+      </div>
+    </div>
+    """
   end
 end

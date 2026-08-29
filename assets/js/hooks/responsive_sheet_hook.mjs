@@ -57,6 +57,13 @@ const ResponsiveSheet = {
     this.returnFrame = null
     this.document = this.el?.ownerDocument || globalThis.document
     this.window = this.document?.defaultView || globalThis.window
+    this.dialogSemantics = this.el?.dataset?.sheetDialog === "true"
+    this.dialogSemanticsSnapshot = this.dialogSemantics
+      ? {
+          role: this.el.getAttribute?.("role"),
+          ariaModal: this.el.getAttribute?.("aria-modal")
+        }
+      : null
     this.media = this.window?.matchMedia?.("(max-width: 639px)") || null
     this.handleMediaChange = () => this.sync()
     this.handleKeyDown = (event) => this.onKeyDown(event)
@@ -112,6 +119,10 @@ const ResponsiveSheet = {
     background.setAttribute?.("aria-hidden", "true")
     activeSheets.add(this)
     this.active = true
+    if (this.dialogSemantics) {
+      this.el.setAttribute?.("role", "dialog")
+      this.el.setAttribute?.("aria-modal", "true")
+    }
     this.closeSent = false
     this.el.dataset.responsiveSheetActive = "true"
     this.document?.addEventListener?.("keydown", this.handleKeyDown, true)
@@ -148,6 +159,16 @@ const ResponsiveSheet = {
       if (record) backgroundOwners.delete(background)
     }
     this.active = false
+    if (this.dialogSemantics) {
+      const role = this.dialogSemanticsSnapshot?.role
+      const ariaModal = this.dialogSemanticsSnapshot?.ariaModal
+      role === null || role === undefined
+        ? this.el.removeAttribute?.("role")
+        : this.el.setAttribute?.("role", role)
+      ariaModal === null || ariaModal === undefined
+        ? this.el.removeAttribute?.("aria-modal")
+        : this.el.setAttribute?.("aria-modal", ariaModal)
+    }
     this.background = null
     this.backgroundSnapshot = null
     this.backgroundRecord = null
