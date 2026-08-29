@@ -56,28 +56,37 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     refute has_element?(view, "#workspace-desktop-tabs")
   end
 
-  test "kanban ribbons and cards are native buttons", %{view: view, task: task} do
+  test "kanban channels and sibling task movement controls are keyboard semantic", %{
+    view: view,
+    task: task
+  } do
     view |> element("#instrument-card-kanban") |> render_click()
 
     assert has_element?(view, "#kanban-board[role='region'][aria-label='Task status board']")
 
     assert has_element?(
              view,
-             "button#kanban-col-scheduled[data-column-variant='collapsed'][aria-expanded='false'] .kanban-column__label"
+             "#kanban-col-scheduled[data-channel-state='quiet'][aria-expanded='false'] button#kanban-channel-trigger-scheduled"
            )
 
     view
-    |> element("#kanban-col-ready")
+    |> element("#kanban-channel-trigger-ready")
     |> render_click()
-
-    assert has_element?(view, "#kanban-col-ready[data-column-variant='expanded']")
 
     assert has_element?(
              view,
-             "button#kanban-collapse-ready[aria-expanded='true'][aria-controls='kanban-cards-ready']"
+             "#kanban-col-ready[data-channel-state='selected'][aria-expanded='true'] #kanban-cards-ready"
            )
 
-    assert has_element?(view, "button#task-card-#{task.id}")
+    assert has_element?(view, "article#task-row-#{task.id} > button#task-card-#{task.id}")
+
+    assert has_element?(
+             view,
+             "article#task-row-#{task.id} > button#move-task-trigger-#{task.id}[aria-expanded='false']"
+           )
+
+    refute has_element?(view, "button#task-card-#{task.id} button")
+    refute has_element?(view, "button#task-card-#{task.id} form")
   end
 
   test "calendar day selectors and scheduled tasks are separate native buttons", %{

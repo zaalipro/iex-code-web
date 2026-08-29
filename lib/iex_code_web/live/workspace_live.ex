@@ -228,10 +228,13 @@ defmodule IexCodeWeb.WorkspaceLive do
         if(socket.assigns.live_action == :research, do: "research", else: "deck")
       )
       |> assign(:workspace_route, mount_workspace_route(mount_params, socket.assigns.live_action))
-      |> assign(:expanded_column, "running")
+      |> assign(:expanded_task_status, first_non_empty_task_status(tasks))
       |> assign(:tasks, tasks)
       |> assign(:selected_task, selected_task)
       |> assign(:show_task_drawer, false)
+      |> assign(:moving_task_id, nil)
+      |> assign(:task_move_form, nil)
+      |> assign(:task_move_announcement, nil)
       |> assign(:show_new_task_modal, false)
       |> assign(:show_workspace_menu, false)
       |> assign(:workspace_search, "")
@@ -615,9 +618,13 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> clear_research_attachments()
 
               socket =
-                if project_changed?,
-                  do: reset_project_scoped_state(socket),
-                  else: socket
+                if project_changed? do
+                  socket
+                  |> reset_project_scoped_state()
+                  |> assign(:expanded_task_status, first_non_empty_task_status(tasks))
+                else
+                  socket
+                end
 
               {kanban_summary, kanban_error?} =
                 case safe_kanban_summary(project.id) do
@@ -2312,7 +2319,12 @@ defmodule IexCodeWeb.WorkspaceLive do
          |> put_flash(:error, "Task not found")}
 
       task ->
-        {:noreply, socket |> assign(:selected_task, task) |> assign(:show_task_drawer, true)}
+        {:noreply,
+         socket
+         |> ensure_kanban_view()
+         |> assign(:selected_task, task)
+         |> assign(:expanded_task_status, task.status)
+         |> assign(:show_task_drawer, true)}
     end
   end
 
@@ -2430,50 +2442,124 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("toggle_column", %{"status" => status}, socket) do
-    new_status = if socket.assigns.expanded_column == status, do: nil, else: status
-    {:noreply, assign(socket, :expanded_column, new_status)}
+    expand_task_status(socket, status)
   end
 
   @impl true
   def handle_event("set_expanded_column", %{"status" => status}, socket) do
-    if socket.assigns.expanded_column != status do
-      {:noreply, assign(socket, :expanded_column, status)}
-    else
-      {:noreply, socket}
-    end
+    expand_task_status(socket, status)
   end
 
   @impl true
-  def handle_event("move_task", %{"id" => id, "status" => status}, socket) do
-    case Kanban.get_task(socket.assigns.project.id, id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Task not found")}
+  def handle_event("expand_task_status", %{"status" => status}, socket) do
+    expand_task_status(socket, status)
+  end
 
-      task ->
-        case Kanban.move_task_status(task, status) do
-          {:ok, updated} ->
-            tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+  def handle_event("expand_task_status", _params, socket), do: {:noreply, socket}
 
-            selected =
-              if socket.assigns.selected_task && socket.assigns.selected_task.id == id,
-                do: updated,
-                else: socket.assigns.selected_task
-
-            {:noreply,
-             socket
-             |> assign(:tasks, tasks)
-             |> assign(:selected_task, selected)
-             |> assign(:expanded_column, status)
-             |> refresh_kanban_summary()}
-
-          {:error, _reason} ->
-            {:noreply, put_flash(socket, :error, "Invalid task status")}
-        end
+  @impl true
+  def handle_event("open_task_move", %{"id" => id}, socket) do
+    with true <- socket.assigns.active_view == "kanban",
+         {:ok, canonical_id} <- canonical_task_id(id),
+         %Kanban.Task{} = task <- Kanban.get_task(socket.assigns.project.id, canonical_id) do
+      {:noreply,
+       socket
+       |> assign(:moving_task_id, task.id)
+       |> assign(
+         :task_move_form,
+         to_form(%{"id" => task.id, "status" => task.status}, as: :move_task)
+       )
+       |> assign(:task_move_announcement, nil)}
+    else
+      _ -> {:noreply, put_flash(socket, :error, "Task not found")}
     end
+  end
+
+  def handle_event("open_task_move", _params, socket),
+    do: {:noreply, put_flash(socket, :error, "Task not found")}
+
+  @impl true
+  def handle_event("cancel_task_move", %{"id" => id}, socket) do
+    with {:ok, canonical_id} <- canonical_task_id(id),
+         true <- socket.assigns.moving_task_id == canonical_id do
+      {:noreply, clear_task_move_state(socket)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("cancel_task_move", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event(
+        "move_task",
+        %{"move_task" => %{"id" => id, "status" => status}},
+        socket
+      ) do
+    perform_task_move(socket, id, status, :explicit)
+  end
+
+  def handle_event("move_task", %{"id" => id, "status" => status}, socket) do
+    perform_task_move(socket, id, status, :pointer)
   end
 
   def handle_event("move_task", _params, socket) do
     {:noreply, put_flash(socket, :error, "Invalid task move request")}
+  end
+
+  defp perform_task_move(socket, id, status, interaction) do
+    case scoped_task(socket, id) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Task not found")}
+
+      task ->
+        if explicit_task_move_allowed?(socket, task, status, interaction) do
+          persist_task_move(socket, task, status, interaction)
+        else
+          {:noreply, put_flash(socket, :error, "Invalid task status")}
+        end
+    end
+  end
+
+  defp explicit_task_move_allowed?(_socket, _task, _status, :pointer), do: true
+
+  defp explicit_task_move_allowed?(socket, task, status, :explicit) do
+    socket.assigns.active_view == "kanban" and socket.assigns.moving_task_id == task.id and
+      status in Kanban.Task.statuses()
+  end
+
+  defp persist_task_move(socket, task, status, interaction) do
+    case Kanban.move_task_status(task, status) do
+      {:ok, updated} ->
+        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+        selected =
+          if socket.assigns.selected_task && socket.assigns.selected_task.id == task.id,
+            do: updated,
+            else: socket.assigns.selected_task
+
+        {:noreply,
+         socket
+         |> assign(:tasks, tasks)
+         |> assign(:selected_task, selected)
+         |> assign(:expanded_task_status, updated.status)
+         |> finish_task_move(updated, interaction)
+         |> refresh_kanban_summary()}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Invalid task status")}
+    end
+  end
+
+  defp finish_task_move(socket, updated, :explicit) do
+    socket
+    |> clear_task_move_state()
+    |> assign(:task_move_announcement, "Moved #{updated.title} to #{updated.status}")
+    |> push_event("focus_task", %{id: "task-card-#{updated.id}"})
+  end
+
+  defp finish_task_move(socket, updated, :pointer) do
+    assign(socket, :task_move_announcement, "Moved #{updated.title} to #{updated.status}")
   end
 
   @impl true
@@ -4567,6 +4653,11 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp reset_project_scoped_state(socket) do
     socket
+    |> assign(:selected_task, nil)
+    |> assign(:show_task_drawer, false)
+    |> assign(:moving_task_id, nil)
+    |> assign(:task_move_form, nil)
+    |> assign(:task_move_announcement, nil)
     |> assign(:open_buffers, [])
     |> assign(:active_editor_path, nil)
     |> assign(:active_editor_content, nil)
@@ -4913,12 +5004,63 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp activate_workspace_view_change(socket, view, view), do: socket
 
   defp activate_workspace_view_change(socket, previous_view, view) do
+    socket =
+      if previous_view == "kanban" and view != "kanban",
+        do: socket |> clear_task_move_state() |> assign(:show_task_drawer, false),
+        else: socket
+
     socket = if view == "changes", do: refresh_git_state(socket), else: socket
     socket = if view == "deck", do: request_deck_git_refresh(socket), else: socket
     socket = if view == "files", do: ensure_workspace_files_loaded(socket), else: socket
     socket = if view == "swarm", do: refresh_run_fleet(socket), else: socket
     socket = if view == "research", do: refresh_research_results(socket), else: socket
     update_terminal_viewer(socket, previous_view, view)
+  end
+
+  defp expand_task_status(socket, status)
+       when status in ~w(triage todo scheduled ready running blocked review done) do
+    {:noreply, assign(socket, :expanded_task_status, status)}
+  end
+
+  defp expand_task_status(socket, _status), do: {:noreply, socket}
+
+  defp first_non_empty_task_status(tasks) do
+    Enum.find(Kanban.Task.statuses(), fn status ->
+      Enum.any?(tasks, &(&1.status == status))
+    end) || "triage"
+  end
+
+  defp canonical_task_id(id) when is_binary(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, canonical_id} when canonical_id == id -> {:ok, canonical_id}
+      _ -> :error
+    end
+  end
+
+  defp canonical_task_id(_id), do: :error
+
+  defp scoped_task(socket, id) do
+    with {:ok, canonical_id} <- canonical_task_id(id) do
+      Kanban.get_task(socket.assigns.project.id, canonical_id)
+    else
+      _ -> nil
+    end
+  end
+
+  defp clear_task_move_state(socket) do
+    socket
+    |> assign(:moving_task_id, nil)
+    |> assign(:task_move_form, nil)
+  end
+
+  defp ensure_kanban_view(%{assigns: %{active_view: "kanban"}} = socket), do: socket
+
+  defp ensure_kanban_view(socket) do
+    route = socket.assigns.workspace_route
+
+    socket
+    |> activate_workspace_view("kanban")
+    |> push_patch(to: workspace_path(route, "kanban"))
   end
 
   defp activate_workspace_view_for_session(socket) do

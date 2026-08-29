@@ -9,6 +9,7 @@ import ResponsiveSheet, {
   responsiveSheetOwnsFocus,
   responsiveSheetWillOwnFocus
 } from "./hooks/responsive_sheet_hook.mjs"
+import TaskMoveFocus from "./hooks/task_move_focus_hook.js"
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
@@ -71,6 +72,7 @@ const Hooks = {
   TerminalHook,
   InstrumentDeck,
   ResponsiveSheet,
+  TaskMoveFocus,
   ModalFocus: {
     mounted() {
       this.mobileSheetDelegated = responsiveSheetOwnsFocus(

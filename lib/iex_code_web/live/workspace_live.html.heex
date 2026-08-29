@@ -58,298 +58,83 @@
           <% end %>
           <.instrument_deck summaries={@instrument_summaries} active_view={@active_view} />
         <% else %>
-          <!-- TAB 1: KANBAN BOARD -->
-        <%= if @active_tab == "kanban" do %>
-          <div class="flex-1 flex flex-col h-full min-w-0 overflow-hidden p-3 md:p-5">
-            <!-- Header & Filter Bar -->
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-4 shrink-0">
-              <div class="flex items-center gap-3">
-                <h2 class="text-lg font-semibold text-white tracking-tight flex items-center gap-2">
-                  Today's tasks
-                  <span class="px-2 py-0.5 rounded-full bg-[#1c2128] text-xs font-mono text-gray-400 border border-[#30363d]">
-                    {length(@tasks)}
-                  </span>
-                </h2>
+          <%!-- Mission Board workbench --%>
+        <%= if @active_view == "kanban" do %>
+          <.workbench_chassis
+            id="instrument-workbench-kanban"
+            surface="kanban"
+            index="02"
+            title="Mission Board"
+            status={"#{length(@tasks)} visible tasks · #{@expanded_task_status} selected"}
+            return_to={workspace_path(@workspace_route, "deck")}
+            return_instrument_id="instrument-card-kanban"
+          >
+            <:primary_action>
+              <button
+                id="kanban-primary-new-task"
+                type="button"
+                phx-click="toggle_new_task_modal"
+                class="sf-control min-h-11 px-4 text-sm font-semibold"
+              >
+                New task
+              </button>
+            </:primary_action>
+            <:primary_field>
+          <div class="kanban-workbench flex min-h-0 flex-1 flex-col overflow-hidden">
+            <% filter_form = to_form(@kanban_filter) %>
+            <header class="kanban-toolbar">
+              <div>
+                <p class="sf-metadata">Project-wide mission queue</p>
+                <h3 class="mt-1 text-base font-semibold text-[var(--sf-text-primary)]">
+                  Tasks <span class="font-mono text-xs text-[var(--sf-text-secondary)]">{length(@tasks)}</span>
+                </h3>
               </div>
-
-              <!-- Filter Bar -->
-              <div class="flex max-w-full items-center gap-2.5 overflow-x-auto pb-1 text-xs font-mono text-gray-400">
-                <.form
-                  for={to_form(@kanban_filter)}
-                  id="kanban-filter-form"
-                  phx-change="filter_kanban"
-                  class="flex items-center gap-2"
-                >
-                  <div class="relative">
-                    <input
-                      type="text"
-                      name="search"
-                      value={@kanban_filter["search"]}
-                      placeholder="Filter cards..."
-                      class="bg-[#11151c] border border-[#21262d] rounded-xl px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-gray-400 transition-smooth"
-                    />
-                  </div>
-
-                  <input type="hidden" name="priority" value={@kanban_filter["priority"]} />
-                  <input type="hidden" name="status" value={@kanban_filter["status"]} />
-                  <input type="hidden" name="assignee" value={@kanban_filter["assignee"]} />
-                </.form>
-
-                <!-- PRIORITY Custom Dropdown -->
-                <div
-                  class="relative"
-                  phx-click-away={@open_dropdown == "priority" && "close_dropdowns"}
-                >
-                  <button
-                    type="button"
-                    phx-click="toggle_dropdown"
-                    phx-value-name="priority"
-                    aria-haspopup="listbox"
-                    aria-expanded={@open_dropdown == "priority"}
-                    aria-controls={
-                      if(@open_dropdown == "priority", do: "priority-filter-listbox", else: nil)
-                    }
-                    class={[
-                      "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono transition-smooth",
-                      @kanban_filter["priority"] != "" &&
-                        "bg-amber-500/10 text-amber-300 border-amber-500/30",
-                      @kanban_filter["priority"] == "" &&
-                        "bg-[#11151c] hover:bg-[#161b22] text-gray-300 border-[#21262d]"
-                    ]}
-                  >
-                    <div class="flex items-end gap-0.5">
-                      <span class="w-1 h-1.5 rounded-xs bg-current"></span>
-                      <span class="w-1 h-2.5 rounded-xs bg-current"></span>
-                      <span class="w-1 h-3.5 rounded-xs bg-current"></span>
-                    </div>
-                    <span>
-                      <%= if @kanban_filter["priority"] != "" do %>
-                        {String.upcase(@kanban_filter["priority"])}
-                      <% else %>
-                        PRIORITY
-                      <% end %>
-                    </span>
-                    <.icon name="hero-chevron-down" class="w-3 h-3 text-gray-400" />
-                  </button>
-
-                  <%= if @open_dropdown == "priority" do %>
-                    <div
-                      id="priority-filter-listbox"
-                      role="listbox"
-                      aria-label="Filter by priority"
-                      class="absolute right-0 top-full mt-2 w-48 bg-[#11151c]/95 border border-[#21262d] rounded-2xl p-1.5 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95"
-                    >
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={@kanban_filter["priority"] == ""}
-                        phx-click="select_kanban_filter"
-                        phx-value-key="priority"
-                        phx-value-value=""
-                        class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth"
-                      >
-                        <span>All Priorities</span>
-                        <%= if @kanban_filter["priority"] == "" do %>
-                          <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
-                        <% end %>
-                      </button>
-                      <%= for p <- ["critical", "high", "medium", "low"] do %>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={@kanban_filter["priority"] == p}
-                          phx-click="select_kanban_filter"
-                          phx-value-key="priority"
-                          phx-value-value={p}
-                          class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth"
-                        >
-                          <div class="flex items-center gap-2">
-                            <span class={[
-                              "w-2 h-2 rounded-full",
-                              p == "critical" && "bg-red-400",
-                              p == "high" && "bg-orange-400",
-                              p == "medium" && "bg-blue-400",
-                              p == "low" && "bg-gray-400"
-                            ]}></span>
-                            <span class="capitalize">{p}</span>
-                          </div>
-                          <%= if @kanban_filter["priority"] == p do %>
-                            <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
-                          <% end %>
-                        </button>
-                      <% end %>
-                    </div>
-                  <% end %>
-                </div>
-
-                <!-- STATUS Custom Dropdown -->
-                <div
-                  class="relative"
-                  phx-click-away={@open_dropdown == "status" && "close_dropdowns"}
-                >
-                  <button
-                    type="button"
-                    phx-click="toggle_dropdown"
-                    phx-value-name="status"
-                    aria-haspopup="listbox"
-                    aria-expanded={@open_dropdown == "status"}
-                    aria-controls={
-                      if(@open_dropdown == "status", do: "status-filter-listbox", else: nil)
-                    }
-                    class={[
-                      "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono transition-smooth",
-                      @kanban_filter["status"] != "" &&
-                        "bg-blue-500/10 text-blue-300 border-blue-500/30",
-                      @kanban_filter["status"] == "" &&
-                        "bg-[#11151c] hover:bg-[#161b22] text-gray-300 border-[#21262d]"
-                    ]}
-                  >
-                    <span class="text-xs">◌</span>
-                    <span>
-                      <%= if @kanban_filter["status"] != "" do %>
-                        {String.upcase(@kanban_filter["status"])}
-                      <% else %>
-                        STATUS
-                      <% end %>
-                    </span>
-                    <.icon name="hero-chevron-down" class="w-3 h-3 text-gray-400" />
-                  </button>
-
-                  <%= if @open_dropdown == "status" do %>
-                    <div
-                      id="status-filter-listbox"
-                      role="listbox"
-                      aria-label="Filter by status"
-                      class="absolute right-0 top-full mt-2 w-52 bg-[#11151c]/95 border border-[#21262d] rounded-2xl p-1.5 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95 max-h-72 overflow-y-auto"
-                    >
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={@kanban_filter["status"] == ""}
-                        phx-click="select_kanban_filter"
-                        phx-value-key="status"
-                        phx-value-value=""
-                        class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth"
-                      >
-                        <span>All Statuses</span>
-                        <%= if @kanban_filter["status"] == "" do %>
-                          <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
-                        <% end %>
-                      </button>
-                      <%= for s <- Kanban.Task.statuses() do %>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={@kanban_filter["status"] == s}
-                          phx-click="select_kanban_filter"
-                          phx-value-key="status"
-                          phx-value-value={s}
-                          class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth"
-                        >
-                          <div class="flex items-center gap-2">
-                            <span class={[
-                              "w-2 h-2 rounded-full",
-                              s == "triage" && "bg-gray-400",
-                              s == "todo" && "bg-purple-400",
-                              s == "scheduled" && "bg-indigo-400",
-                              s == "ready" && "bg-blue-400",
-                              s == "running" &&
-                                "bg-emerald-400 shadow-[0_0_6px_rgba(34,197,94,0.8)]",
-                              s == "blocked" && "bg-red-400",
-                              s == "review" && "bg-amber-400",
-                              s == "done" && "bg-gray-500"
-                            ]}></span>
-                            <span class="uppercase tracking-wider">{s}</span>
-                          </div>
-                          <%= if @kanban_filter["status"] == s do %>
-                            <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
-                          <% end %>
-                        </button>
-                      <% end %>
-                    </div>
-                  <% end %>
-                </div>
-
-                <!-- ASSIGNEE Custom Dropdown -->
-                <div
-                  class="relative"
-                  phx-click-away={@open_dropdown == "assignee" && "close_dropdowns"}
-                >
-                  <button
-                    type="button"
-                    phx-click="toggle_dropdown"
-                    phx-value-name="assignee"
-                    aria-haspopup="listbox"
-                    aria-expanded={@open_dropdown == "assignee"}
-                    aria-controls={
-                      if(@open_dropdown == "assignee", do: "assignee-filter-listbox", else: nil)
-                    }
-                    class={[
-                      "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono transition-smooth",
-                      @kanban_filter["assignee"] != "" &&
-                        "bg-purple-500/10 text-purple-300 border-purple-500/30",
-                      @kanban_filter["assignee"] == "" &&
-                        "bg-[#11151c] hover:bg-[#161b22] text-gray-300 border-[#21262d]"
-                    ]}
-                  >
-                    <.icon name="hero-user" class="w-3.5 h-3.5 text-gray-400" />
-                    <span>
-                      <%= if @kanban_filter["assignee"] != "" do %>
-                        {String.upcase(@kanban_filter["assignee"])}
-                      <% else %>
-                        ASSIGNEE
-                      <% end %>
-                    </span>
-                    <.icon name="hero-chevron-down" class="w-3 h-3 text-gray-400" />
-                  </button>
-
-                  <%= if @open_dropdown == "assignee" do %>
-                    <div
-                      id="assignee-filter-listbox"
-                      role="listbox"
-                      aria-label="Filter by assignee"
-                      class="absolute right-0 top-full mt-2 w-48 bg-[#11151c]/95 border border-[#21262d] rounded-2xl p-1.5 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95"
-                    >
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={@kanban_filter["assignee"] == ""}
-                        phx-click="select_kanban_filter"
-                        phx-value-key="assignee"
-                        phx-value-value=""
-                        class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth"
-                      >
-                        <span>All Assignees</span>
-                        <%= if @kanban_filter["assignee"] == "" do %>
-                          <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
-                        <% end %>
-                      </button>
-                      <%= for a <- ["default", "planner", "coder", "verifier"] do %>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={@kanban_filter["assignee"] == a}
-                          phx-click="select_kanban_filter"
-                          phx-value-key="assignee"
-                          phx-value-value={a}
-                          class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth"
-                        >
-                          <div class="flex items-center gap-2">
-                            <span class="w-4 h-4 rounded-full bg-[#21262d] text-center font-bold text-[8px] flex items-center justify-center text-white">
-                              {String.first(a) |> String.upcase()}
-                            </span>
-                            <span class="capitalize">{a}</span>
-                          </div>
-                          <%= if @kanban_filter["assignee"] == a do %>
-                            <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
-                          <% end %>
-                        </button>
-                      <% end %>
-                    </div>
-                  <% end %>
-                </div>
-              </div>
-            </div>
+              <.form
+                for={filter_form}
+                id="kanban-filter-form"
+                phx-change="filter_kanban"
+                class="kanban-filter-form"
+              >
+                <.input
+                  field={filter_form[:search]}
+                  id="kanban-filter-search"
+                  type="text"
+                  placeholder="Filter tasks"
+                  autocomplete="off"
+                  class="kanban-filter-control"
+                />
+                <.input
+                  field={filter_form[:priority]}
+                  id="kanban-filter-priority"
+                  type="select"
+                  aria-label="Filter by priority"
+                  options={[{"All priorities", ""} | Enum.map(Kanban.Task.priorities(), &{String.capitalize(&1), &1})]}
+                  class="kanban-filter-control"
+                />
+                <.input
+                  field={filter_form[:status]}
+                  id="kanban-filter-status"
+                  type="select"
+                  aria-label="Filter by status"
+                  options={[{"All statuses", ""} | Enum.map(Kanban.Task.statuses(), &{String.capitalize(&1), &1})]}
+                  class="kanban-filter-control"
+                />
+                <.input
+                  field={filter_form[:assignee]}
+                  id="kanban-filter-assignee"
+                  type="select"
+                  aria-label="Filter by assignee"
+                  options={[
+                    {"All assignees", ""},
+                    {"Default", "default"},
+                    {"Planner", "planner"},
+                    {"Coder", "coder"},
+                    {"Verifier", "verifier"}
+                  ]}
+                  class="kanban-filter-control"
+                />
+              </.form>
+            </header>
 
             <% kanban_filters_active? =
               Enum.any?(@kanban_filter, fn {_key, value} -> value != "" end) %>
@@ -407,194 +192,195 @@
               </button>
             </div>
 
-            <!-- Kanban 8-Column Accordion Board -->
+            <%!-- Mission Board flat channels --%>
+            <div id="task-move-focus-host" phx-hook="TaskMoveFocus"></div>
+            <p
+              id="task-move-live-region"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              class="sr-only"
+            >
+              {@task_move_announcement}
+            </p>
+
             <div
               id="kanban-board"
               role="region"
               aria-label="Task status board"
-              class="flex flex-1 snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain px-0.5 pb-3 pt-0.5"
+              class="kanban-board"
             >
               <%= for col_status <- Kanban.Task.statuses() do %>
                 <% col_tasks = Enum.filter(@tasks, &(&1.status == col_status))
-                is_expanded = @expanded_column == col_status %>
+                selected? = @expanded_task_status == col_status %>
 
-                <%= if is_expanded do %>
-                  <!-- Expanded Column -->
-                  <div
-                    id={"kanban-col-#{col_status}"}
-                    data-status={col_status}
-                    data-column-variant="expanded"
-                    class="kanban-column kanban-column--expanded flex h-full flex-shrink-0 snap-start flex-col"
+                <section
+                  id={"kanban-col-#{col_status}"}
+                  phx-hook=".KanbanDrag"
+                  phx-click="expand_task_status"
+                  phx-value-status={col_status}
+                  data-status={col_status}
+                  data-channel-state={if(selected?, do: "selected", else: "quiet")}
+                  aria-expanded={to_string(selected?)}
+                  class={[
+                    "kanban-channel",
+                    selected? && "kanban-channel--selected",
+                    !selected? && "kanban-channel--quiet"
+                  ]}
+                >
+                  <button
+                    id={"kanban-channel-trigger-#{col_status}"}
+                    type="button"
+                    phx-click="expand_task_status"
+                    phx-value-status={col_status}
+                    aria-controls={if(selected?, do: "kanban-cards-#{col_status}", else: nil)}
+                    aria-expanded={to_string(selected?)}
+                    class="kanban-channel__trigger"
                   >
-                    <!-- Column Header -->
-                    <div class="kanban-column__header flex shrink-0 items-center justify-between border-b p-3.5">
-                      <div class="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-gray-300">
-                        <span class={[
-                          "w-2 h-2 rounded-full",
-                          col_status == "running" &&
-                            "bg-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.8)]",
-                          col_status == "ready" && "bg-blue-400",
-                          col_status == "scheduled" && "bg-indigo-400",
-                          col_status == "todo" && "bg-purple-400",
-                          col_status == "triage" && "bg-gray-400",
-                          col_status == "blocked" && "bg-red-400",
-                          col_status == "review" && "bg-amber-400",
-                          col_status == "done" && "bg-gray-500"
-                        ]}></span>
-                        <span class="uppercase">{String.upcase(col_status)}</span>
-                        <span
-                          class="kanban-column__count rounded-full px-2 text-[10px] font-mono"
-                          aria-label={"#{length(col_tasks)} tasks"}
-                        >
-                          {length(col_tasks)}
-                        </span>
-                      </div>
-                      <button
-                        id={"kanban-collapse-#{col_status}"}
-                        type="button"
-                        phx-click="toggle_column"
-                        phx-value-status={col_status}
-                        aria-controls={"kanban-cards-#{col_status}"}
-                        aria-expanded="true"
-                        aria-label={"Collapse #{col_status} column"}
-                        class="kanban-column__collapse rounded-lg p-1 text-gray-500 transition-smooth active:scale-95"
-                        title="Collapse Column"
-                      >
-                        <.icon name="hero-chevron-left" class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <!-- Column Cards List -->
-                    <div
-                      id={"kanban-cards-#{col_status}"}
-                      phx-hook=".KanbanDrag"
-                      data-status={col_status}
-                      class="flex-1 overflow-y-auto p-3 space-y-2.5"
+                    <span class="kanban-channel__identity">
+                      <span class="kanban-channel__mark" aria-hidden="true"></span>
+                      <span class="kanban-channel__label">{String.upcase(col_status)}</span>
+                    </span>
+                    <span class="kanban-channel__gauge" aria-hidden="true">
+                      <span
+                        class="kanban-channel__gauge-fill"
+                        style={"--kanban-gauge: #{min(length(col_tasks), 8) / 8 * 100}%"}
+                      ></span>
+                    </span>
+                    <span
+                      class="kanban-channel__count"
+                      aria-label={"#{length(col_tasks)} tasks"}
                     >
-                      <%= for task <- col_tasks do %>
+                      {length(col_tasks)}
+                    </span>
+                  </button>
+
+                  <div
+                    :if={selected?}
+                    id={"kanban-cards-#{col_status}"}
+                    class="kanban-task-list"
+                  >
+                    <div :if={col_tasks == []} class="kanban-channel__empty">
+                      No tasks in this channel
+                    </div>
+                    <%= for task <- col_tasks do %>
+                      <article
+                        id={"task-row-#{task.id}"}
+                        phx-hook=".KanbanCard"
+                        data-task-id={task.id}
+                        class={[
+                          "kanban-task-row",
+                          @selected_task && @selected_task.id == task.id &&
+                            "kanban-task-row--selected"
+                        ]}
+                      >
                         <button
                           type="button"
                           id={"task-card-#{task.id}"}
                           phx-click="open_task_drawer"
                           phx-value-id={task.id}
-                          phx-hook=".KanbanCard"
-                          data-task-id={task.id}
-                          class={[
-                            "w-full p-3.5 bg-[#161b22] border rounded-2xl transition-smooth cursor-pointer hover:border-gray-500 space-y-2.5 group shadow-sm text-left",
-                            @selected_task && @selected_task.id == task.id &&
-                              "border-emerald-500/60 ring-1 ring-emerald-500/20",
-                            !(@selected_task && @selected_task.id == task.id) &&
-                              "border-[#21262d]"
-                          ]}
+                          class="kanban-task-card"
                         >
-                          <div class="flex items-center justify-between text-[10px] font-mono text-gray-500">
-                            <span class="uppercase tracking-wider">#{String.slice(task.id, 0..4)}</span>
-                            <span class={[
-                              "px-1.5 py-0.5 rounded font-semibold",
-                              task.priority == "critical" &&
-                                "bg-red-500/10 text-red-400 border border-red-500/20",
-                              task.priority == "high" &&
-                                "bg-orange-500/10 text-orange-400 border border-orange-500/20",
-                              task.priority == "medium" &&
-                                "bg-blue-500/10 text-blue-400 border border-blue-500/20",
-                              task.priority == "low" &&
-                                "bg-gray-500/10 text-gray-400 border border-gray-500/20"
-                            ]}>
-                              {String.upcase(task.priority || "MEDIUM")}
-                            </span>
-                          </div>
-
-                          <h4 class="text-xs font-semibold text-white font-sans leading-snug group-hover:text-cyan-300 transition-colors">
-                            {task.title}
-                          </h4>
-
-                          <%= if task.description do %>
-                            <p class="text-[11px] text-gray-400 line-clamp-2 leading-relaxed">
-                              {task.description}
-                            </p>
-                          <% end %>
-
-                          <div class="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] font-mono text-gray-400">
-                            <div class="flex items-center gap-1.5">
-                              <span class="w-4 h-4 rounded-full bg-[#21262d] text-center font-bold text-[8px] flex items-center justify-center text-white">
-                                <%= if is_binary(task.assignee) and task.assignee != "" do %>
-                                  {String.first(task.assignee) |> String.upcase()}
-                                <% else %>
-                                  D
-                                <% end %>
-                              </span>
-                              <span>{task.assignee}</span>
-                            </div>
-
-                            <%= if task.worker_pid do %>
-                              <span class="text-emerald-400">{task.worker_pid}</span>
-                            <% end %>
-                          </div>
+                          <span class="kanban-task-card__meta">
+                            <span>#{String.slice(task.id, 0..4)}</span>
+                            <span>{String.upcase(task.priority || "medium")} priority</span>
+                          </span>
+                          <span class="kanban-task-card__title">{task.title}</span>
+                          <span :if={task.description} class="kanban-task-card__description">
+                            {task.description}
+                          </span>
+                          <span class="kanban-task-card__footer">
+                            <span>{task.assignee || "default"}</span>
+                            <span>{task.status}</span>
+                          </span>
                         </button>
-                      <% end %>
-                    </div>
-                  </div>
-                <% else %>
-                  <!-- Collapsed Vertical Ribbon -->
-                  <button
-                    type="button"
-                    id={"kanban-col-#{col_status}"}
-                    phx-click="toggle_column"
-                    phx-value-status={col_status}
-                    phx-hook=".KanbanDrag"
-                    data-status={col_status}
-                    data-column-variant="collapsed"
-                    aria-label={"Expand #{col_status} column"}
-                    aria-expanded="false"
-                    class="kanban-column kanban-column--collapsed group flex flex-shrink-0 snap-start flex-col items-center justify-between px-2 py-4"
-                    title={"Click to expand #{col_status} column"}
-                  >
-                    <div class="flex w-full flex-col items-center gap-3">
-                      <span class={[
-                        "h-2.5 w-2.5 shrink-0 rounded-full ring-4 ring-white/[0.025]",
-                        col_status == "running" &&
-                          "bg-emerald-400 shadow-[0_0_8px_rgba(34,197,94,0.8)] motion-safe:animate-pulse",
-                        col_status == "ready" && "bg-blue-400",
-                        col_status == "scheduled" && "bg-indigo-400",
-                        col_status == "todo" && "bg-purple-400",
-                        col_status == "triage" && "bg-gray-400",
-                        col_status == "blocked" && "bg-red-400",
-                        col_status == "review" && "bg-amber-400",
-                        col_status == "done" && "bg-gray-500"
-                      ]}></span>
-                      <span class="kanban-column__label block w-full text-center font-mono font-bold uppercase">
-                        {String.upcase(col_status)}
-                      </span>
-                    </div>
 
-                    <span class="kanban-column__count rounded-full px-2 py-1 text-[10px] font-mono">
-                      {length(col_tasks)}
-                    </span>
-                  </button>
-                <% end %>
+                        <button
+                          id={"move-task-trigger-#{task.id}"}
+                          type="button"
+                          phx-click="open_task_move"
+                          phx-value-id={task.id}
+                          aria-expanded={to_string(@moving_task_id == task.id)}
+                          aria-controls={"move-task-form-#{task.id}"}
+                          class="kanban-move-trigger"
+                        >
+                          <.icon name="hero-arrows-right-left" class="size-4" />
+                          <span>Move task</span>
+                        </button>
+
+                        <%= if @moving_task_id == task.id and @task_move_form do %>
+                          <.form
+                            for={@task_move_form}
+                            id={"move-task-form-#{task.id}"}
+                            phx-submit="move_task"
+                            phx-window-keydown={
+                              JS.push("cancel_task_move", value: %{id: task.id})
+                              |> JS.focus(to: "#move-task-trigger-#{task.id}")
+                            }
+                            phx-key="Escape"
+                            class="kanban-move-form"
+                          >
+                            <.input field={@task_move_form[:id]} type="hidden" />
+                            <.input
+                              field={@task_move_form[:status]}
+                              id={"move-task-status-#{task.id}"}
+                              type="select"
+                              label="Destination"
+                              options={Kanban.Task.statuses()}
+                              class="kanban-move-select"
+                            />
+                            <div class="kanban-move-form__actions">
+                              <button
+                                type="submit"
+                                phx-disable-with="Moving…"
+                                class="sf-control kanban-move-submit"
+                              >
+                                Move
+                              </button>
+                              <button
+                                type="button"
+                                phx-click={
+                                  JS.push("cancel_task_move", value: %{id: task.id})
+                                  |> JS.focus(to: "#move-task-trigger-#{task.id}")
+                                }
+                                class="sf-control kanban-move-cancel"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </.form>
+                        <% end %>
+                      </article>
+                    <% end %>
+                  </div>
+                </section>
               <% end %>
             </div>
-          </div>
 
           <script :type={Phoenix.LiveView.ColocatedHook} name=".KanbanDrag">
             export default {
               mounted() {
-                this.el.addEventListener('dragover', (e) => {
-                  e.preventDefault();
-                  this.el.classList.add('bg-[#1c2128]/50');
-                });
-                this.el.addEventListener('dragleave', () => {
-                  this.el.classList.remove('bg-[#1c2128]/50');
-                });
-                this.el.addEventListener('drop', (e) => {
-                  e.preventDefault();
-                  this.el.classList.remove('bg-[#1c2128]/50');
-                  const taskId = e.dataTransfer.getData('text/plain');
-                  const targetStatus = this.el.getAttribute('data-status');
-                  if (taskId && targetStatus) {
-                    this.pushEvent('move_task', { id: taskId, status: targetStatus });
-                  }
-                });
+                this.onDragOver = (event) => {
+                  event.preventDefault()
+                  this.el.classList.add("kanban-drop-active")
+                }
+                this.onDragLeave = () => this.el.classList.remove("kanban-drop-active")
+                this.onDrop = (event) => {
+                  event.preventDefault()
+                  this.el.classList.remove("kanban-drop-active")
+                  const id = event.dataTransfer.getData("text/plain")
+                  const status = this.el.dataset.status
+                  if (id && status) this.pushEvent("move_task", {id, status})
+                }
+                this.el.addEventListener("dragover", this.onDragOver)
+                this.el.addEventListener("dragleave", this.onDragLeave)
+                this.el.addEventListener("drop", this.onDrop)
+              },
+              destroyed() {
+                this.el.classList.remove("kanban-drop-active")
+                this.el.removeEventListener("dragover", this.onDragOver)
+                this.el.removeEventListener("dragleave", this.onDragLeave)
+                this.el.removeEventListener("drop", this.onDrop)
               }
             }
           </script>
@@ -602,13 +388,53 @@
           <script :type={Phoenix.LiveView.ColocatedHook} name=".KanbanCard">
             export default {
               mounted() {
-                this.el.setAttribute('draggable', 'true');
-                this.el.addEventListener('dragstart', (e) => {
-                  e.dataTransfer.setData('text/plain', this.el.getAttribute('data-task-id'));
-                });
+                this.el.setAttribute("draggable", "true")
+                this.onDragStart = (event) => {
+                  this.el.classList.add("card-dragging")
+                  event.dataTransfer.setData("text/plain", this.el.dataset.taskId)
+                }
+                this.onDragEnd = () => this.el.classList.remove("card-dragging")
+                this.el.addEventListener("dragstart", this.onDragStart)
+                this.el.addEventListener("dragend", this.onDragEnd)
+              },
+              destroyed() {
+                this.el.classList.remove("card-dragging")
+                this.el.removeEventListener("dragstart", this.onDragStart)
+                this.el.removeEventListener("dragend", this.onDragEnd)
               }
             }
           </script>
+          </div>
+            </:primary_field>
+            <:signal_panel>
+              <section id="kanban-signal-panel" aria-labelledby="kanban-signal-title">
+                <p class="sf-metadata">Board signal</p>
+                <h3 id="kanban-signal-title" class="mt-2 text-base font-semibold">
+                  {@expanded_task_status |> String.upcase()}
+                </h3>
+                <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
+                  Activate a quiet gauge to inspect its tasks. Drag between channels or use each
+                  task's Move task control for a keyboard and touch-safe transfer.
+                </p>
+                <dl class="mt-5 grid gap-3 text-xs">
+                  <%= for status <- Kanban.Task.statuses() do %>
+                    <div class="flex items-center justify-between border-t border-[var(--sf-hairline)] pt-3">
+                      <dt>{String.upcase(status)}</dt>
+                      <dd>{Enum.count(@tasks, &(&1.status == status))}</dd>
+                    </div>
+                  <% end %>
+                </dl>
+              </section>
+            </:signal_panel>
+            <:command_dock>
+              <div id="kanban-command-dock-slot" class="kanban-command-dock-slot">
+                <span class="sf-metadata">Command dock</span>
+                <span class="text-sm text-[var(--sf-text-secondary)]">
+                  Shared prompt and dispatch controls remain docked below this board.
+                </span>
+              </div>
+            </:command_dock>
+          </.workbench_chassis>
         <% end %>
 
         <!-- TAB 2: COACH & SWARM VIEW -->
@@ -2266,7 +2092,10 @@
           <aside
             id="task-detail-drawer"
             phx-hook="ResponsiveSheet"
+            role="dialog"
+            aria-modal="true"
             aria-label="Task details"
+            aria-labelledby="task-detail-title"
             tabindex="-1"
             data-sheet-close-event="close_task_drawer"
             data-sheet-return-id={"task-card-#{@selected_task.id}"}
@@ -2290,10 +2119,7 @@
                   ]}></span>
                   {@selected_task.status}
                 </span>
-                <h2
-                  id="task-detail-title"
-                  class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}
-                >
+                <h2 id="task-detail-title" class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}>
                   Task details
                 </h2>
                 <span class={["font-mono text-xs text-[var(--sf-text-secondary)]"]}>#{String.slice(
