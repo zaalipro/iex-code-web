@@ -2,6 +2,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
   use IexCode.E2E.Case, async: false
   @moduletag mock_llm: true
   alias IexCode.{Sessions, Kanban}
+  alias IexCode.Engine.SessionServer
 
   setup %{conn: conn, workspace_path: path} do
     project = create_project_fixture(%{root_path: path})
@@ -334,15 +335,23 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       assert run.metadata["goal_description"] == "Never duplicate this durable execution"
     end
 
-    test "pauses, resumes, and cancels active session execution", %{view: view} do
+    test "pauses, resumes, and cancels active session execution", %{
+      view: view,
+      session: session
+    } do
       # 1. Switch to Swarm tab
       view |> element("#instrument-card-swarm") |> render_click()
       view |> element("#mission-control-mode-execution") |> render_click()
       assert has_element?(view, "#mission-control-panel-execution:not([hidden])")
 
+      # Start a real interactive coordinator so the rendered pause control is
+      # backed by an active session owner rather than an event-only shortcut.
+      assert :ok = SessionServer.send_prompt(session.id, "/swarm Hold this session open")
+      _ = :sys.get_state(view.pid)
+
       assert has_element?(
                view,
-               "#mission-control-panel-execution button[phx-click='resume_session']"
+               "#mission-control-panel-execution button[phx-click='pause_session']"
              )
 
       assert has_element?(
@@ -356,7 +365,10 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
              )
 
       # 2. Pause session
-      render_click(view, "pause_session")
+      view
+      |> element("#mission-control-panel-execution button[phx-click='pause_session']")
+      |> render_click()
+
       assert has_element?(view, "#interactive-session-status", "Session status · PAUSED")
 
       assert has_element?(
@@ -364,28 +376,62 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
                "#mission-control-panel-execution button[phx-click='resume_session']"
              )
 
-      # 3. Resume session — with no active run it never phantom-resumes into
-      # running; the session settles back to IDLE
-      render_click(view, "resume_session")
-      assert has_element?(view, "#interactive-session-status", "Session status · IDLE")
+      # 3. Resume session. The mock coordinator may finish before this render;
+      # either durable RUNNING or the safe IDLE terminal race must agree with
+      # the state-specific control shown next.
+      view
+      |> element("#mission-control-panel-execution button[phx-click='resume_session']")
+      |> render_click()
+
+      resumed_status = Sessions.get_session!(session.id).status
+      assert resumed_status in ["running", "idle"]
+
+      case resumed_status do
+        "running" ->
+          assert has_element?(view, "#interactive-session-status", "Session status · RUNNING")
+
+          assert has_element?(
+                   view,
+                   "#mission-control-panel-execution button[phx-click='pause_session']"
+                 )
+
+        "idle" ->
+          assert has_element?(view, "#interactive-session-status", "Session status · IDLE")
+
+          assert has_element?(
+                   view,
+                   "#mission-control-panel-execution button[phx-click='resume_session']"
+                 )
+      end
+
+      # 4. Open cancel modal
+      view
+      |> element("#mission-control-panel-execution button[phx-click='open_cancel_modal']")
+      |> render_click()
+
+      assert has_element?(view, "#cancel-session-modal[role='dialog'][aria-modal='true']")
+      assert has_element?(view, "#cancel-session-modal-title", "Stop & Cancel Session")
 
       assert has_element?(
                view,
-               "#mission-control-panel-execution button[phx-click='resume_session']"
+               "#cancel-session-modal button[phx-click='cancel_session'][phx-value-mode='rollback']",
+               "Rollback Snapshots"
              )
 
-      # 4. Open cancel modal
-      render_click(view, "open_cancel_modal")
-
-      assert render(view) =~ "Stop &amp; Cancel Session" or
-               render(view) =~ "Stop & Cancel Session"
-
-      assert render(view) =~ "Rollback Snapshots"
-      assert render(view) =~ "Commit Changes"
+      assert has_element?(
+               view,
+               "#cancel-session-modal button[phx-click='cancel_session'][phx-value-mode='commit']",
+               "Commit Changes"
+             )
 
       # 5. Cancel with rollback
-      render_click(view, "cancel_session", %{"mode" => "rollback"})
-      refute render(view) =~ "Stop & Cancel Session"
+      view
+      |> element(
+        "#cancel-session-modal button[phx-click='cancel_session'][phx-value-mode='rollback']"
+      )
+      |> render_click()
+
+      refute has_element?(view, "#cancel-session-modal")
       assert has_element?(view, "#flash-info", "Session stopped")
     end
 

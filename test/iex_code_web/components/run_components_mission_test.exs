@@ -299,12 +299,14 @@ defmodule IexCodeWeb.RunComponentsMissionTest do
         "#workspace-lock-overview",
         "#async-run-metrics",
         "#async-run-list",
+        "#async-run-legacy-run[phx-click='select_async_run'][phx-value-id='legacy-run']",
         "#async-run-detail"
       ],
       "topology" => ["#run-agent-fleet", "#async-run-graph-and-controls", "#async-run-steps"],
       "execution" => [
         "#async-run-actions",
         "#async-run-steering-form",
+        "#async-run-research-manifest",
         "#async-run-budget-meters",
         "#async-run-control-timeline",
         "#async-run-approval-approval-legacy",

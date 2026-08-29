@@ -49,11 +49,79 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       assert :sys.get_state(view.pid).socket.assigns.selected_run.id == run.id
     end
 
+    initial_tools = :sys.get_state(view.pid).socket.assigns.active_tools
+
     view |> element("#toggle-run-setup") |> render_click()
+
+    view
+    |> form("#run-setup-panel", %{
+      "run_setup" => %{
+        "mode" => "research",
+        "priority" => "critical",
+        "max_attempts" => "7",
+        "token_budget" => "424242",
+        "research_level" => "ultra",
+        "research_max_sources" => "19"
+      }
+    })
+    |> render_change()
+
+    view |> element("#dispatch-mode-interactive") |> render_click()
+    view |> element("[phx-click='toggle_tool'][phx-value-tool='ast_search']") |> render_click()
+
     state_before = :sys.get_state(view.pid).socket.assigns
     agent_count_before = state_before.run_agent_count
     route_before = state_before.workspace_route
     active_view_before = state_before.active_view
+    url_before = current_live_url(view)
+
+    setup_before = %{
+      mode: state_before.run_setup_mode,
+      priority: state_before.run_setup_priority,
+      max_attempts: state_before.run_setup_max_attempts,
+      token_budget: state_before.run_setup_token_budget,
+      research_level: state_before.run_setup_research_level,
+      research_sources: state_before.run_setup_research_sources,
+      form_params: state_before.run_setup_form.params
+    }
+
+    composer_before = %{
+      dispatch_mode: state_before.dispatch_mode,
+      active_tools: state_before.active_tools,
+      prompt_request_id: state_before.prompt_form[:request_id].value
+    }
+
+    assert Map.delete(setup_before, :form_params) == %{
+             mode: "research",
+             priority: "critical",
+             max_attempts: 7,
+             token_budget: 424_242,
+             research_level: "ultra",
+             research_sources: 19
+           }
+
+    assert Map.take(state_before.run_setup_form.params, [
+             "mode",
+             "priority",
+             "max_attempts",
+             "token_budget",
+             "research_level",
+             "research_max_sources"
+           ]) == %{
+             "mode" => "research",
+             "priority" => "critical",
+             "max_attempts" => "7",
+             "token_budget" => "424242",
+             "research_level" => "ultra",
+             "research_max_sources" => "19"
+           }
+
+    assert composer_before.dispatch_mode == "interactive"
+    refute composer_before.active_tools == initial_tools
+    assert has_element?(view, "#run-setup-mode option[value='research'][selected]")
+    assert has_element?(view, "#run-setup-priority option[value='critical'][selected]")
+    assert has_element?(view, "#run-setup-token-budget[value='424242']")
+    assert has_element?(view, "#dispatch-mode-interactive[aria-pressed='true']")
     assert has_element?(view, "#run-agent-#{agent.id}")
 
     document_before = view |> render() |> LazyHTML.from_fragment()
@@ -61,13 +129,20 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     stream_before = %{
       parents: live_node_count(document_before, "#run-agent-fleet-list[phx-update='stream']"),
       agents: live_node_count(document_before, "#run-agent-#{agent.id}"),
-      content: document_before |> LazyHTML.query("#run-agent-#{agent.id}") |> LazyHTML.text()
+      content: document_before |> LazyHTML.query("#run-agent-#{agent.id}") |> LazyHTML.text(),
+      detail: document_before |> LazyHTML.query("#async-run-detail") |> LazyHTML.text()
     }
 
-    render_click(view, "switch_mission_control_mode", %{"mode" => "__invalid_mode__"})
-    render_click(view, "switch_mission_control_mode", %{})
-    render_click(view, "switch_mission_control_mode", %{"mode" => %{"journal" => "true"}})
-    render_click(view, "switch_mission_control_mode", %{"mode" => ["overview"]})
+    for payload <- [
+          %{"mode" => "__invalid_mode__"},
+          %{},
+          %{"mode" => :journal},
+          %{"mode" => %{"journal" => "true"}},
+          %{"mode" => ["overview"]}
+        ] do
+      render_click(view, "switch_mission_control_mode", payload)
+    end
+
     assert has_element?(view, "#mission-control-mode-journal[aria-selected='true']")
     assert has_element?(view, "#mission-control-panel-journal:not([hidden])")
     state_after = :sys.get_state(view.pid).socket.assigns
@@ -76,6 +151,24 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert state_after.run_agent_count == agent_count_before
     assert state_after.workspace_route == route_before
     assert state_after.active_view == active_view_before
+    assert current_live_url(view) == url_before
+
+    assert %{
+             mode: state_after.run_setup_mode,
+             priority: state_after.run_setup_priority,
+             max_attempts: state_after.run_setup_max_attempts,
+             token_budget: state_after.run_setup_token_budget,
+             research_level: state_after.run_setup_research_level,
+             research_sources: state_after.run_setup_research_sources,
+             form_params: state_after.run_setup_form.params
+           } == setup_before
+
+    assert %{
+             dispatch_mode: state_after.dispatch_mode,
+             active_tools: state_after.active_tools,
+             prompt_request_id: state_after.prompt_form[:request_id].value
+           } == composer_before
+
     assert has_element?(view, "#run-agent-#{agent.id}")
     refute_receive {_, {:patch, _, _}}, 50
 
@@ -86,7 +179,8 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
                live_node_count(document_after, "#run-agent-fleet-list[phx-update='stream']"),
              agents: live_node_count(document_after, "#run-agent-#{agent.id}"),
              content:
-               document_after |> LazyHTML.query("#run-agent-#{agent.id}") |> LazyHTML.text()
+               document_after |> LazyHTML.query("#run-agent-#{agent.id}") |> LazyHTML.text(),
+             detail: document_after |> LazyHTML.query("#async-run-detail") |> LazyHTML.text()
            } == stream_before
   end
 
@@ -686,11 +780,21 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
         %{key: "replay-agent", role: "verifier", display_name: "Replay verifier"}
       ])
 
-    {:ok, control} =
-      Runs.enqueue_control(run, "replay-control", %{
-        kind: "steer",
-        payload: %{"guidance" => "Replay exact state"}
-      })
+    controls =
+      for {key, kind, payload} <- [
+            {"replay-control-zeta", "pause", %{"fixture_order" => "third"}},
+            {"replay-control-alpha", "steer",
+             %{"fixture_order" => "first", "guidance" => "Replay exact state"}},
+            {"replay-control-middle", "resume", %{"fixture_order" => "second"}}
+          ] do
+        assert {:ok, control} =
+                 Runs.enqueue_control(run, key, %{
+                   kind: kind,
+                   payload: payload
+                 })
+
+        control
+      end
 
     {:ok, approval} =
       Runs.request_approval(run, %{
@@ -709,7 +813,20 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
         metadata: %{"preview" => "Replay artifact"}
       })
 
-    {:ok, event} = Runs.append_event(run, "run.replay_fixture", %{"message" => "Replay event"})
+    explicit_events =
+      for {type, marker} <- [
+            {"run.replay_zeta", "third"},
+            {"run.replay_alpha", "first"},
+            {"run.replay_middle", "second"}
+          ] do
+        assert {:ok, event} =
+                 Runs.append_event(run, type, %{
+                   "message" => "Replay event #{marker}",
+                   "fixture_order" => marker
+                 })
+
+        event
+      end
 
     {:ok, lock_envelope} =
       Runs.acquire_workspace_lock(%{
@@ -723,6 +840,12 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       })
 
     lock = hd(lock_envelope.locks)
+    persisted_controls = Runs.list_controls(run)
+
+    assert Enum.map(persisted_controls, & &1.id) == Enum.map(controls, & &1.id)
+
+    assert Enum.map(explicit_events, & &1.sequence) ==
+             explicit_events |> Enum.map(& &1.sequence) |> Enum.sort()
 
     for reconnect <- 1..2 do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
@@ -731,6 +854,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
       for selector <- [
             "#async-run-list",
             "#async-run-#{run.id}",
+            "#async-run-detail",
             "#workspace-lock-overview",
             "#workspace-lock-#{lock.id}",
             "#run-agent-fleet-list[phx-update='stream']",
@@ -738,9 +862,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
             "#async-run-steps",
             "#async-run-step-#{step.id}",
             "#async-run-control-timeline",
-            "#async-run-control-entry-#{control.id}",
             "#async-run-events",
-            "#run-event-#{event.id}",
             "#async-run-approval-#{approval.id}",
             "#async-run-artifacts",
             "#async-run-artifact-#{artifact.id}"
@@ -748,6 +870,31 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
         assert live_node_count(document, selector) == 1,
                "reconnect #{reconnect} expected one #{selector}"
       end
+
+      assert has_element?(
+               view,
+               "#async-run-#{run.id}[aria-pressed='true'][phx-click='select_async_run'][phx-value-id='#{run.id}']"
+             )
+
+      assert has_element?(view, "#async-run-detail[data-run-status='running']", run.objective)
+
+      for control <- controls do
+        assert live_node_count(document, "#async-run-control-entry-#{control.id}") == 1
+      end
+
+      for event <- explicit_events do
+        assert live_node_count(document, "#run-event-#{event.id}") == 1
+      end
+
+      assert dom_ids(document, "#async-run-control-timeline article") ==
+               Enum.map(controls, &"async-run-control-entry-#{&1.id}")
+
+      explicit_event_selector =
+        explicit_events
+        |> Enum.map_join(", ", &"#run-event-#{&1.id}")
+
+      assert dom_ids(document, explicit_event_selector) ==
+               Enum.map(explicit_events, &"run-event-#{&1.id}")
 
       refute has_element?(view, "#async-run-dag-projection")
     end
@@ -940,6 +1087,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
        } do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
+    timestamp = DateTime.utc_now() |> DateTime.truncate(:second)
 
     {:ok, cycle_run} =
       Runs.create_run_with_steps(
@@ -978,7 +1126,14 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
           objective: "Foreign",
           kind: "analysis",
           mode: "workflow",
-          execution_engine: "dag_v1"
+          execution_engine: "dag_v1",
+          status: "running",
+          attempt: 1,
+          lease_generation: 1,
+          lease_owner: "foreign-dag-attempt-owner",
+          lease_expires_at: DateTime.add(timestamp, 60, :second),
+          heartbeat_at: timestamp,
+          started_at: timestamp
         },
         [dag_node("foreign", "project_inventory", [], %{"path" => "."})]
       )
@@ -986,6 +1141,12 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     foreign_step = hd(Runs.list_steps(foreign_run))
     cycle_step = hd(Runs.list_steps(cycle_run))
     missing_step = hd(Runs.list_steps(missing_run))
+    authorized_cycle_steps = Runs.list_steps(cycle_run)
+
+    assert {:ok, foreign_claim} =
+             DagScheduler.claim_ready(foreign_run, "foreign-dag-attempt-owner", 1)
+
+    assert %RunStepAttempt{} = foreign_claim.attempt
 
     Ecto.Query.from(step in IexCode.Runs.RunStep, where: step.id == ^cycle_step.id)
     |> Repo.update_all(set: [depends_on: ["b"]])
@@ -1000,6 +1161,15 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert {:error, {:dag_step_scope_mismatch, _}} =
              IexCode.Runs.DagProjection.build(cycle_run, [foreign_step], [])
 
+    assert {:error, {:dag_attempt_scope_mismatch, attempt_id}} =
+             IexCode.Runs.DagProjection.build(
+               cycle_run,
+               authorized_cycle_steps,
+               [foreign_claim.attempt]
+             )
+
+    assert attempt_id == foreign_claim.attempt.id
+
     assert {:error, :cyclic_dag_projection} =
              IexCode.Runs.DagProjection.build(cycle_run, cycle_steps, [])
 
@@ -1009,12 +1179,10 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
 
     view |> element("#async-run-#{cycle_run.id}") |> render_click()
-    assert has_element?(view, "#dag-projection-error", "projection_cycle_detected")
-    refute has_element?(view, "#async-run-steps")
+    assert_fail_closed_dag(view, "projection_cycle_detected")
 
     view |> element("#async-run-#{missing_run.id}") |> render_click()
-    assert has_element?(view, "#dag-projection-error", "projection_dependency_missing")
-    refute has_element?(view, "#async-run-steps")
+    assert_fail_closed_dag(view, "projection_dependency_missing")
   end
 
   test "strict DAG projection renders unavailable when persisted scheduler rows disappear", %{
@@ -1041,9 +1209,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     |> Repo.delete_all()
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
-    assert has_element?(view, "#dag-projection-error", "projection_unavailable")
-    assert has_element?(view, "#dag-execution-projection[data-scheduler-state='unavailable']")
-    refute has_element?(view, "#async-run-steps")
+    assert_fail_closed_dag(view, "projection_unavailable")
   end
 
   test "rejects malformed cyclic and unsupported DAG manifests without inserting a run", %{
@@ -1527,6 +1693,8 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     view |> element("#resume-async-run") |> render_click()
     assert_receive {:test_run_resumed, ^run_id}, 2_000
     assert Runs.get_run!(run.id).status == "running"
+    assert resume_control = Enum.find(Runs.list_controls(run), &(&1.kind == "resume"))
+    assert has_element?(view, "#async-run-control-entry-#{resume_control.id}", "resume")
 
     view
     |> form("#async-run-steering-form", %{"steering" => "Keep the verifier scoped"})
@@ -1561,6 +1729,8 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     retried = Runs.get_run!(failed.id)
     assert retried.status == "queued"
     assert retried.attempt == 0
+    assert retry_event = Enum.find(Runs.list_latest_events(retried), &(&1.type == "run.retried"))
+    assert has_element?(view, "#run-event-#{retry_event.id}", "run.retried")
     assert has_element?(view, "#flash-info", "Retry request persisted")
 
     {:ok, draft} =
@@ -1576,7 +1746,17 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     view |> element("#async-run-#{draft.id}") |> render_click()
     assert has_element?(view, "#start-async-run[phx-click='start_async_run']")
     view |> element("#start-async-run") |> render_click()
-    assert Runs.get_run!(draft.id).status in ["queued", "running"]
+    started = Runs.get_run!(draft.id)
+    assert started.status in ["queued", "running"]
+
+    assert start_event =
+             Enum.find(Runs.list_latest_events(started), fn event ->
+               event.type == "run.status_changed" and event.payload["from"] == "draft" and
+                 event.payload["to"] == "queued"
+             end)
+
+    assert has_element?(view, "#run-event-#{start_event.id}", "run.status_changed")
+
     assert has_element?(view, "#flash-info", "Draft queued for execution")
   end
 
@@ -2063,6 +2243,21 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert has_element?(view, "#restart-run-agent-#{interrupted.agent_id}")
     view |> element("#restart-run-agent-#{interrupted.agent_id}") |> render_click()
 
+    assert restart_control =
+             Enum.find(
+               Runs.list_run_agent_controls(interrupted.agent_id),
+               &(&1.kind == "restart")
+             )
+
+    assert restart_control.status == "applied"
+    assert restart_control.result["status"] == "restarted"
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(
+             view,
+             "#run-agent-control-receipt-#{interrupted.agent_id}[data-control-status='applied'][data-control-result-status='restarted']"
+           )
+
     assert {:ok, replacement} =
              IexCode.Engine.FleetManager.current_agent(run.id, interrupted.agent_id)
 
@@ -2077,5 +2272,28 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     |> LazyHTML.query(selector)
     |> LazyHTML.to_tree()
     |> length()
+  end
+
+  defp dom_ids(document, selector) do
+    document
+    |> LazyHTML.query(selector)
+    |> LazyHTML.attributes()
+    |> Enum.map(fn attributes -> attributes |> List.keyfind("id", 0) |> elem(1) end)
+  end
+
+  defp current_live_url(%Phoenix.LiveViewTest.View{proxy: {_ref, _topic, proxy}}) do
+    assert {:ok, url} = GenServer.call(proxy, :url)
+    url
+  end
+
+  defp assert_fail_closed_dag(view, error_code) do
+    assert has_element?(view, "#dag-projection-error", error_code)
+    assert has_element?(view, "#dag-execution-projection[data-scheduler-state='unavailable']")
+    refute has_element?(view, "#dag-execution-projection[data-scheduler-state='available']")
+    refute has_element?(view, "#dag-execution-map")
+    refute has_element?(view, "#dag-execution-projection [id^='dag-layer-']")
+    refute has_element?(view, "#dag-execution-projection [id^='dag-mobile-layer-']")
+    refute has_element?(view, "#dag-execution-projection [id^='dag-node-']")
+    refute has_element?(view, "#async-run-steps")
   end
 end
