@@ -554,15 +554,6 @@
                         </div>
 
                         <div class="flex min-w-0 flex-wrap gap-2">
-                          <button
-                            type="button"
-                            phx-click="switch_tab"
-                            phx-value-tab="terminal"
-                            class="sf-control min-h-11 px-3 text-sm"
-                          >
-                            <.icon name="hero-command-line" class="size-4" />
-                            Terminal
-                          </button>
                           <%= if @session.status in ["running", :running] do %>
                             <button
                               type="button"

@@ -1027,7 +1027,7 @@ defmodule IexCodeWeb.RunComponents do
             :if={agent_value(agent, :error_message)}
             id={"run-agent-error-#{agent_value(agent, :id)}"}
             role="alert"
-            class="mt-3 border-l-2 border-[var(--sf-live-mark)] pl-3 text-sm leading-6 text-[var(--sf-text-primary)]"
+            class="mt-3 break-words [overflow-wrap:anywhere] border-l-2 border-[var(--sf-live-mark)] pl-3 text-sm leading-6 text-[var(--sf-text-primary)]"
           >
             {agent_value(agent, :error_message)}
           </div>

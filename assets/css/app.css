@@ -2394,7 +2394,9 @@
   top: calc(100% + 0.5rem);
   left: 0;
   display: grid;
-  min-width: min(18rem, calc(100vw - 2rem));
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 0.25rem;
   border: 1px solid var(--sf-hairline);
   background: var(--sf-instrument-raised);

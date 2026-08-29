@@ -165,11 +165,8 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       refute has_element?(view, "#coach-create-goal-button")
       refute has_element?(view, "#coach-actions-toggle[aria-haspopup='menu']")
 
-      # Exercise Coach menu: open goal modal
-      html_goal = render_click(view, "open_goal_modal")
-
-      assert html_goal =~ "Create Autonomous Goal" or html_goal =~ "Goal Title" or
-               is_binary(html_goal)
+      view |> element("#new-goal-button") |> render_click()
+      assert has_element?(view, "#goal-modal") or has_element?(view, "#goal-create-form")
     end
 
     test "toggles pause and resume on session execution", %{

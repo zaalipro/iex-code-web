@@ -1,5 +1,6 @@
 defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
   use IexCode.E2E.Case, async: false
+  require Ecto.Query
 
   alias IexCode.{Repo, Runs}
   alias IexCode.Engine.FleetSupervisor
@@ -25,6 +26,11 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
         status: "running"
       })
 
+    {:ok, [agent]} =
+      Runs.create_run_agents(run, [
+        %{key: "stable-agent", role: "worker", display_name: "Stable worker"}
+      ])
+
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-swarm") |> render_click()
 
@@ -43,6 +49,9 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     view |> element("#toggle-run-setup") |> render_click()
     state_before = :sys.get_state(view.pid).socket.assigns
     agent_count_before = state_before.run_agent_count
+    route_before = state_before.workspace_route
+    active_view_before = state_before.active_view
+    assert has_element?(view, "#run-agent-#{agent.id}")
 
     render_click(view, "switch_mission_control_mode", %{"mode" => "__invalid_mode__"})
     render_click(view, "switch_mission_control_mode", %{})
@@ -54,6 +63,9 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert state_after.selected_run.id == run.id
     assert state_after.run_setup_open?
     assert state_after.run_agent_count == agent_count_before
+    assert state_after.workspace_route == route_before
+    assert state_after.active_view == active_view_before
+    assert has_element?(view, "#run-agent-#{agent.id}")
   end
 
   test "Mission Control phase prefers running then paused persisted steps", %{
@@ -151,6 +163,91 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert has_element?(view, "#mission-control-phase", expected)
   end
 
+  test "Mission Control completed phase honors completed, updated, inserted, then ID tiers", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Completed phase timestamp tiers",
+        kind: "analysis",
+        mode: "single",
+        status: "completed"
+      })
+
+    steps =
+      for {key, title} <- [
+            {"completed-tier", "Completed timestamp wins"},
+            {"updated-tier", "Updated timestamp wins"},
+            {"inserted-tier", "Inserted timestamp wins"},
+            {"id-tier", "ID tie candidate"}
+          ] do
+        {:ok, step} =
+          Runs.create_step(run, %{
+            key: key,
+            kind: "analysis",
+            title: title,
+            status: "completed"
+          })
+
+        step
+      end
+
+    shared = ~U[2026-08-28 10:00:00Z]
+
+    steps =
+      Enum.map(steps, fn step ->
+        force_step_times(step,
+          completed_at: nil,
+          inserted_at: shared,
+          updated_at: shared
+        )
+      end)
+
+    [completed_tier, updated_tier, inserted_tier, id_tier] = steps
+
+    completed_tier = force_step_times(completed_tier, completed_at: ~U[2026-08-28 14:00:00Z])
+
+    updated_tier = force_step_times(updated_tier, updated_at: ~U[2026-08-28 16:00:00Z])
+
+    inserted_tier = force_step_times(inserted_tier, inserted_at: ~U[2026-08-28 17:00:00Z])
+
+    id_tier = force_step_times(id_tier, inserted_at: ~U[2026-08-28 09:00:00Z])
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    assert has_element?(view, "#mission-control-phase", completed_tier.title)
+
+    completed_tier = force_step_times(completed_tier, completed_at: nil)
+
+    send(view.pid, {:run_step_updated, completed_tier})
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#mission-control-phase", updated_tier.title)
+
+    updated_tier = force_step_times(updated_tier, updated_at: shared)
+
+    send(view.pid, {:run_step_updated, updated_tier})
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#mission-control-phase", inserted_tier.title)
+
+    inserted_tier = force_step_times(inserted_tier, inserted_at: shared)
+
+    id_tier = force_step_times(id_tier, inserted_at: shared)
+
+    expected =
+      [completed_tier, updated_tier, inserted_tier, id_tier]
+      |> Enum.max_by(& &1.id)
+      |> Map.fetch!(:title)
+
+    send(view.pid, {:run_step_updated, inserted_tier})
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#mission-control-phase", expected)
+  end
+
   test "entering Mission Control selects the bounded active mission in status order", %{
     conn: conn,
     workspace_path: path
@@ -189,6 +286,48 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     {:ok, direct, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
     assert has_element?(direct, "#async-run-#{runs["running"].id}[aria-pressed='true']")
+  end
+
+  test "newest terminal fallback is insertion ordered when no active status exists", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, older} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Older terminal mission",
+        kind: "analysis",
+        mode: "single",
+        status: "failed"
+      })
+
+    {:ok, newer} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Newer terminal mission",
+        kind: "analysis",
+        mode: "single",
+        status: "completed"
+      })
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    older_time = DateTime.add(now, -60, :second)
+    newer_time = DateTime.add(now, -30, :second)
+
+    Ecto.Query.from(r in Runs.Run, where: r.id == ^older.id)
+    |> Repo.update_all(set: [inserted_at: older_time])
+
+    Ecto.Query.from(r in Runs.Run, where: r.id == ^newer.id)
+    |> Repo.update_all(set: [inserted_at: newer_time])
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    assert has_element?(view, "#async-run-#{newer.id}[aria-pressed='true']")
+    refute has_element?(view, "#async-run-#{older.id}[aria-pressed='true']")
   end
 
   test "Mission Control falls back through paused, queued, draft, and terminal missions", %{
@@ -251,6 +390,55 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert has_element?(view, "#mission-control-signal", "No operator decision required")
   end
 
+  test "Mission Control LiveView reports an offline dispatcher without active runs", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    assert Process.whereis(IexCode.Runs.RunDispatcher) == nil
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    assert has_element?(view, "#mission-control-signal", "Dispatcher offline")
+  end
+
+  test "Mission Control LiveView signal follows selected failure and interruption outcomes", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, failed} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Failed selected mission",
+        kind: "analysis",
+        mode: "single",
+        status: "failed",
+        error_message: "Raw failure detail must stay out of the signal"
+      })
+
+    {:ok, interrupted} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Interrupted selected mission",
+        kind: "analysis",
+        mode: "single",
+        status: "interrupted"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    view |> element("#async-run-#{interrupted.id}") |> render_click()
+    assert has_element?(view, "#mission-control-signal", "Selected run was interrupted")
+
+    view |> element("#async-run-#{failed.id}") |> render_click()
+    assert has_element?(view, "#mission-control-signal", "Selected run failed")
+    refute has_element?(view, "#mission-control-signal", "Raw failure detail")
+  end
+
   test "interactive session steering draft survives operation updates with a stable root", %{
     conn: conn,
     workspace_path: path
@@ -281,6 +469,62 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     _ = :sys.get_state(view.pid)
     assert has_element?(view, "#mission-control-interactive-slot #session-steering-input")
     assert has_element?(view, "#session-steering-input[value='Keep this draft']")
+  end
+
+  test "Mission Control owns one composer setup and interactive session tree", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Pin single interactive owners",
+        kind: "analysis",
+        mode: "single",
+        status: "running"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    view |> element("#mission-control-mode-execution") |> render_click()
+    view |> element("#toggle-run-setup") |> render_click()
+
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    for selector <- [
+          "#instrument-workbench-swarm",
+          "#new-goal-button[phx-click='open_goal_modal']",
+          "#async-run-control",
+          "#prompt-composer",
+          "#prompt-form",
+          "#run-setup-tray",
+          "#run-setup-panel",
+          "#mission-control-interactive-slot",
+          "#steering-form",
+          "#interactive-operation-history-note",
+          "#interactive-role-templates",
+          "#subagent-cards-grid",
+          "#operation-tree-root",
+          "#async-run-#{run.id}"
+        ] do
+      assert live_node_count(document, selector) == 1,
+             "expected exactly one LiveView owner matching #{selector}"
+    end
+
+    for selector <- [
+          "#prompt-form form",
+          "#run-setup-panel form",
+          "#async-run-steering-form form",
+          "#steering-form form",
+          "#prompt-form #async-run-steering-form",
+          "#prompt-form #steering-form"
+        ] do
+      assert live_node_count(document, selector) == 0,
+             "expected no nested or duplicated form matching #{selector}"
+    end
   end
 
   test "stale operations-cleared messages reconcile the current session", %{
@@ -597,6 +841,13 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     }
   end
 
+  defp force_step_times(step, attrs) do
+    Ecto.Query.from(s in IexCode.Runs.RunStep, where: s.id == ^step.id)
+    |> Repo.update_all(set: attrs)
+
+    Repo.get!(IexCode.Runs.RunStep, step.id)
+  end
+
   test "requires an explicit provider for a deep-research mission", %{
     conn: conn,
     workspace_path: path
@@ -687,6 +938,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
   } do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
+    foreign_session = create_session_fixture(project)
 
     {:ok, run_with_approval} =
       Runs.create_run(%{
@@ -703,6 +955,23 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
         action: "workspace_write",
         resource: "lib/example.ex",
         reason: "Review the generated change"
+      })
+
+    {:ok, foreign_run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: foreign_session.id,
+        objective: "Foreign session approval",
+        kind: "analysis",
+        mode: "single"
+      })
+
+    {:ok, _foreign_approval} =
+      Runs.request_approval(foreign_run, %{
+        key: "foreign-session-approval",
+        action: "workspace_write",
+        resource: "lib/foreign.ex",
+        reason: "Must not count in the current session"
       })
 
     {:ok, newest_run} =
@@ -723,6 +992,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     assert has_element?(view, "#async-run-#{newest_run.id}")
     assert has_element?(view, "#async-run-metrics[data-pending-approvals='1']")
+    assert has_element?(view, "#mission-control-signal", "Session has 1 pending approval")
     refute has_element?(view, "#async-run-approval-#{approval.id}")
 
     assert {:ok, _decided} =
@@ -738,6 +1008,64 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
 
     assert has_element?(view, "#async-run-approval-#{approval.id}")
     assert has_element?(view, "#async-run-metrics[data-pending-approvals='0']")
+    refute has_element?(view, "#mission-control-signal", "Session has 1 pending approval")
+  end
+
+  test "Execution approval controls persist approved and denied durable outcomes", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Exercise approval outcomes",
+        kind: "analysis",
+        mode: "single",
+        status: "queued"
+      })
+
+    {:ok, approved} =
+      Runs.request_approval(run, %{
+        key: "approval-approved",
+        action: "workspace_write",
+        resource: "lib/approved.ex",
+        reason: "Approve this durable action"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    view |> element("#mission-control-mode-execution") |> render_click()
+
+    assert has_element?(
+             view,
+             "#approve-run-action-#{approved.id}[phx-click='decide_run_approval'][phx-value-decision='approved']"
+           )
+
+    view |> element("#approve-run-action-#{approved.id}") |> render_click()
+    assert Runs.get_approval(approved.id).status == "approved"
+    assert has_element?(view, "#flash-info", "Approval decision persisted")
+
+    {:ok, denied} =
+      Runs.request_approval(run, %{
+        key: "approval-denied",
+        action: "git_write",
+        resource: "lib/denied.ex",
+        reason: "Deny this durable action"
+      })
+
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(
+             view,
+             "#deny-run-action-#{denied.id}[phx-click='decide_run_approval'][phx-value-decision='denied']"
+           )
+
+    view |> element("#deny-run-action-#{denied.id}") |> render_click()
+    assert Runs.get_approval(denied.id).status == "denied"
+    assert has_element?(view, "#flash-info", "Approval decision persisted")
   end
 
   test "durable run PubSub updates refresh mission summary without changing explicit selection",
@@ -773,6 +1101,19 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     view |> element("#async-run-#{selected.id}") |> render_click()
     assert :sys.get_state(view.pid).socket.assigns.selected_run.id == selected.id
 
+    view |> element("#mission-control-mode-execution") |> render_click()
+    assert :sys.get_state(view.pid).socket.assigns.selected_run.id == selected.id
+
+    selected_update =
+      selected
+      |> Ecto.Changeset.change(progress: 12)
+      |> Repo.update!()
+
+    send(view.pid, {:run_updated, selected_update})
+    _ = :sys.get_state(view.pid)
+    assert :sys.get_state(view.pid).socket.assigns.selected_run.id == selected_update.id
+    assert has_element?(view, "#async-run-#{selected.id}[data-run-status='queued']")
+
     {:ok, _updated} = Runs.transition_run(active, "running", %{progress: 42})
     _ = :sys.get_state(view.pid)
 
@@ -780,6 +1121,10 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert assigns.selected_run.id == selected.id
     assert assigns.instrument_summaries["swarm"].primary == "Live mission summary"
     assert %{label: "Progress", value: "42%"} in assigns.instrument_summaries["swarm"].secondary
+
+    view |> element("#return-to-instrument-deck-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
+    assert has_element?(view, "#async-run-#{active.id}[aria-pressed='true']")
   end
 
   test "renders honest dispatcher state and accessible asynchronous progress", %{
@@ -937,6 +1282,13 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     view |> element("#async-run-#{waiting_run.id}") |> render_click()
 
     assert has_element?(view, "#workspace-lock-overview[data-lock-state='waiting']")
+
+    assert has_element?(
+             view,
+             "#mission-control-signal",
+             "Selected run is waiting for workspace access"
+           )
+
     assert has_element?(view, "#workspace-lock-details")
     assert has_element?(view, "#workspace-lock-#{held_lock.id}[data-lock-status='held']")
     assert has_element?(view, "#workspace-lock-#{waiting_lock.id}[data-lock-status='waiting']")
@@ -950,6 +1302,9 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
              view,
              "#async-run-#{waiting_run.id}[data-workspace-lock-state='waiting']"
            )
+
+    view |> element("#async-run-#{held_run.id}") |> render_click()
+    assert has_element?(view, "#mission-control-signal", "Selected run holds the workspace lock")
   end
 
   test "streams the selected run fleet and resets it when selection changes", %{
@@ -1189,5 +1544,12 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     refute replacement.pid == old_pid
     refute_receive {:DOWN, ^sibling_ref, :process, _, _}, 50
     Process.demonitor(sibling_ref, [:flush])
+  end
+
+  defp live_node_count(document, selector) do
+    document
+    |> LazyHTML.query(selector)
+    |> LazyHTML.to_tree()
+    |> length()
   end
 end
