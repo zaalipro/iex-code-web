@@ -13,7 +13,7 @@ class Target {
 }
 
 class Element {
-  constructor(id, dataset = {}) { this.id = id; this.dataset = dataset; this.inert = false; this.attrs = new Map(); this.children = []; this.parentElement = null }
+  constructor(id, dataset = {}) { this.id = id; this.dataset = dataset; this.inert = false; this.isConnected = true; this.attrs = new Map(); this.children = []; this.parentElement = null }
   append(child) { child.parentElement = this; child.ownerDocument = this.ownerDocument; this.children.push(child) }
   hasAttribute(name) { return this.attrs.has(name) }
   getAttribute(name) { return this.attrs.get(name) ?? null }
@@ -42,6 +42,7 @@ function composed(initialMobile) {
     sheetBackgroundId: background.id
   })
   const dialog = new Element("dialog", {cancelEvent: "cancel", initialFocus: ""})
+  background.setAttribute("aria-hidden", "sentinel")
   const elements = new Map([[background.id, background], [trigger.id, trigger], [sheet.id, sheet], [dialog.id, dialog]])
   document.body = {}
   document.activeElement = trigger
@@ -62,7 +63,7 @@ function composed(initialMobile) {
   const globals = [globalThis.window, globalThis.document, globalThis.HTMLElement, globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame]
   globalThis.window = document.defaultView
   globalThis.document = document
-  globalThis.HTMLElement = class {}
+  globalThis.HTMLElement = Element
   globalThis.requestAnimationFrame = document.defaultView.requestAnimationFrame
   globalThis.cancelAnimationFrame = document.defaultView.cancelAnimationFrame
 
@@ -72,37 +73,59 @@ function composed(initialMobile) {
   modalHook.mounted()
 
   return {
-    media, document, background, sheet, dialog, sheetHook, modalHook,
-    restore() {
-      modalHook.destroyed(); sheetHook.destroyed()
-      ;[globalThis.window, globalThis.document, globalThis.HTMLElement, globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame] = globals
+    media, document, background, trigger, sheet, dialog, sheetHook, modalHook,
+    destroy(order) {
+      try {
+        if (order === "inner-first") {
+          modalHook.destroyed(); sheetHook.destroyed()
+        } else {
+          sheetHook.destroyed(); modalHook.destroyed()
+        }
+      } finally {
+        ;[globalThis.window, globalThis.document, globalThis.HTMLElement, globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame] = globals
+      }
     }
   }
 }
 
-for (const order of ["inner-first", "outer-first"]) {
-  test(`639 to 640 composed handoff is deterministic (${order})`, () => {
-    const h = composed(true)
-    h.media.settle(false, false)
-    if (order === "inner-first") h.modalHook.updated()
-    h.media.emit("change", {matches: false})
-    if (order === "outer-first") h.modalHook.updated()
-    assert.equal(h.background.inert, true)
-    assert.equal(h.background.getAttribute("aria-hidden"), "true")
-    assert.equal(h.document.count("keydown"), 1)
-    assert.equal(h.document.activeElement, h.dialog)
-    h.restore()
+function assertTeardown(h) {
+  assert.equal(h.trigger.focusCalls?.length, 1)
+  assert.equal(h.document.activeElement, h.trigger)
+  assert.equal(h.document.count("keydown"), 0)
+  assert.equal(h.background.inert, false)
+  assert.equal(h.background.hasAttribute("aria-hidden"), true)
+  assert.equal(h.background.getAttribute("aria-hidden"), "sentinel")
+}
+
+for (const updateOrder of ["inner-first", "outer-first"]) {
+  test(`639 to 640 composed handoff tears down with one return owner (${updateOrder} update)`, () => {
+    for (const destroyOrder of ["inner-first", "outer-first"]) {
+      const h = composed(true)
+      h.media.settle(false, false)
+      if (updateOrder === "inner-first") h.modalHook.updated()
+      h.media.emit("change", {matches: false})
+      if (updateOrder === "outer-first") h.modalHook.updated()
+      assert.equal(h.background.inert, true)
+      assert.equal(h.background.getAttribute("aria-hidden"), "true")
+      assert.equal(h.document.count("keydown"), 1)
+      assert.equal(h.document.activeElement, h.dialog)
+      h.destroy(destroyOrder)
+      assertTeardown(h)
+    }
   })
 
-  test(`640 to 639 composed handoff is deterministic (${order})`, () => {
-    const h = composed(false)
-    h.media.settle(true, false)
-    if (order === "inner-first") h.modalHook.updated()
-    h.media.emit("change", {matches: true})
-    if (order === "outer-first") h.modalHook.updated()
-    assert.equal(h.background.inert, true)
-    assert.equal(h.background.getAttribute("aria-hidden"), "true")
-    assert.equal(h.document.count("keydown"), 1)
-    h.restore()
+  test(`640 to 639 composed handoff tears down with one return owner (${updateOrder} update)`, () => {
+    for (const destroyOrder of ["inner-first", "outer-first"]) {
+      const h = composed(false)
+      h.media.settle(true, false)
+      if (updateOrder === "inner-first") h.modalHook.updated()
+      h.media.emit("change", {matches: true})
+      if (updateOrder === "outer-first") h.modalHook.updated()
+      assert.equal(h.background.inert, true)
+      assert.equal(h.background.getAttribute("aria-hidden"), "true")
+      assert.equal(h.document.count("keydown"), 1)
+      h.destroy(destroyOrder)
+      assertTeardown(h)
+    }
   })
 }

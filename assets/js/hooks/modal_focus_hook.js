@@ -97,12 +97,11 @@ export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
       if (!this.sheet && !this.desktopOwned) this.coordinator?.afterMobileDeactivate()
     },
     destroyed() {
-      this.coordinator?.destroy()
+      const finalMode = this.coordinator?.destroy()
       if (this.sheet?.__responsiveModalFocusCoordinator === this.coordinator) {
         delete this.sheet.__responsiveModalFocusCoordinator
       }
-      const wasMobile = this.mobileSheetDelegated
-      if (wasMobile) return
+      if (finalMode === "mobile") return
       const previouslyFocused = this.previouslyFocused
       const previouslyFocusedId = this.previouslyFocusedId
       const fallbackReturnId = modalSheetReturnId(this.el)

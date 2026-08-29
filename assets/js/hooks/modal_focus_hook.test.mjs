@@ -13,6 +13,11 @@ class Media {
 function setup(matches, {sheetOwner = true} = {}) {
   const media = new Media(matches)
   const listeners = new Set()
+  class HTMLElementStub {}
+  const opener = new HTMLElementStub()
+  opener.id = "modal-opener"
+  opener.isConnected = true
+  opener.focusCalls = []
   const target = {
     inert: false,
     attrs: new Map(),
@@ -26,12 +31,17 @@ function setup(matches, {sheetOwner = true} = {}) {
     : null
   const document = {
     body: {},
-    activeElement: null,
+    activeElement: opener,
     addEventListener(_event, listener) { listeners.add(listener) },
     removeEventListener(_event, listener) { listeners.delete(listener) },
     querySelectorAll() { return [] },
-    getElementById(id) { return id === "workspace-shell" ? target : null }
+    getElementById(id) {
+      if (id === "workspace-shell") return target
+      if (id === opener.id) return opener
+      return null
+    }
   }
+  opener.focus = options => { opener.focusCalls.push(options); document.activeElement = opener }
   const element = {
     id: "dialog",
     dataset: {initialFocus: ""},
@@ -49,7 +59,7 @@ function setup(matches, {sheetOwner = true} = {}) {
   const previousCancelRAF = globalThis.cancelAnimationFrame
   globalThis.window = {matchMedia: () => media}
   globalThis.document = document
-  globalThis.HTMLElement = class {}
+  globalThis.HTMLElement = HTMLElementStub
   globalThis.requestAnimationFrame = callback => { callback(); return 1 }
   globalThis.cancelAnimationFrame = () => {}
   const hook = createModalFocus()
@@ -57,7 +67,7 @@ function setup(matches, {sheetOwner = true} = {}) {
   hook.pushEvent = () => {}
   hook.mounted()
   return {
-    hook, media, target, listeners,
+    hook, media, target, opener, document, listeners,
     restore() {
       hook.destroyed()
       globalThis.window = previousWindow
@@ -74,6 +84,10 @@ test("standalone ModalFocus retains full ownership at 639px without a Responsive
   assert.equal(h.target.inert, true)
   assert.equal(h.listeners.size, 1)
   h.restore()
+  assert.equal(h.listeners.size, 0)
+  assert.equal(h.target.inert, false)
+  assert.deepEqual(h.opener.focusCalls, [{preventScroll: true}])
+  assert.equal(h.document.activeElement, h.opener)
 })
 
 test("nested ModalFocus hands ownership after the outer ResponsiveSheet settles", () => {
