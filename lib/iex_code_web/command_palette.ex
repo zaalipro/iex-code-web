@@ -255,8 +255,7 @@ defmodule IexCodeWeb.CommandPalette do
     do:
       Enum.filter(
         items,
-        &(matches?(&1.title, query) or matches?(Map.get(&1, :subtitle, ""), query) or
-            matches?(Map.get(&1, :tab, ""), query))
+        &(matches?(&1.title, query) or matches?(Map.get(&1, :subtitle, ""), query))
       )
 
   defp normalize_query(query) when is_binary(query),

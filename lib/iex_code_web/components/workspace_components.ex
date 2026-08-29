@@ -2005,7 +2005,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   No matching switchboard controls
                 </div>
               <% else %>
-                <%= if @view_rows != [] do %>
+                <%= if @view_rows != [] or @deck_rows != [] do %>
                   <section aria-labelledby="switchboard-instruments-heading">
                     <h3
                       id="switchboard-instruments-heading"

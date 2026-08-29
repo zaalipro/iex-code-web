@@ -85,5 +85,14 @@ defmodule IexCodeWeb.ChallengerCommandPaletteStressTest do
       assert Enum.map(CommandPalette.views(), & &1.id) ==
                ~w(view_swarm view_kanban view_research view_calendar view_changes view_chat view_files view_terminal)
     end
+
+    test "static search only indexes visible title and subtitle copies" do
+      assert Enum.any?(
+               CommandPalette.search("terminal", [], "views"),
+               &(&1.id == "view_terminal")
+             )
+
+      assert CommandPalette.search("swarm", [], "views") == []
+    end
   end
 end

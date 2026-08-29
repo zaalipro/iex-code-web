@@ -130,6 +130,23 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
     assert has_element?(view, "#palette-item-1[aria-selected='true']")
   end
 
+  test "all instruments remains selectable when it is the only query match", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=terminal")
+
+    render_click(view, "toggle_command_palette")
+    render_change(view, "command_palette_search", %{"query" => "All instruments"})
+
+    assert has_element?(view, "#palette-item-0[data-palette-item-id='all-instruments']")
+    assert has_element?(view, "#command-palette-input[aria-activedescendant='palette-item-0']")
+    view |> element("#palette-item-0") |> render_click()
+    assert_patch(view, "/sessions/#{session.id}")
+  end
+
   test "palette selection indices are bounded and malformed input is a no-op", %{
     conn: conn,
     workspace_path: path

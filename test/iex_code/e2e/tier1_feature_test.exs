@@ -788,9 +788,8 @@ defmodule IexCode.E2E.Tier1FeatureTest do
 
       {:ok, view, _html} = mount_workspace(conn, session.id)
 
-      view
-      |> element("#sidebar-tab-terminal")
-      |> render_click()
+      view |> element("#all-instruments-trigger") |> render_click()
+      view |> element("[data-palette-item-id='view_terminal']") |> render_click()
 
       html =
         view
