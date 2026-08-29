@@ -207,6 +207,38 @@ test("desktop mount is inert and media changes activate then fully clean up with
   assert.equal(h.trigger.focusCalls.length, 0)
 })
 
+test("639 to 640 and 640 to 639 expose exact sheet ownership boundaries", () => {
+  const mobile = setup({viewportWidth: 639})
+  mobile.hook.mounted()
+  assert.equal(mobile.sheet.dataset.responsiveSheetActive, "true")
+  assert.equal(mobile.document.listenerCount("keydown"), 1)
+  mobile.media.change(false)
+  assert.equal(mobile.sheet.dataset.responsiveSheetActive, undefined)
+  assert.equal(mobile.background.inert, false)
+  assert.equal(mobile.document.listenerCount("keydown"), 0)
+
+  const desktop = setup({viewportWidth: 640})
+  desktop.hook.mounted()
+  assert.equal(desktop.sheet.dataset.responsiveSheetActive, undefined)
+  desktop.media.change(true)
+  assert.equal(desktop.sheet.dataset.responsiveSheetActive, "true")
+  assert.equal(desktop.background.inert, true)
+  assert.equal(desktop.document.listenerCount("keydown"), 1)
+})
+
+test("breakpoint transitions coordinate desktop teardown before mobile and setup after mobile", () => {
+  const h = setup({viewportWidth: 640})
+  const transitions = []
+  h.sheet.__responsiveModalFocusCoordinator = {
+    beforeMobileActivate: () => transitions.push(["before-mobile", h.document.listenerCount("keydown")]),
+    afterMobileDeactivate: () => transitions.push(["after-mobile", h.document.listenerCount("keydown")])
+  }
+  h.hook.mounted()
+  h.media.change(true)
+  h.media.change(false)
+  assert.deepEqual(transitions, [["before-mobile", 0], ["after-mobile", 0]])
+})
+
 test("mobile-only dialog semantics activate and restore truthfully", () => {
   const h = setup({mobile: false, dialog: true})
   h.hook.mounted()

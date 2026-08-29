@@ -100,6 +100,7 @@ const ResponsiveSheet = {
   },
 
   activate(background) {
+    this.el?.__responsiveModalFocusCoordinator?.beforeMobileActivate?.()
     this.background = background
     let record = backgroundOwners.get(background)
     if (!record) {
@@ -172,6 +173,9 @@ const ResponsiveSheet = {
     this.background = null
     this.backgroundSnapshot = null
     this.backgroundRecord = null
+    if (!this.destroyedOnce && this.media?.matches !== true) {
+      this.el?.__responsiveModalFocusCoordinator?.afterMobileDeactivate?.()
+    }
   },
 
   focusables() {

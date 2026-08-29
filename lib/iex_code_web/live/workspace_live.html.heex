@@ -852,9 +852,9 @@
             </:local_modes>
             <:primary_field>
               <div class="calendar-workbench">
-                <div id="calendar-focus-return-target" tabindex="-1" class="sr-only">
+                <h3 id="calendar-focus-return-target" phx-hook="CalendarDeleteFocus" tabindex="-1" class="calendar-focus-return-target">
                   Schedule Chronometer
-                </div>
+                </h3>
                 <section
                   id="calendar-mobile-agenda"
                   data-mobile-default="true"
@@ -2608,9 +2608,9 @@
         >
           Delete scheduled task?
         </h2>
-        <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
+        <p class="mt-2 min-w-0 [overflow-wrap:anywhere] text-sm leading-6 text-[var(--sf-text-secondary)]">
           This permanently removes
-          <strong class="text-[var(--sf-text-primary)]">{pending_calendar_delete.title}</strong>
+          <strong class="min-w-0 [overflow-wrap:anywhere] text-[var(--sf-text-primary)]">{pending_calendar_delete.title}</strong>
           and its future schedule. This action cannot be undone.
         </p>
         <div class="mt-6 flex justify-end gap-3 pb-[env(safe-area-inset-bottom)]">
@@ -2625,13 +2625,7 @@
           <button
             id="confirm-calendar-task-delete"
             type="button"
-            phx-click={
-              JS.set_attribute(
-                {"data-sheet-return-id", pending_calendar_delete.outcome_return_id},
-                to: "#calendar-delete-confirmation-#{pending_calendar_delete.task_id}"
-              )
-              |> JS.push("confirm_calendar_task_delete")
-            }
+            phx-click="confirm_calendar_task_delete"
             phx-disable-with="Deleting…"
             class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
           >

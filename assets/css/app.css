@@ -1714,6 +1714,21 @@
 
 .calendar-workbench { color: var(--sf-text-primary); }
 
+.calendar-focus-return-target {
+  width: fit-content;
+  margin-bottom: 0.75rem;
+  color: var(--sf-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.calendar-focus-return-target:focus-visible {
+  outline: 2px solid var(--sf-focus-ring);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
 .calendar-agenda-heading,
 .calendar-month-heading {
   display: flex;
@@ -1881,7 +1896,22 @@
 }
 
 @media (pointer: coarse) and (min-width: 40rem) {
-  .calendar-day-task { min-height: 44px; }
+  .calendar-desktop-layout {
+    grid-template-columns: minmax(21.375rem, 1fr) minmax(13rem, 0.65fr);
+  }
+
+  .calendar-weekdays,
+  .calendar-grid {
+    grid-template-columns: repeat(7, minmax(44px, 1fr));
+  }
+
+  .calendar-day { padding-inline: 0; }
+  .calendar-day-header { padding-inline: 0.2rem; }
+
+  .calendar-day-task {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 .sf-command-composer { background: var(--sf-canvas-deep); }

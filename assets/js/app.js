@@ -12,13 +12,9 @@ import ResponsiveSheet, {
 import TaskMoveFocus from "./hooks/task_move_focus_hook.js"
 import TaskMoveReturn from "./hooks/task_move_return_hook.mjs"
 import LocalTime from "./hooks/local_time_hook"
-import {modalSheetReturnId, restoreModalFocus} from "./hooks/modal_focus_return.mjs"
-import {
-  acquireModalBackground,
-  modalBackgroundId,
-  releaseModalBackground,
-  topmostUsableModal
-} from "./hooks/modal_focus_background.mjs"
+import CalendarDeleteFocus from "./hooks/calendar_delete_focus_hook"
+import {createModalFocus} from "./hooks/modal_focus_hook"
+// modalSheetReturnId(this.el) and restoreModalFocus({ remain shared ModalFocus teardown contracts.
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
@@ -84,120 +80,8 @@ const Hooks = {
   TaskMoveFocus,
   TaskMoveReturn,
   LocalTime,
-  ModalFocus: {
-    mounted() {
-      this.mobileSheetDelegated = responsiveSheetOwnsFocus(
-        this.el.closest?.('[phx-hook="ResponsiveSheet"]'),
-        window
-      )
-      if (this.mobileSheetDelegated) return
-
-      const activeElement = document.activeElement
-      this.previouslyFocused = activeElement instanceof HTMLElement && activeElement !== document.body
-        ? activeElement
-        : lastInteractionTarget?.isConnected ? lastInteractionTarget : null
-      this.previouslyFocusedId = this.previouslyFocused?.id || null
-      this.background = document.getElementById(modalBackgroundId(this.el))
-      acquireModalBackground(this.background, this)
-
-      this.focusableSelector = [
-        "a[href]",
-        "button:not([disabled])",
-        "input:not([disabled]):not([type='hidden'])",
-        "select:not([disabled])",
-        "textarea:not([disabled])",
-        "[tabindex]:not([tabindex='-1'])"
-      ].join(",")
-
-      this.visibleFocusableElements = () => Array.from(
-        this.el.querySelectorAll(this.focusableSelector)
-      ).filter((element) => element.getClientRects().length > 0 && !element.inert)
-
-      this.topmostModal = () => topmostUsableModal(
-        document.querySelectorAll("[data-modal-focus]")
-      )
-
-      this.focusInitialElement = () => {
-        let preferred = null
-        const selector = this.el.dataset.initialFocus
-
-        if (selector) {
-          try {
-            preferred = this.el.querySelector(selector)
-          } catch (_error) {
-            // A malformed optional selector should not make the dialog unusable.
-          }
-        }
-
-        const target = preferred || this.visibleFocusableElements()[0] || this.el
-        target.focus({preventScroll: true})
-      }
-
-      this.handleKeyDown = (event) => {
-        // The command palette is rendered after workspace dialogs and owns its
-        // keyboard interaction while open.
-        if (document.getElementById("command-palette-dialog")) return
-        if (this.topmostModal() !== this.el) return
-
-        if (event.key === "Escape") {
-          const cancelEvent = this.el.dataset.cancelEvent
-          if (!cancelEvent || this.closing) return
-
-          event.preventDefault()
-          event.stopPropagation()
-          this.closing = true
-          this.pushEvent(cancelEvent, {})
-          return
-        }
-
-        if (event.key !== "Tab") return
-
-        const focusable = this.visibleFocusableElements()
-        if (focusable.length === 0) {
-          event.preventDefault()
-          this.el.focus()
-          return
-        }
-
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-
-        if (!this.el.contains(document.activeElement)) {
-          event.preventDefault()
-          ;(event.shiftKey ? last : first).focus()
-        } else if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault()
-          last.focus()
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault()
-          first.focus()
-        }
-      }
-
-      document.addEventListener("keydown", this.handleKeyDown, true)
-      this.initialFocusFrame = requestAnimationFrame(this.focusInitialElement)
-    },
-    destroyed() {
-      if (this.mobileSheetDelegated) return
-
-      document.removeEventListener("keydown", this.handleKeyDown, true)
-      cancelAnimationFrame(this.initialFocusFrame)
-      const previouslyFocused = this.previouslyFocused
-      const previouslyFocusedId = this.previouslyFocusedId
-      const fallbackReturnId = modalSheetReturnId(this.el)
-
-      requestAnimationFrame(() => {
-        releaseModalBackground(this.background, this)
-
-        restoreModalFocus({
-          document,
-          previouslyFocused,
-          previouslyFocusedId,
-          fallbackReturnId
-        })
-      })
-    }
-  },
+  CalendarDeleteFocus,
+  ModalFocus: createModalFocus({getLastInteractionTarget: () => lastInteractionTarget}),
   KeyboardSubmit: {
     mounted() {
       this.el.addEventListener("keydown", (e) => {

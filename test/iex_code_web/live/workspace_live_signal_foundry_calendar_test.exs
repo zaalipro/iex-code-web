@@ -338,7 +338,14 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
 
       assert has_element?(
                view,
-               "#confirm-calendar-task-delete[phx-click*='confirm_calendar_task_delete'][phx-click*='calendar-focus-return-target'][phx-disable-with='Deleting…']"
+               "#confirm-calendar-task-delete[phx-click='confirm_calendar_task_delete'][phx-disable-with='Deleting…']"
+             )
+
+      render_click(view, "confirm_calendar_task_delete", %{"unexpected" => "rejected"})
+
+      assert has_element?(
+               view,
+               "#calendar-delete-confirmation-#{task.id}[data-sheet-return-id='#{return_id}']"
              )
 
       render_click(view, "cancel_calendar_task_delete")
@@ -358,11 +365,36 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
     refute has_element?(view, "#calendar-detail-delete-trigger-#{task.id}[data-confirm]")
     assert has_element?(view, "#calendar-delete-confirmation-#{task.id}", "Delete safely")
     refute has_element?(view, "#confirm-calendar-task-delete[phx-value-id]")
+    refute has_element?(view, "#confirm-calendar-task-delete[phx-click*='set_attribute']")
 
     render_click(view, "confirm_calendar_task_delete")
+    assert_push_event(view, "calendar_delete_focus", %{id: "calendar-focus-return-target"})
     refute has_element?(view, "#calendar-delete-confirmation-#{task.id}")
     refute has_element?(view, "#scheduled-task-detail-modal")
     assert Kanban.get_task(project.id, task.id) == nil
+  end
+
+  test "mobile and desktop deletion success receive acknowledged stable focus", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    view = open_calendar(conn, session)
+
+    for source <- ["mobile", "desktop"] do
+      task =
+        create_task!(project, session, %{
+          title: "#{source} success",
+          scheduled_at: utc_at(Date.utc_today())
+        })
+
+      _ = :sys.get_state(view.pid)
+      render_click(view, "request_calendar_task_delete", %{"id" => task.id, "source" => source})
+      render_click(view, "confirm_calendar_task_delete")
+      assert_push_event(view, "calendar_delete_focus", %{id: "calendar-focus-return-target"})
+      refute Kanban.get_task(project.id, task.id)
+    end
   end
 
   test "scheduled edit uses an assigned task form with stable inputs and visible pending copy", %{
@@ -676,12 +708,21 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
     assert css =~ ".calendar-agenda-time"
     assert css =~ "font-size: 0.875rem"
     assert css =~ "@media (pointer: coarse) and (min-width: 40rem)"
-    assert css =~ ".calendar-day-task { min-height: 44px; }"
+    assert css =~ "min-width: 44px"
+    assert css =~ "min-height: 44px"
+    assert css =~ "repeat(7, minmax(44px, 1fr))"
+    assert css =~ "minmax(21.375rem, 1fr) minmax(13rem, 0.65fr)"
     assert css =~ "env(safe-area-inset-top)"
     assert css =~ "env(safe-area-inset-right)"
     assert css =~ "env(safe-area-inset-bottom)"
     assert css =~ "env(safe-area-inset-left)"
     assert css =~ ".sf-chassis.calendar-confirmation-dialog"
     assert css =~ "max-height: calc(100dvh"
+    assert css =~ ".calendar-focus-return-target:focus-visible"
+
+    assert template =~
+             ~s|<h3 id="calendar-focus-return-target" phx-hook="CalendarDeleteFocus" tabindex="-1" class="calendar-focus-return-target">|
+
+    assert template =~ "[overflow-wrap:anywhere]"
   end
 end

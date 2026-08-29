@@ -1,0 +1,133 @@
+import {responsiveSheetOwnsFocus} from "./responsive_sheet_hook.mjs"
+import {modalSheetReturnId, restoreModalFocus} from "./modal_focus_return.mjs"
+import {
+  acquireModalBackground,
+  modalBackgroundId,
+  releaseModalBackground,
+  topmostUsableModal
+} from "./modal_focus_background.mjs"
+import {createResponsiveModalFocusCoordinator} from "./responsive_modal_focus.mjs"
+
+export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
+  return {
+    mounted() {
+      this.desktopOwned = false
+      this.mobileSheetDelegated = responsiveSheetOwnsFocus(
+        this.el.closest?.('[phx-hook="ResponsiveSheet"]'),
+        window
+      )
+      this.media = window.matchMedia("(max-width: 639px)")
+      this.mobileSheetDelegated = this.mobileSheetDelegated || this.media.matches === true
+      this.setupDesktop = () => {
+        if (this.desktopOwned) return
+        this.desktopOwned = true
+        const activeElement = document.activeElement
+        this.previouslyFocused = activeElement instanceof HTMLElement && activeElement !== document.body
+          ? activeElement
+          : getLastInteractionTarget()?.isConnected ? getLastInteractionTarget() : null
+        this.previouslyFocusedId = this.previouslyFocused?.id || null
+        this.background = document.getElementById(modalBackgroundId(this.el))
+        acquireModalBackground(this.background, this)
+        this.focusableSelector = [
+          "a[href]",
+          "button:not([disabled])",
+          "input:not([disabled]):not([type='hidden'])",
+          "select:not([disabled])",
+          "textarea:not([disabled])",
+          "[tabindex]:not([tabindex='-1'])"
+        ].join(",")
+        this.visibleFocusableElements = () => Array.from(
+          this.el.querySelectorAll(this.focusableSelector)
+        ).filter((element) => element.getClientRects().length > 0 && !element.inert)
+        this.topmostModal = () => topmostUsableModal(
+          document.querySelectorAll("[data-modal-focus]")
+        )
+        this.focusInitialElement = () => {
+          let preferred = null
+          const selector = this.el.dataset.initialFocus
+          if (selector) {
+            try { preferred = this.el.querySelector(selector) } catch (_error) { /* optional selector */ }
+          }
+          const target = preferred || this.visibleFocusableElements()[0] || this.el
+          target.focus({preventScroll: true})
+        }
+        this.handleKeyDown = (event) => {
+          if (!this.desktopOwned || document.getElementById("command-palette-dialog")) return
+          if (this.topmostModal() !== this.el) return
+          if (event.key === "Escape") {
+            const cancelEvent = this.el.dataset.cancelEvent
+            if (!cancelEvent || this.closing) return
+            event.preventDefault(); event.stopPropagation(); this.closing = true
+            this.pushEvent(cancelEvent, {})
+            return
+          }
+          if (event.key !== "Tab") return
+          const focusable = this.visibleFocusableElements()
+          if (focusable.length === 0) {
+            event.preventDefault(); this.el.focus(); return
+          }
+          const first = focusable[0], last = focusable[focusable.length - 1]
+          if (!this.el.contains(document.activeElement)) {
+            event.preventDefault(); (event.shiftKey ? last : first).focus()
+          } else if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last.focus()
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first.focus()
+          }
+        }
+        document.addEventListener("keydown", this.handleKeyDown, true)
+        this.initialFocusFrame = requestAnimationFrame(this.focusInitialElement)
+      }
+      this.teardownDesktop = () => {
+        if (!this.desktopOwned) return
+        document.removeEventListener("keydown", this.handleKeyDown, true)
+        cancelAnimationFrame(this.initialFocusFrame)
+        this.initialFocusFrame = null
+        releaseModalBackground(this.background, this)
+        this.desktopOwned = false
+      }
+      this.coordinator = createResponsiveModalFocusCoordinator({
+        activateDesktop: () => this.setupDesktop(),
+        deactivateDesktop: () => this.teardownDesktop()
+      })
+      this.sheet = this.el.closest?.('[phx-hook="ResponsiveSheet"]') || null
+      if (this.sheet) this.sheet.__responsiveModalFocusCoordinator = this.coordinator
+      this.syncOwnership = () => {
+        const mobile = responsiveSheetOwnsFocus(
+          this.el.closest?.('[phx-hook="ResponsiveSheet"]'),
+          window
+        ) || this.media.matches === true
+        if (mobile) {
+          this.coordinator.beforeMobileActivate()
+          this.mobileSheetDelegated = true
+        } else {
+          this.mobileSheetDelegated = false
+          this.coordinator.afterMobileDeactivate()
+        }
+      }
+      this.handleBreakpointChange = () => this.syncOwnership()
+      this.media.addEventListener?.("change", this.handleBreakpointChange)
+      this.coordinator.mount(this.mobileSheetDelegated)
+    },
+    updated() {
+      this.syncOwnership?.()
+    },
+    destroyed() {
+      this.media?.removeEventListener?.("change", this.handleBreakpointChange)
+      this.coordinator?.destroy()
+      if (this.sheet?.__responsiveModalFocusCoordinator === this.coordinator) {
+        delete this.sheet.__responsiveModalFocusCoordinator
+      }
+      const wasMobile = this.mobileSheetDelegated
+      if (wasMobile) return
+      const previouslyFocused = this.previouslyFocused
+      const previouslyFocusedId = this.previouslyFocusedId
+      const fallbackReturnId = modalSheetReturnId(this.el)
+      requestAnimationFrame(() => {
+        restoreModalFocus({document, previouslyFocused, previouslyFocusedId, fallbackReturnId})
+      })
+    }
+  }
+}
+
+export default createModalFocus

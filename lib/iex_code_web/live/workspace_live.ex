@@ -1285,8 +1285,7 @@ defmodule IexCodeWeb.WorkspaceLive do
            task_id: task.id,
            title: bounded_confirmation_title(task.title),
            return_id: return_id,
-           background_id: background_id,
-           outcome_return_id: "calendar-focus-return-target"
+           background_id: background_id
          })}
 
       _ ->
@@ -1326,8 +1325,17 @@ defmodule IexCodeWeb.WorkspaceLive do
     case socket.assigns.pending_calendar_task_delete do
       %{task_id: task_id} ->
         case scoped_task(socket, task_id) do
-          %Kanban.Task{} = task -> delete_authorized_scheduled_task(socket, task)
-          nil -> {:noreply, maybe_clear_deleted_scheduled_task(socket, task_id)}
+          %Kanban.Task{} = task ->
+            delete_authorized_scheduled_task(socket, task)
+
+          nil ->
+            tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+            {:noreply,
+             socket
+             |> assign(:tasks, tasks)
+             |> maybe_clear_deleted_scheduled_task(task_id)
+             |> push_event("calendar_delete_focus", %{id: "calendar-focus-return-target"})}
         end
 
       _ ->
@@ -1349,6 +1357,7 @@ defmodule IexCodeWeb.WorkspaceLive do
          |> assign(:selected_scheduled_task, nil)
          |> assign(:pending_calendar_task_delete, nil)
          |> refresh_kanban_summary()
+         |> push_event("calendar_delete_focus", %{id: "calendar-focus-return-target"})
          |> put_flash(:info, "Scheduled task removed")}
 
       {:error, reason} ->
