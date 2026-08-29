@@ -431,32 +431,76 @@
           </.workbench_chassis>
         <% end %>
 
-        <!-- TAB 2: COACH & SWARM VIEW -->
-        <%= if @active_tab == "swarm" do %>
-          <div class="flex-1 flex flex-col h-full overflow-y-auto p-5 space-y-5">
-            <.run_control_plane
-              runs={@run_rows}
-              run_count={@run_count}
-              run_counts={@run_counts}
-              selected_run={@selected_run}
-              steps={@run_steps}
-              events={@run_event_rows}
-              approvals={@run_approvals}
-              artifacts={@run_artifacts}
-              controls={@run_controls}
-              run_manifest={@run_manifest}
-              stats={@run_dispatcher_stats}
-              workspace_locks={@workspace_locks}
-              agents={@streams.run_agents}
-              agent_count={@run_agent_count}
-              fleet_summary={@run_fleet_summary}
-              fleet_loading={@run_fleet_loading?}
-              agent_guidance={@run_agent_guidance}
-              agent_receipts={@run_agent_receipts}
-              dag_projection={@dag_projection}
-            />
-
-            <!-- Swarm Coach Hero Card -->
+        <%!-- TAB 2: ACTIVE MISSION / COACH & SWARM --%>
+        <%= if @active_view == "swarm" do %>
+          <.workbench_chassis
+            id="instrument-workbench-swarm"
+            surface="swarm"
+            index="01"
+            title="Active Mission"
+            status={if(@selected_run, do: String.capitalize(@selected_run.status), else: "No active run")}
+            return_to={workspace_path(@workspace_route, "deck")}
+            return_instrument_id="instrument-card-swarm"
+          >
+            <:primary_action>
+              <button
+                id="new-goal-button"
+                type="button"
+                phx-click="open_goal_modal"
+                class="sf-control min-h-11 px-4 text-sm font-semibold"
+              >
+                <.icon name="hero-plus" class="size-4" />
+                <span>New mission</span>
+              </button>
+            </:primary_action>
+            <:local_modes>
+              <.mission_control_tabs mode={@mission_control_mode} />
+            </:local_modes>
+            <:primary_field>
+              <.run_control_plane
+                runs={@run_rows}
+                run_count={@run_count}
+                run_counts={@run_counts}
+                selected_run={@selected_run}
+                steps={@run_steps}
+                events={@run_event_rows}
+                approvals={@run_approvals}
+                artifacts={@run_artifacts}
+                controls={@run_controls}
+                run_manifest={@run_manifest}
+                stats={@run_dispatcher_stats}
+                workspace_locks={@workspace_locks}
+                agents={@streams.run_agents}
+                agent_count={@run_agent_count}
+                fleet_summary={@run_fleet_summary}
+                fleet_loading={@run_fleet_loading?}
+                agent_guidance={@run_agent_guidance}
+                agent_receipts={@run_agent_receipts}
+                dag_projection={@dag_projection}
+                mode={@mission_control_mode}
+                phase={@mission_control_phase}
+                interactive_revision={
+                  :erlang.phash2({
+                    @operations,
+                    @expanded_ops,
+                    @active_agent,
+                    @active_stage,
+                    @session.status,
+                    @session.swarm_mode,
+                    @open_dropdown,
+                    @steer_text
+                  })
+                }
+              >
+                <:interactive_execution>
+                  <section
+                    id="mission-control-interactive-execution"
+                    aria-labelledby="mission-control-interactive-execution-title"
+                    class="mt-4 space-y-5"
+                  >
+                    <h3 id="mission-control-interactive-execution-title" class="sr-only">
+                      Interactive session execution controls
+                    </h3>
             <div class="bg-[#11151c] border border-[#21262d] rounded-3xl p-6 shadow-2xl relative overflow-hidden">
               <div class="mb-4 flex items-start gap-3 border border-amber-500/20 bg-amber-500/[0.05] px-3 py-2.5">
                 <.icon name="hero-signal" class="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
@@ -471,7 +515,7 @@
                 </div>
               </div>
               <div class="bg-[#161b22]/70 border border-[#21262d] rounded-2xl p-5 mb-4 relative">
-                <!-- Status Badge Top Right -->
+                <%!-- Status Badge Top Right --%>
                 <div class="absolute top-5 right-5 flex items-center gap-1.5 text-xs font-mono font-semibold">
                   <%= cond do %>
                     <% @session.status in ["running", :running] -> %>
@@ -496,34 +540,25 @@
                 </div>
 
                 <div class="flex items-start gap-4">
-                  <!-- Pixel Avatar Graphic -->
+                  <%!-- Pixel Avatar Graphic --%>
                   <div class="w-16 h-16 rounded-2xl bg-gradient-to-b from-[#1c2128] to-[#11151c] border border-[#30363d] flex items-center justify-center text-3xl shadow-inner shrink-0 relative overflow-hidden">
                     <span class="animate-bounce">🧙‍♂️</span>
                     <div class="absolute bottom-1 left-2 right-2 h-1 bg-indigo-500/40 rounded-full blur-[1px]">
                     </div>
                   </div>
 
-                  <!-- Name, Role & Connected Integrations -->
+                  <%!-- Name, Role & Connected Integrations --%>
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-3">
                       <h2 class="text-2xl font-bold text-white tracking-tight">
                         Milo
                       </h2>
-                      <button
-                        id="new-goal-button"
-                        type="button"
-                        phx-click="open_goal_modal"
-                        class="px-3 py-1 bg-[#ff5e3a] hover:bg-[#ff4e24] text-white rounded-full text-xs font-mono font-bold transition-smooth flex items-center gap-1 shadow-sm"
-                      >
-                        <.icon name="hero-plus" class="w-3.5 h-3.5" />
-                        <span>New Goal</span>
-                      </button>
                     </div>
                     <div class="text-xs font-mono text-gray-400 uppercase tracking-wider mb-3">
                       EXECUTIVE CODING HARNESS ASSISTANT
                     </div>
 
-                    <!-- Native harness capabilities -->
+                    <%!-- Native harness capabilities --%>
                     <div class="flex items-center gap-2 flex-wrap">
                       <span class="px-2.5 py-1 rounded-xl bg-[#11151c] border border-[#21262d] text-xs font-mono text-gray-300 flex items-center gap-1.5">
                         <.icon name="hero-command-line" class="h-3 w-3 text-cyan-400" />
@@ -544,7 +579,7 @@
                   </div>
                 </div>
 
-                <!-- Current Task & Tally Tick Progress Bar -->
+                <%!-- Current Task & Tally Tick Progress Bar --%>
                 <div class="mt-6 pt-5 border-t border-dashed border-[#21262d]">
                   <div class="text-[10px] font-mono text-gray-400 uppercase tracking-wider mb-2.5">
                     CURRENT TASK · ITERATION {@swarm_iteration}/{@max_retries}
@@ -568,7 +603,7 @@
                     end
 
                   coach_active_ticks = min(65, max(0, round(coach_pct * 0.65))) %>
-                  <!-- Tally Hash Vertical Tick Bar -->
+                  <%!-- Tally Hash Vertical Tick Bar --%>
                   <div class="tally-tick-bar mb-2.5">
                     <%= for tick <- 1..65 do %>
                       <div class={[
@@ -585,16 +620,16 @@
                       MULTI-AGENT SWARM HARNESS ACTIVE
                     </span>
                     <span class="text-gray-400">
-                      {@session_tokens} TOKENS · {@current_latency_ms}ms · PID: {@active_worker_pid}
+                      {@session_tokens} TOKENS · {@current_latency_ms}ms
                     </span>
                   </div>
                 </div>
               </div>
 
-              <!-- Footer Actions Row -->
+              <%!-- Footer Actions Row --%>
               <div class="flex items-center justify-between pt-2 text-xs font-mono text-gray-400">
                 <div class="flex items-center gap-3 relative">
-                  <!-- Coach Menu Trigger -->
+                  <%!-- Coach Menu Trigger --%>
                   <div
                     class="relative"
                     phx-click-away={@open_dropdown == "coach_menu" && "close_dropdowns"}
@@ -643,7 +678,7 @@
                     <% end %>
                   </div>
 
-                  <!-- Jump to Terminal -->
+                  <%!-- Jump to Terminal --%>
                   <button
                     phx-click="switch_tab"
                     phx-value-tab="terminal"
@@ -653,7 +688,7 @@
                     <.icon name="hero-command-line" class="w-4 h-4" />
                   </button>
 
-                  <!-- Pause / Resume Control Button -->
+                  <%!-- Pause / Resume Control Button --%>
                   <%= if @session.status in ["running", :running] do %>
                     <button
                       phx-click="pause_session"
@@ -674,7 +709,7 @@
                     </button>
                   <% end %>
 
-                  <!-- Stop / Cancel Trigger -->
+                  <%!-- Stop / Cancel Trigger --%>
                   <button
                     phx-click="open_cancel_modal"
                     class="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition-smooth"
@@ -684,7 +719,7 @@
                     <span>STOP</span>
                   </button>
 
-                  <!-- Steering Input: mid-run guidance for the active swarm -->
+                  <%!-- Steering Input: mid-run guidance for the active swarm --%>
                   <.form
                     for={to_form(%{"steering" => @steer_text})}
                     id="steering-form"
@@ -780,7 +815,22 @@
               operations={@operations}
               expanded_ops={@expanded_ops}
             />
-          </div>
+                  </section>
+                </:interactive_execution>
+              </.run_control_plane>
+            </:primary_field>
+            <:signal_panel>
+              <.mission_control_signal_panel
+                selected_run={@selected_run}
+                run_counts={@run_counts}
+                workspace_locks={@workspace_locks}
+                stats={@run_dispatcher_stats}
+              />
+            </:signal_panel>
+            <:command_dock>
+              <.shared_command_dock workspace_assigns={assigns} />
+            </:command_dock>
+          </.workbench_chassis>
         <% end %>
 
         <%!-- TAB 3: SCHEDULE CHRONOMETER --%>
@@ -2571,7 +2621,7 @@
       </div>
 
       <%!-- Shared command dock --%>
-      <%= if @active_view not in ["kanban", "calendar"] do %>
+      <%= if @active_view not in ["kanban", "calendar", "swarm"] do %>
         <.shared_command_dock workspace_assigns={assigns} />
       <% end %>
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>

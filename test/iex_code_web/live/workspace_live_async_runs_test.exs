@@ -8,6 +8,179 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     {:ok, conn: %{conn | host: "localhost"}}
   end
 
+  test "Mission Control validates four presentation modes without changing the selected run", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Keep the selected mission stable",
+        kind: "analysis",
+        mode: "single",
+        status: "running"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    view |> element("#instrument-card-swarm") |> render_click()
+
+    for mode <- ~w(overview topology execution journal) do
+      view |> element("#mission-control-mode-#{mode}") |> render_click()
+
+      assert has_element?(
+               view,
+               "#mission-control-mode-#{mode}[aria-selected='true'][aria-controls='mission-control-panel-#{mode}']"
+             )
+
+      assert has_element?(view, "#mission-control-panel-#{mode}:not([hidden])")
+      assert :sys.get_state(view.pid).socket.assigns.selected_run.id == run.id
+    end
+
+    render_click(view, "switch_mission_control_mode", %{"mode" => "__invalid_mode__"})
+    render_click(view, "switch_mission_control_mode", %{})
+    render_click(view, "switch_mission_control_mode", %{"mode" => %{"journal" => "true"}})
+    render_click(view, "switch_mission_control_mode", %{"mode" => ["overview"]})
+    assert has_element?(view, "#mission-control-mode-journal[aria-selected='true']")
+    assert has_element?(view, "#mission-control-panel-journal:not([hidden])")
+    assert :sys.get_state(view.pid).socket.assigns.selected_run.id == run.id
+  end
+
+  test "Mission Control phase prefers running then paused persisted steps", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Phase precedence",
+        kind: "analysis",
+        mode: "single",
+        status: "queued"
+      })
+
+    {:ok, _completed} =
+      Runs.create_step(run, %{
+        key: "completed",
+        kind: "analysis",
+        title: "Newest completed phase",
+        status: "completed",
+        completed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+
+    {:ok, _paused} =
+      Runs.create_step(run, %{
+        key: "paused",
+        kind: "analysis",
+        title: "Paused phase",
+        status: "paused"
+      })
+
+    {:ok, _running} =
+      Runs.create_step(run, %{
+        key: "running",
+        kind: "analysis",
+        title: "Running phase",
+        status: "running"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    assert has_element?(view, "#mission-control-phase", "Running phase")
+  end
+
+  test "entering Mission Control selects the bounded active mission in status order", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    runs =
+      for {status, index} <- Enum.with_index(~w(completed draft queued paused running)) do
+        {:ok, run} =
+          Runs.create_run(%{
+            project_id: project.id,
+            session_id: session.id,
+            objective: "#{status} mission #{index}",
+            kind: "analysis",
+            mode: "single",
+            status: status
+          })
+
+        {status, run}
+      end
+      |> Map.new()
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    view |> element("#instrument-card-swarm") |> render_click()
+
+    assert has_element?(view, "#async-run-#{runs["running"].id}[aria-pressed='true']")
+
+    view |> element("#async-run-#{runs["completed"].id}") |> render_click()
+    view |> element("#mission-control-mode-journal") |> render_click()
+    assert has_element?(view, "#async-run-#{runs["completed"].id}[aria-pressed='true']")
+
+    view |> element("#return-to-instrument-deck-swarm") |> render_click()
+    view |> element("#instrument-card-swarm") |> render_click()
+    assert has_element?(view, "#async-run-#{runs["running"].id}[aria-pressed='true']")
+
+    {:ok, direct, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+    assert has_element?(direct, "#async-run-#{runs["running"].id}[aria-pressed='true']")
+  end
+
+  test "Mission Control falls back through paused, queued, draft, and terminal missions", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+
+    cases = [
+      {~w(completed draft queued paused), "paused"},
+      {~w(completed draft queued), "queued"},
+      {~w(completed draft), "draft"},
+      {~w(interrupted), "interrupted"}
+    ]
+
+    for {statuses, expected_status} <- cases do
+      session = create_session_fixture(project)
+
+      runs =
+        for status <- statuses, into: %{} do
+          {:ok, run} =
+            Runs.create_run(%{
+              project_id: project.id,
+              session_id: session.id,
+              objective: "#{status} fallback mission",
+              kind: "analysis",
+              mode: "single",
+              status: status
+            })
+
+          {status, run}
+        end
+
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+      expected = Map.fetch!(runs, expected_status)
+      assert has_element?(view, "#async-run-#{expected.id}[aria-pressed='true']")
+    end
+  end
+
+  test "Mission Control renders an exact no-run fallback", %{conn: conn, workspace_path: path} do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=swarm")
+
+    assert has_element?(view, "#mission-control-hero", "No active run")
+    assert has_element?(view, "#mission-control-signal-panel")
+  end
+
   test "queues a durable background run and renders its replayable control plane", %{
     conn: conn,
     workspace_path: path

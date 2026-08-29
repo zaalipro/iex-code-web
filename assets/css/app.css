@@ -2239,6 +2239,92 @@
   animation: sf-waveform-travel 1400ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
 }
 
+.sf-mission-control-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  border-bottom: 1px solid var(--sf-hairline);
+  padding: 0.5rem 0;
+}
+
+.sf-mission-control-tabs .is-active {
+  border-color: var(--sf-live-mark);
+  color: var(--sf-live-text);
+}
+
+.sf-mission-control-panels {
+  min-width: 0;
+}
+
+.sf-mission-control-panel {
+  min-width: 0;
+}
+
+.sf-mission-control-panel[hidden] {
+  display: none;
+}
+
+.sf-disclosure {
+  min-width: 0;
+  border: 1px solid var(--sf-hairline);
+  background: var(--sf-instrument-raised);
+}
+
+.sf-disclosure > summary {
+  min-height: 2.75rem;
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sf-mission-control-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.45fr);
+  gap: 1.25rem;
+  min-width: 0;
+  border-bottom: 1px solid var(--sf-hairline);
+  padding: 0.25rem 0 1rem;
+}
+
+.sf-mission-control-progress {
+  min-width: 0;
+  align-self: end;
+}
+
+.sf-mission-control-waveform {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 2.25rem;
+  overflow: hidden;
+}
+
+.sf-mission-control-waveform span {
+  flex: 1 1 0;
+  min-width: 0.25rem;
+  height: 100%;
+  background: var(--sf-live-mark);
+  opacity: 0.18;
+  transform-origin: bottom;
+}
+
+.sf-mission-control-waveform span[data-active="true"] {
+  opacity: 0.76;
+}
+
+.sf-mission-topology {
+  min-width: 0;
+}
+
+@media (max-width: 63.99rem) {
+  .sf-mission-control-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .sf-smooth-scroll {
   scroll-behavior: smooth;
 }
@@ -2360,7 +2446,8 @@
   }
 
   .sf-workbench-enter,
-  .sf-waveform-travel {
+  .sf-waveform-travel,
+  .sf-mission-control-waveform span {
     opacity: 1;
     transform: none;
     animation: none;

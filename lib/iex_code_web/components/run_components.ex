@@ -11,6 +11,162 @@ defmodule IexCodeWeb.RunComponents do
 
   alias IexCodeWeb.DagComponents
 
+  attr :mode, :string, required: true
+
+  def mission_control_tabs(assigns) do
+    ~H"""
+    <div role="tablist" aria-label="Mission Control modes" class="sf-mission-control-tabs">
+      <button
+        :for={mode <- ~w(overview topology execution journal)}
+        id={"mission-control-mode-#{mode}"}
+        type="button"
+        role="tab"
+        phx-click="switch_mission_control_mode"
+        phx-value-mode={mode}
+        aria-selected={to_string(@mode == mode)}
+        aria-controls={"mission-control-panel-#{mode}"}
+        tabindex="0"
+        class={["sf-control min-h-11 px-3 text-xs font-semibold", @mode == mode && "is-active"]}
+      >
+        {String.capitalize(mode)}
+      </button>
+    </div>
+    """
+  end
+
+  attr :selected_run, :any, default: nil
+  attr :phase, :string, default: nil
+
+  def mission_control_hero(assigns) do
+    progress =
+      case assigns.selected_run do
+        %{progress: value} when is_integer(value) -> min(max(value, 0), 100)
+        _ -> 0
+      end
+
+    run_status = if assigns.selected_run, do: assigns.selected_run.status, else: "none"
+
+    assigns =
+      assigns
+      |> assign(:progress, progress)
+      |> assign(:run_status, run_status)
+
+    ~H"""
+    <section
+      id="mission-control-hero"
+      class="sf-mission-control-hero"
+      aria-labelledby="mission-control-hero-title"
+    >
+      <div>
+        <p class="sf-metadata">Instrument 01 · Active Mission</p>
+        <h2 id="mission-control-hero-title" class="text-xl font-semibold">Mission Control</h2>
+        <p id="mission-control-phase" class="mt-1 text-sm text-[var(--sf-text-secondary)]">
+          <%= if @selected_run do %>
+            {if @phase, do: @phase, else: "Status: #{@selected_run.status}"}
+          <% else %>
+            No active run
+          <% end %>
+        </p>
+        <p :if={@selected_run} class="sf-metadata mt-2">
+          Status · {String.capitalize(@selected_run.status)}
+        </p>
+      </div>
+      <div :if={@selected_run} class="sf-mission-control-progress">
+        <div
+          id="mission-control-waveform"
+          aria-hidden="true"
+          data-run-status={@run_status}
+          data-progress={@progress}
+          class="sf-mission-control-waveform"
+        >
+          <span
+            :for={segment <- 1..12}
+            data-active={to_string(segment * 100 <= @progress * 12)}
+          ></span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label="Mission progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={@progress}
+          class="mt-2 h-1.5 overflow-hidden bg-[var(--sf-hairline)]"
+        >
+          <div class="h-full bg-[var(--sf-live-mark)]" style={"width: #{@progress}%"}></div>
+        </div>
+      </div>
+    </section>
+    """
+  end
+
+  attr :selected_run, :any, default: nil
+  attr :run_counts, :map, default: %{}
+  attr :workspace_locks, :list, default: []
+  attr :stats, :map, default: %{}
+
+  def mission_control_signal_panel(assigns) do
+    signal =
+      mission_control_signal(
+        assigns.selected_run,
+        assigns.run_counts,
+        assigns.workspace_locks,
+        assigns.stats
+      )
+
+    assigns = assign(assigns, :signal, signal)
+
+    ~H"""
+    <section id="mission-control-signal-panel" aria-labelledby="mission-control-signal-title">
+      <p class="sf-metadata">Decision surface</p>
+      <h3 id="mission-control-signal-title" class="mt-1 text-base font-semibold">What needs you</h3>
+      <p
+        id="mission-control-signal"
+        role="status"
+        aria-live="polite"
+        class="mt-3 text-sm leading-6 text-[var(--sf-text-secondary)]"
+      >
+        {@signal}
+      </p>
+    </section>
+    """
+  end
+
+  defp mission_control_signal(selected_run, run_counts, locks, stats) do
+    approvals = Map.get(run_counts || %{}, :approvals, 0)
+
+    selected_lock =
+      selected_run_workspace_lock(
+        selected_run,
+        locks,
+        run_workspace_lock_state(selected_run, locks)
+      )
+
+    cond do
+      approvals > 0 ->
+        if approvals == 1,
+          do: "Session has 1 pending approval",
+          else: "Session has #{approvals} pending approvals"
+
+      selected_lock && lock_value(selected_lock, :status) == "held" ->
+        "Selected run holds the workspace lock"
+
+      selected_lock && lock_value(selected_lock, :status) == "waiting" ->
+        "Selected run is waiting for workspace access"
+
+      selected_run && selected_run.status == "failed" ->
+        "Selected run failed"
+
+      selected_run && selected_run.status == "interrupted" ->
+        "Selected run was interrupted"
+
+      not Map.get(stats || %{}, :online, false) ->
+        "Dispatcher offline"
+
+      true ->
+        "No operator decision required"
+    end
+  end
+
   attr :runs, :list, required: true
   attr :run_count, :integer, default: 0
   attr :run_counts, :map, default: %{active: 0, queued: 0, attention: 0, approvals: 0}
@@ -33,6 +189,10 @@ defmodule IexCodeWeb.RunComponents do
   attr :agent_guidance, :map, default: %{}
   attr :agent_receipts, :map, default: %{}
   attr :dag_projection, :map, default: nil
+  attr :mode, :string, default: "overview"
+  attr :phase, :string, default: nil
+  attr :interactive_revision, :integer, default: 0
+  slot :interactive_execution
 
   def run_control_plane(assigns) do
     active_workspace_locks =
@@ -73,505 +233,432 @@ defmodule IexCodeWeb.RunComponents do
 
     ~H"""
     <section id="async-run-control" aria-labelledby="async-run-heading" class="space-y-4">
-      <div class="flex flex-col gap-4 border-b border-[#21262d] pb-5 lg:flex-row lg:items-end lg:justify-between">
-        <div class="max-w-2xl">
-          <div class="mb-2 flex items-center gap-2 text-[10px] font-mono font-semibold uppercase tracking-[0.22em] text-[#ff8a68]">
-            <span class="h-1.5 w-1.5 bg-[#ff7e5f]"></span> Mission Control · Durable execution plane
-          </div>
-          <h2
-            id="async-run-heading"
-            class="text-2xl font-semibold tracking-[-0.035em] text-white md:text-3xl"
-          >
-            Work continues after you leave.
-          </h2>
-          <p class="mt-2 max-w-[65ch] text-sm leading-6 text-gray-400">
-            Every background run, step transition, and journal event is committed before it is broadcast.
-            Reconnect at any time and replay the ordered journal from SQLite.
-          </p>
-        </div>
-
-        <div
-          id="async-dispatcher-status"
-          role="status"
-          class={[
-            "flex items-center gap-2 self-start rounded-lg border px-3 py-2 font-mono text-[11px] lg:self-auto",
-            Map.get(@stats, :online, false) &&
-              "border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-300",
-            !Map.get(@stats, :online, false) &&
-              "border-rose-500/20 bg-rose-500/[0.06] text-rose-300"
-          ]}
-        >
-          <span class={[
-            "h-1.5 w-1.5 rounded-full",
-            Map.get(@stats, :online, false) && "animate-pulse bg-emerald-400",
-            !Map.get(@stats, :online, false) && "bg-rose-400"
-          ]}></span>
-          <%= if Map.get(@stats, :online, false) do %>
-            Dispatcher online <span class="text-emerald-500/60">·</span>
-            <span class="text-gray-400">{Map.get(@stats, :capacity, 0)} slots ready</span>
-          <% else %>
-            Dispatcher offline <span class="text-rose-500/60">·</span>
-            <span class="text-gray-400">Run controls are unavailable</span>
-          <% end %>
-        </div>
-      </div>
+      <.mission_control_hero selected_run={@selected_run} phase={@phase} />
 
       <section
-        id="workspace-lock-overview"
-        aria-labelledby="workspace-lock-heading"
-        aria-live="polite"
-        aria-atomic="true"
-        data-lock-state={@workspace_lock_state}
-        class={[
-          "border bg-[#0d1117] transition-colors",
-          @workspace_lock_state == "free" && "border-[#26313a]",
-          @workspace_lock_state == "held" && "border-emerald-500/25",
-          @workspace_lock_state == "waiting" && "border-amber-500/30"
-        ]}
+        id="mission-control-panel-overview"
+        role="tabpanel"
+        aria-labelledby="mission-control-mode-overview"
+        hidden={@mode != "overview"}
+        class="sf-mission-control-panel"
       >
-        <div class="flex flex-col gap-3 px-3.5 py-3 sm:px-4 md:flex-row md:items-center md:justify-between">
-          <div class="flex min-w-0 items-start gap-3 md:items-center">
-            <span class={[
-              "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center border md:mt-0",
-              @workspace_lock_state == "free" &&
-                "border-[#303943] bg-[#151b22] text-gray-500",
-              @workspace_lock_state == "held" &&
-                "border-emerald-500/25 bg-emerald-500/[0.07] text-emerald-300",
-              @workspace_lock_state == "waiting" &&
-                "border-amber-500/30 bg-amber-500/[0.08] text-amber-300"
-            ]}>
-              <.icon
-                name={
-                  if @workspace_lock_state == "free", do: "hero-lock-open", else: "hero-lock-closed"
-                }
-                class="h-4 w-4"
-              />
-            </span>
-
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <h3
-                  id="workspace-lock-heading"
-                  class="text-xs font-semibold tracking-tight text-gray-100"
-                >
-                  Workspace access
-                </h3>
-                <span
-                  id="workspace-lock-summary"
-                  class={[
-                    "font-mono text-[10px] uppercase tracking-[0.13em]",
-                    @workspace_lock_state == "free" && "text-gray-500",
-                    @workspace_lock_state == "held" && "text-emerald-300",
-                    @workspace_lock_state == "waiting" && "text-amber-300"
-                  ]}
-                >
-                  {workspace_lock_summary(
-                    @workspace_lock_state,
-                    @selected_lock_state,
-                    selected_or_first(
-                      @selected_workspace_lock,
-                      @held_workspace_locks
-                    ),
-                    selected_or_first(
-                      @selected_workspace_lock,
-                      @waiting_workspace_locks
-                    )
-                  )}
-                </span>
+        <details open class="sf-disclosure">
+          <summary>Mission status and workspace safety</summary>
+          <div class="space-y-4 p-4">
+            <div class="flex flex-col gap-4 border-b border-[var(--sf-hairline)] pb-4 lg:flex-row lg:items-end lg:justify-between">
+              <div class="max-w-2xl">
+                <p class="sf-metadata">Mission Control · Durable execution plane</p>
+                <h2 id="async-run-heading" class="mt-2 text-xl font-semibold tracking-tight">
+                  Work continues after you leave.
+                </h2>
+                <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
+                  Run transitions and journal events are persisted before broadcast and replay after reconnect.
+                </p>
               </div>
-              <p
-                id="workspace-lock-context"
-                class="mt-0.5 truncate text-[11px] leading-5 text-gray-500"
+              <div
+                id="async-dispatcher-status"
+                role="status"
+                class="sf-control min-h-11 px-3 font-mono text-xs"
               >
-                {workspace_lock_context(
-                  @workspace_lock_state,
-                  @selected_lock_state,
-                  selected_or_first(@selected_workspace_lock, @held_workspace_locks),
-                  selected_or_first(@selected_workspace_lock, @waiting_workspace_locks)
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div class="flex shrink-0 items-center justify-between gap-4 border-t border-[#21262d] pt-2.5 md:border-l md:border-t-0 md:pl-4 md:pt-0">
-            <div class="flex items-center gap-3 font-mono text-[10px] tabular-nums text-gray-500">
-              <span id="workspace-lock-held-count">
-                <strong class="font-semibold text-gray-200">{length(@held_workspace_locks)}</strong>
-                held resources
-              </span>
-              <span id="workspace-lock-waiting-count">
-                <strong class="font-semibold text-gray-200">{length(@waiting_workspace_locks)}</strong>
-                waiting resources
-              </span>
+                <%= if Map.get(@stats, :online, false) do %>
+                  Dispatcher online · {Map.get(@stats, :capacity, 0)} slots ready
+                <% else %>
+                  Dispatcher offline · Run controls are unavailable
+                <% end %>
+              </div>
             </div>
 
-            <details
-              :if={@active_workspace_locks != []}
-              id="workspace-lock-details"
-              class="group relative"
+            <section
+              id="workspace-lock-overview"
+              aria-labelledby="workspace-lock-heading"
+              aria-live="polite"
+              aria-atomic="true"
+              data-lock-state={@workspace_lock_state}
+              class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)]"
             >
-              <summary class="flex min-h-8 cursor-pointer list-none items-center gap-1.5 border border-[#30363d] bg-[#131920] px-2.5 font-mono text-[10px] text-gray-400 transition-colors hover:border-[#46515e] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff7e5f]/60 [&::-webkit-details-marker]:hidden">
-                Details
-                <.icon
-                  name="hero-chevron-down"
-                  class="h-3 w-3 transition-transform group-open:rotate-180"
-                />
-              </summary>
-              <div class="absolute right-0 top-full z-20 mt-2 grid max-h-80 w-[min(42rem,calc(100vw-2rem))] overflow-y-auto border border-[#30363d] bg-[#0b0f14] shadow-2xl shadow-black/40 md:grid-cols-2">
-                <article
-                  :for={lock <- @active_workspace_locks}
-                  id={"workspace-lock-#{lock_value(lock, :id)}"}
-                  data-lock-status={lock_value(lock, :status)}
-                  class="min-w-0 border-b border-[#21262d] px-3.5 py-3 md:border-r md:[&:nth-child(even)]:border-r-0"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <p
-                        class="truncate font-mono text-[11px] font-medium text-gray-200"
-                        title={workspace_lock_resource(lock)}
-                      >
-                        {workspace_lock_resource(lock)}
-                      </p>
-                      <p class="mt-1 truncate text-[10px] text-gray-600">
-                        Owner · {workspace_lock_owner(lock)}
-                      </p>
-                    </div>
-                    <span class={[
-                      "shrink-0 border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider",
-                      lock_value(lock, :status) == "held" &&
-                        "border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-300",
-                      lock_value(lock, :status) == "waiting" &&
-                        "border-amber-500/25 bg-amber-500/[0.07] text-amber-300"
-                    ]}>
-                      {lock_value(lock, :status)}
+              <div class="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-baseline gap-2">
+                    <h3 id="workspace-lock-heading" class="text-sm font-semibold">
+                      Workspace access
+                    </h3>
+                    <span id="workspace-lock-summary" class="sf-metadata">
+                      {workspace_lock_summary(
+                        @workspace_lock_state,
+                        @selected_lock_state,
+                        selected_or_first(@selected_workspace_lock, @held_workspace_locks),
+                        selected_or_first(@selected_workspace_lock, @waiting_workspace_locks)
+                      )}
                     </span>
                   </div>
-                  <div class="mt-2 flex min-w-0 items-center justify-between gap-3 font-mono text-[9px] uppercase tracking-wider text-gray-600">
-                    <span>{display_value(lock_value(lock, :mode), "access")}</span>
+                  <p
+                    id="workspace-lock-context"
+                    class="mt-1 truncate text-xs text-[var(--sf-text-secondary)]"
+                  >
+                    {workspace_lock_context(
+                      @workspace_lock_state,
+                      @selected_lock_state,
+                      selected_or_first(@selected_workspace_lock, @held_workspace_locks),
+                      selected_or_first(@selected_workspace_lock, @waiting_workspace_locks)
+                    )}
+                  </p>
+                </div>
+                <div class="flex flex-wrap items-center gap-3 font-mono text-xs">
+                  <span id="workspace-lock-held-count">
+                    <strong>{length(@held_workspace_locks)}</strong> held resources
+                  </span>
+                  <span id="workspace-lock-waiting-count">
+                    <strong>{length(@waiting_workspace_locks)}</strong> waiting resources
+                  </span>
+                  <details
+                    :if={@active_workspace_locks != []}
+                    id="workspace-lock-details"
+                    class="relative"
+                  >
+                    <summary class="sf-control min-h-11">Lock details</summary>
+                    <div class="mt-2 grid max-h-80 overflow-y-auto border border-[var(--sf-hairline)] md:grid-cols-2">
+                      <article
+                        :for={lock <- @active_workspace_locks}
+                        id={"workspace-lock-#{lock_value(lock, :id)}"}
+                        data-lock-status={lock_value(lock, :status)}
+                        class="min-w-0 border-b border-[var(--sf-hairline)] p-3"
+                      >
+                        <p class="truncate text-xs font-medium" title={workspace_lock_resource(lock)}>
+                          {workspace_lock_resource(lock)}
+                        </p>
+                        <p class="mt-1 truncate text-xs text-[var(--sf-text-secondary)]">
+                          Owner · {workspace_lock_owner(lock)}
+                        </p>
+                        <p class="mt-2 font-mono text-[10px] uppercase">
+                          {lock_value(lock, :status)} · {display_value(
+                            lock_value(lock, :mode),
+                            "access"
+                          )} · {workspace_lock_lease(lock)}
+                        </p>
+                      </article>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </section>
+
+            <div
+              id="async-run-metrics"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              data-pending-approvals={Map.get(@run_counts, :approvals, 0)}
+              class="grid grid-cols-2 border border-[var(--sf-hairline)] md:grid-cols-4"
+            >
+              <.run_metric label="Active now" value={Map.get(@run_counts, :active, 0)} tone="emerald" />
+              <.run_metric label="Queued" value={Map.get(@run_counts, :queued, 0)} tone="blue" />
+              <.run_metric
+                label="Needs attention"
+                value={Map.get(@run_counts, :attention, 0)}
+                tone="rose"
+              />
+              <.run_metric label="Approvals" value={Map.get(@run_counts, :approvals, 0)} tone="amber" />
+            </div>
+          </div>
+        </details>
+
+        <details open class="sf-disclosure mt-4">
+          <summary>Run ledger and selected mission</summary>
+          <div class="grid min-h-[24rem] border-t border-[var(--sf-hairline)] xl:grid-cols-[21rem_minmax(0,1fr)]">
+            <aside
+              class="border-b border-[var(--sf-hairline)] xl:border-b-0 xl:border-r"
+              aria-label="Run ledger"
+            >
+              <div class="flex items-center justify-between border-b border-[var(--sf-hairline)] p-4">
+                <h3 class="text-sm font-semibold">Run ledger</h3>
+                <span class="font-mono text-xs">{@run_count}</span>
+              </div>
+              <div id="async-run-list" class="max-h-[32rem] overflow-y-auto p-2">
+                <div :if={@runs == []} id="async-runs-empty" class="p-8 text-center">
+                  <p class="text-sm font-medium">No durable runs yet</p>
+                </div>
+                <button
+                  :for={run <- @runs}
+                  id={"async-run-#{run.id}"}
+                  type="button"
+                  phx-click="select_async_run"
+                  phx-value-id={run.id}
+                  aria-pressed={to_string(not is_nil(@selected_run) and @selected_run.id == run.id)}
+                  data-run-status={run.status}
+                  data-workspace-lock-state={run_workspace_lock_state(run, @active_workspace_locks)}
+                  class="sf-control mb-1 block min-h-11 w-full px-3 py-3 text-left"
+                >
+                  <span class="flex items-center justify-between gap-2">
+                    <.run_status status={run.status} />
+                    <span class="font-mono text-[10px]">#{String.slice(run.id, 0, 7)}</span>
+                  </span>
+                  <span class="mt-2 line-clamp-2 block text-xs">{run.objective}</span>
+                  <span
+                    :if={run_workspace_lock_state(run, @active_workspace_locks) != "none"}
+                    class="mt-2 block font-mono text-[10px] uppercase"
+                  >
+                    {if run_workspace_lock_state(run, @active_workspace_locks) == "held",
+                      do: "owns workspace",
+                      else: "waiting for workspace"}
+                  </span>
+                  <span
+                    role="progressbar"
+                    aria-label={"#{run.objective} progress"}
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow={min(max(run.progress || 0, 0), 100)}
+                    class="mt-2 block h-1 overflow-hidden bg-[var(--sf-hairline)]"
+                  >
                     <span
-                      class="truncate normal-case tracking-normal"
-                      title={workspace_lock_lease_title(lock)}
+                      class="block h-full bg-[var(--sf-live-mark)]"
+                      style={"width: #{min(max(run.progress || 0, 0), 100)}%"}
+                    ></span>
+                  </span>
+                </button>
+              </div>
+            </aside>
+            <div class="min-w-0 p-4">
+              <p
+                :if={is_nil(@selected_run)}
+                class="py-12 text-center text-sm text-[var(--sf-text-secondary)]"
+              >
+                No active run
+              </p>
+              <section
+                :if={@selected_run}
+                id="async-run-detail"
+                data-run-status={@selected_run.status}
+                aria-labelledby="async-run-detail-heading"
+              >
+                <div class="flex flex-wrap items-center gap-2">
+                  <.run_status status={@selected_run.status} />
+                  <span class="sf-metadata">{@selected_run.mode} · {@selected_run.priority} priority</span>
+                </div>
+                <h3 id="async-run-detail-heading" class="mt-3 text-lg font-semibold">
+                  {@selected_run.objective}
+                </h3>
+                <p
+                  :if={@selected_run.error_message}
+                  class="mt-3 border-l-2 border-[var(--sf-live-mark)] pl-3 text-sm"
+                >
+                  {@selected_run.error_message}
+                </p>
+              </section>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section
+        id="mission-control-panel-topology"
+        role="tabpanel"
+        aria-labelledby="mission-control-mode-topology"
+        hidden={@mode != "topology"}
+        class="sf-mission-control-panel"
+      >
+        <%= if @selected_run do %>
+          <details open class="sf-disclosure">
+            <summary>Persisted agent fleet</summary>
+            <.agent_fleet
+              run={@selected_run}
+              agents={@agents}
+              agent_count={@agent_count}
+              summary={@fleet_summary}
+              loading={@fleet_loading}
+              guidance={@agent_guidance}
+              receipts={@agent_receipts}
+            />
+          </details>
+          <details open class="sf-disclosure mt-4">
+            <summary>Execution dependency projection</summary>
+            <div
+              id="async-run-graph-and-controls"
+              data-graph-mode={
+                if @selected_run.execution_engine == "dag_v1", do: "dag", else: "legacy"
+              }
+              class="sf-mission-topology p-4"
+            >
+              <div
+                :if={@selected_run.execution_engine == "dag_v1" and @dag_projection}
+                id="async-run-dag-projection"
+              >
+                <DagComponents.dag_projection projection={@dag_projection} />
+              </div>
+              <div
+                :if={@selected_run.execution_engine == "dag_v1" and is_nil(@dag_projection)}
+                id="async-run-dag-unavailable"
+                role="status"
+                class="border border-dashed border-[var(--sf-hairline)] p-6 text-sm"
+              >
+                Execution topology unavailable
+              </div>
+              <div
+                :if={@selected_run.execution_engine != "dag_v1"}
+                id="async-run-steps"
+                class="space-y-2"
+              >
+                <p :if={@steps == []} class="p-6 text-sm text-[var(--sf-text-secondary)]">
+                  Steps appear when the dispatcher claims this run.
+                </p>
+                <article
+                  :for={step <- @steps}
+                  id={"async-run-step-#{step.id}"}
+                  class="border-b border-[var(--sf-hairline)] py-3"
+                >
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="text-sm font-medium">{step.title}</p>
+                    <span class="sf-metadata">{step.status}</span>
+                  </div>
+                  <p
+                    :if={step.depends_on != []}
+                    class="mt-1 font-mono text-[10px] text-[var(--sf-text-secondary)]"
+                  >
+                    waits for {Enum.join(step.depends_on, ", ")}
+                  </p>
+                  <div
+                    role="progressbar"
+                    aria-label={"#{step.title} progress"}
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow={min(max(step.progress || 0, 0), 100)}
+                    class="mt-2 h-1 bg-[var(--sf-hairline)]"
+                  >
+                    <div
+                      class="h-full bg-[var(--sf-live-mark)]"
+                      style={"width: #{min(max(step.progress || 0, 0), 100)}%"}
                     >
-                      {workspace_lock_lease(lock)}
-                    </span>
+                    </div>
                   </div>
                 </article>
               </div>
-            </details>
-          </div>
-        </div>
+            </div>
+          </details>
+        <% else %>
+          <p class="p-6 text-sm text-[var(--sf-text-secondary)]">No active run</p>
+        <% end %>
       </section>
 
-      <div
-        id="async-run-metrics"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        data-pending-approvals={Map.get(@run_counts, :approvals, 0)}
-        class="grid grid-cols-2 border border-[#21262d] bg-[#0d1117] md:grid-cols-4"
+      <section
+        id="mission-control-panel-execution"
+        role="tabpanel"
+        aria-labelledby="mission-control-mode-execution"
+        hidden={@mode != "execution"}
+        data-interactive-revision={@interactive_revision}
+        class="sf-mission-control-panel"
       >
-        <.run_metric label="Active now" value={Map.get(@run_counts, :active, 0)} tone="emerald" />
-        <.run_metric label="Queued" value={Map.get(@run_counts, :queued, 0)} tone="blue" />
-        <.run_metric label="Needs attention" value={Map.get(@run_counts, :attention, 0)} tone="rose" />
-        <.run_metric label="Approvals" value={Map.get(@run_counts, :approvals, 0)} tone="amber" />
-      </div>
-
-      <div class="grid min-h-[25rem] overflow-hidden border border-[#21262d] bg-[#0d1117] xl:grid-cols-[21rem_minmax(0,1fr)]">
-        <aside class="border-b border-[#21262d] xl:border-b-0 xl:border-r" aria-label="Run ledger">
-          <div class="flex items-center justify-between border-b border-[#21262d] px-4 py-3">
-            <div>
-              <h3 class="text-sm font-semibold text-white">Run ledger</h3>
-              <p class="mt-0.5 text-[10px] font-mono uppercase tracking-wider text-gray-500">
-                Newest first · persisted
-              </p>
-            </div>
-            <span class="font-mono text-xs tabular-nums text-gray-400">{@run_count}</span>
-          </div>
-
-          <div id="async-run-list" class="max-h-80 overflow-y-auto p-2 xl:max-h-[35rem]">
-            <div :if={@runs == []} id="async-runs-empty" class="px-4 py-10 text-center">
-              <div class="mx-auto mb-3 flex h-9 w-9 items-center justify-center border border-dashed border-[#38404a] text-gray-500">
-                <.icon name="hero-queue-list" class="h-4 w-4" />
-              </div>
-              <p class="text-xs font-medium text-gray-300">No durable runs yet</p>
-              <p class="mt-1 text-[11px] leading-5 text-gray-500">
-                Choose <span class="font-mono text-gray-400">Background run</span> in the composer.
-              </p>
-            </div>
-
-            <button
-              :for={run <- @runs}
-              id={"async-run-#{run.id}"}
-              type="button"
-              phx-click="select_async_run"
-              phx-value-id={run.id}
-              aria-pressed={@selected_run && @selected_run.id == run.id}
-              data-run-status={run.status}
-              data-workspace-lock-state={run_workspace_lock_state(run, @active_workspace_locks)}
-              class={[
-                "group mb-1 w-full border px-3 py-3 text-left transition-colors",
-                @selected_run && @selected_run.id == run.id &&
-                  "border-[#4b5563] bg-[#1a2029]",
-                (!@selected_run || @selected_run.id != run.id) &&
-                  "border-transparent hover:border-[#30363d] hover:bg-[#141920]"
-              ]}
-            >
-              <div class="mb-2 flex items-center justify-between gap-2">
-                <.run_status status={run.status} />
-                <span class="font-mono text-[10px] tabular-nums text-gray-600">
-                  #{String.slice(run.id, 0, 7)}
-                </span>
-              </div>
-              <p class="line-clamp-2 text-xs font-medium leading-5 text-gray-200">
-                {run.objective}
-              </p>
-              <div class="mt-3 flex items-center justify-between font-mono text-[10px] text-gray-500">
-                <span>{run.kind |> String.replace("_", " ")}</span>
-                <span>attempt {run.attempt}/{run.max_attempts}</span>
-              </div>
-              <div
-                :if={run_workspace_lock_state(run, @active_workspace_locks) != "none"}
-                class={[
-                  "mt-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider",
-                  run_workspace_lock_state(run, @active_workspace_locks) == "held" &&
-                    "text-emerald-400/80",
-                  run_workspace_lock_state(run, @active_workspace_locks) == "waiting" &&
-                    "text-amber-400/80"
-                ]}
-              >
-                <.icon
-                  name={
-                    if run_workspace_lock_state(run, @active_workspace_locks) == "held",
-                      do: "hero-lock-closed",
-                      else: "hero-clock"
+        <%= if @selected_run do %>
+          <details open class="sf-disclosure">
+            <summary>Selected-run controls and budgets</summary>
+            <div class="space-y-4 p-4">
+              <div id="async-run-actions" class="flex flex-wrap items-center gap-2">
+                <button
+                  :if={@selected_run.status == "running"}
+                  id="pause-async-run"
+                  type="button"
+                  phx-click="pause_async_run"
+                  phx-value-id={@selected_run.id}
+                  phx-disable-with="Pausing…"
+                  class="sf-control min-h-11 px-3"
+                >Pause</button>
+                <button
+                  :if={@selected_run.status == "draft"}
+                  id="start-async-run"
+                  type="button"
+                  phx-click="start_async_run"
+                  phx-value-id={@selected_run.id}
+                  phx-disable-with="Starting…"
+                  class="sf-control min-h-11 px-3"
+                >Start</button>
+                <button
+                  :if={@selected_run.status == "paused"}
+                  id="resume-async-run"
+                  type="button"
+                  phx-click="resume_async_run"
+                  phx-value-id={@selected_run.id}
+                  phx-disable-with="Resuming…"
+                  class="sf-control min-h-11 px-3"
+                >Resume</button>
+                <button
+                  :if={@selected_run.status in ["draft", "queued", "running", "paused"]}
+                  id="cancel-async-run"
+                  type="button"
+                  phx-click="cancel_async_run"
+                  phx-value-id={@selected_run.id}
+                  data-confirm={
+                    if(@selected_run.status == "draft",
+                      do: "Cancel this draft? It will be marked cancelled without starting any work.",
+                      else: "Cancel this run? Execution will stop after the request is persisted."
+                    )
                   }
-                  class="h-3 w-3"
+                  phx-disable-with="Cancelling…"
+                  class="sf-control min-h-11 px-3"
+                >Cancel</button>
+                <button
+                  :if={
+                    @selected_run.status in ["failed", "cancelled", "interrupted"] and
+                      @selected_run.attempt < @selected_run.max_attempts
+                  }
+                  id="retry-async-run"
+                  type="button"
+                  phx-click="retry_async_run"
+                  phx-value-id={@selected_run.id}
+                  phx-disable-with="Retrying…"
+                  class="sf-control min-h-11 px-3"
+                >Retry on current workspace</button>
+              </div>
+
+              <.form
+                :if={@selected_run.execution_engine != "dag_v1"}
+                for={@steering_form}
+                id="async-run-steering-form"
+                phx-submit="steer_async_run"
+                class="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <.input
+                  type="hidden"
+                  id="async-run-steering-run-id"
+                  name="run_id"
+                  value={@selected_run.id}
                 />
-                <span>
-                  {if run_workspace_lock_state(run, @active_workspace_locks) == "held",
-                    do: "owns workspace",
-                    else: "waiting for workspace"}
-                </span>
-              </div>
-              <div class="mt-2 h-px overflow-hidden bg-[#252b34]">
-                <div
-                  role="progressbar"
-                  aria-label={"#{run.objective} progress"}
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  aria-valuenow={min(max(run.progress || 0, 0), 100)}
-                  class={[
-                    "h-full transition-[width] duration-300",
-                    run.status == "failed" && "bg-rose-500",
-                    run.status == "interrupted" && "bg-amber-500",
-                    run.status not in ["failed", "interrupted"] && "bg-emerald-400"
-                  ]}
-                  style={"width: #{min(max(run.progress || 0, 0), 100)}%"}
-                >
-                </div>
-              </div>
-            </button>
-          </div>
-        </aside>
+                <.input
+                  field={@steering_form[:steering]}
+                  id="async-run-steering-input"
+                  name="steering"
+                  type="text"
+                  label="Steering instruction"
+                  disabled={@selected_run.status not in ["running", "paused"]}
+                  class="block min-h-11 w-full border border-[var(--sf-hairline)] bg-[var(--sf-code-surface)] px-3 text-sm"
+                />
+                <button
+                  id="async-run-steering-submit"
+                  type="submit"
+                  disabled={@selected_run.status not in ["running", "paused"]}
+                  class="sf-control min-h-11 px-3"
+                >Steer</button>
+              </.form>
 
-        <div class="min-w-0">
-          <div
-            :if={is_nil(@selected_run)}
-            class="flex min-h-80 items-center justify-center p-8 text-center"
-          >
-            <div>
-              <.icon name="hero-cursor-arrow-rays" class="mx-auto h-6 w-6 text-gray-600" />
-              <p class="mt-3 text-sm text-gray-400">Select a run to inspect its execution record.</p>
-            </div>
-          </div>
-
-          <div
-            :if={@selected_run}
-            id="async-run-detail"
-            data-run-status={@selected_run.status}
-            class="min-w-0"
-          >
-            <div class="border-b border-[#21262d] p-4 md:p-5">
-              <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div class="min-w-0 max-w-3xl">
-                  <div class="mb-2 flex flex-wrap items-center gap-2">
-                    <.run_status status={@selected_run.status} />
-                    <span class="border border-[#30363d] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-gray-400">
-                      {@selected_run.mode}
-                    </span>
-                    <span class="font-mono text-[10px] uppercase tracking-wider text-gray-500">
-                      {@selected_run.priority} priority
-                    </span>
-                  </div>
-                  <h3 class="text-lg font-semibold leading-7 tracking-tight text-white md:text-xl">
-                    {@selected_run.objective}
-                  </h3>
-                  <p
-                    :if={@selected_run.error_message}
-                    class="mt-3 border-l-2 border-rose-500 pl-3 text-xs leading-5 text-rose-300"
-                  >
-                    {@selected_run.error_message}
-                  </p>
-                </div>
-
-                <div id="async-run-actions" class="flex shrink-0 flex-wrap items-center gap-2">
-                  <button
-                    :if={@selected_run.status == "running"}
-                    id="pause-async-run"
-                    type="button"
-                    phx-click="pause_async_run"
-                    phx-value-id={@selected_run.id}
-                    phx-disable-with="Pausing…"
-                    class="inline-flex items-center gap-1.5 border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2 font-mono text-[11px] font-semibold text-amber-300 transition-colors hover:bg-amber-500/15 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    <.icon name="hero-pause" class="h-3.5 w-3.5" /> Pause
-                  </button>
-                  <button
-                    :if={@selected_run.status == "draft"}
-                    id="start-async-run"
-                    type="button"
-                    phx-click="start_async_run"
-                    phx-value-id={@selected_run.id}
-                    phx-disable-with="Starting…"
-                    class="inline-flex items-center gap-1.5 border border-emerald-500/30 bg-emerald-500/[0.07] px-3 py-2 font-mono text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    <.icon name="hero-play" class="h-3.5 w-3.5" /> Start
-                  </button>
-                  <button
-                    :if={@selected_run.status == "paused"}
-                    id="resume-async-run"
-                    type="button"
-                    phx-click="resume_async_run"
-                    phx-value-id={@selected_run.id}
-                    phx-disable-with="Resuming…"
-                    class="inline-flex items-center gap-1.5 border border-emerald-500/30 bg-emerald-500/[0.07] px-3 py-2 font-mono text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    <.icon name="hero-play" class="h-3.5 w-3.5" /> Resume
-                  </button>
-                  <button
-                    :if={@selected_run.status in ["draft", "queued", "running", "paused"]}
-                    id="cancel-async-run"
-                    type="button"
-                    phx-click="cancel_async_run"
-                    phx-value-id={@selected_run.id}
-                    data-confirm={
-                      if(@selected_run.status == "draft",
-                        do:
-                          "Cancel this draft? It will be marked cancelled without starting any work.",
-                        else: "Cancel this run? Execution will stop after the request is persisted."
-                      )
-                    }
-                    phx-disable-with="Cancelling…"
-                    class="inline-flex items-center gap-1.5 border border-rose-500/30 bg-rose-500/[0.07] px-3 py-2 font-mono text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-500/15 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    <.icon name="hero-stop" class="h-3.5 w-3.5" /> Cancel
-                  </button>
-                  <button
-                    :if={
-                      @selected_run.status in ["failed", "cancelled", "interrupted"] &&
-                        @selected_run.attempt < @selected_run.max_attempts
-                    }
-                    id="retry-async-run"
-                    type="button"
-                    phx-click="retry_async_run"
-                    phx-value-id={@selected_run.id}
-                    phx-disable-with="Retrying…"
-                    class="inline-flex items-center gap-1.5 bg-[#ff7e5f] px-3 py-2 font-mono text-[11px] font-semibold text-white transition-colors hover:bg-[#ff6b48] disabled:cursor-wait disabled:opacity-60"
-                  >
-                    <.icon name="hero-arrow-path" class="h-3.5 w-3.5" /> Retry on current workspace
-                  </button>
-                </div>
-              </div>
-
-              <div class="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.72fr)]">
-                <.form
-                  :if={@selected_run.execution_engine != "dag_v1"}
-                  for={@steering_form}
-                  id="async-run-steering-form"
-                  phx-submit="steer_async_run"
-                  class="border border-[#29313a] bg-[#10151b] p-3"
-                >
-                  <.input
-                    type="hidden"
-                    id="async-run-steering-run-id"
-                    name="run_id"
-                    value={@selected_run.id}
+              <div
+                :if={@selected_run.kind == "deep_research"}
+                id="async-run-research-manifest"
+                class="border border-[var(--sf-hairline)] p-3"
+              >
+                <p class="sf-metadata">Research manifest · Committed execution intent</p>
+                <div class="mt-2 grid grid-cols-3 gap-px">
+                  <.manifest_fact
+                    label="Mode"
+                    value={manifest_value(@run_manifest, :mode, "Not requested")}
                   />
-                  <div class="mb-2 flex items-center justify-between gap-3">
-                    <div>
-                      <h4 class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-300">
-                        Live steering
-                      </h4>
-                      <p class="mt-0.5 text-[10px] text-gray-600">
-                        Appended durably to this run's control log
-                      </p>
-                    </div>
-                    <span class="font-mono text-[9px] text-gray-600">
-                      #{String.slice(@selected_run.id, 0, 7)}
-                    </span>
-                  </div>
-                  <div class="flex items-end gap-2">
-                    <div class="min-w-0 flex-1">
-                      <.input
-                        field={@steering_form[:steering]}
-                        id="async-run-steering-input"
-                        name="steering"
-                        type="text"
-                        label="Steering instruction"
-                        placeholder="Refine scope, redirect research, or add a constraint…"
-                        disabled={@selected_run.status not in ["running", "paused"]}
-                        class="block w-full border border-[#303844] bg-[#0b0f14] px-3 py-2 text-xs text-gray-100 outline-none transition-colors placeholder:text-gray-600 focus:border-cyan-500/60 disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                    </div>
-                    <button
-                      id="async-run-steering-submit"
-                      type="submit"
-                      disabled={@selected_run.status not in ["running", "paused"]}
-                      class="mb-0.5 inline-flex h-9 shrink-0 items-center gap-1.5 bg-cyan-400 px-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#071014] transition-colors hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-700 disabled:text-gray-500"
-                    >
-                      <.icon name="hero-arrow-up-right" class="h-3.5 w-3.5" /> Steer
-                    </button>
-                  </div>
-                </.form>
-
-                <div
-                  :if={@selected_run.kind == "deep_research"}
-                  id="async-run-research-manifest"
-                  class="border border-[#29313a] bg-[#10151b] p-3"
-                >
-                  <div class="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <h4 class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-300">
-                        Research manifest
-                      </h4>
-                      <p class="mt-0.5 text-[10px] text-gray-600">Committed execution intent</p>
-                    </div>
-                    <span class={[
-                      "h-1.5 w-1.5 rounded-full",
-                      manifest_enabled?(@run_manifest) && "bg-violet-400",
-                      !manifest_enabled?(@run_manifest) && "bg-gray-700"
-                    ]}></span>
-                  </div>
-                  <div class="grid grid-cols-3 gap-px bg-[#252c35]">
-                    <.manifest_fact
-                      label="Mode"
-                      value={manifest_value(@run_manifest, :mode, "Not requested")}
-                    />
-                    <.manifest_fact
-                      label="Provider"
-                      value={manifest_providers(@run_manifest)}
-                    />
-                    <.manifest_fact
-                      label="Depth"
-                      value={manifest_value(@run_manifest, :depth, "Unset")}
-                    />
-                  </div>
+                  <.manifest_fact label="Provider" value={manifest_providers(@run_manifest)} />
+                  <.manifest_fact
+                    label="Depth"
+                    value={manifest_value(@run_manifest, :depth, "Unset")}
+                  />
                 </div>
               </div>
 
               <div
                 id="async-run-budget-meters"
-                class="mt-3 grid gap-px border border-[#21262d] bg-[#21262d] md:grid-cols-3"
+                class="grid gap-px border border-[var(--sf-hairline)] md:grid-cols-3"
               >
                 <.budget_meter
                   id="async-run-token-budget"
@@ -596,336 +683,168 @@ defmodule IexCodeWeb.RunComponents do
                   unit="time"
                 />
               </div>
-
-              <div class="mt-3 grid grid-cols-2 gap-px border border-[#21262d] bg-[#21262d] sm:grid-cols-4">
-                <.run_fact label="Progress" value={"#{@selected_run.progress || 0}%"} />
-                <.run_fact
-                  label="Attempt"
-                  value={"#{@selected_run.attempt}/#{@selected_run.max_attempts}"}
-                />
-                <.run_fact label="Events" value={to_string(@selected_run.event_sequence || 0)} />
-                <.run_fact label="Cost" value={format_cost(@selected_run.cost_cents)} />
-              </div>
-
-              <.agent_fleet
-                run={@selected_run}
-                agents={@agents}
-                agent_count={@agent_count}
-                summary={@fleet_summary}
-                loading={@fleet_loading}
-                guidance={@agent_guidance}
-                receipts={@agent_receipts}
-              />
             </div>
+          </details>
 
-            <div
-              :if={@selected_run.execution_engine == "dag_v1" and @dag_projection}
-              id="async-run-dag-projection"
-              class="border-b border-[#21262d] p-4 md:p-5"
-            >
-              <DagComponents.dag_projection projection={@dag_projection} />
-            </div>
-
-            <div class="grid min-w-0 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-              <div
-                id="async-run-graph-and-controls"
-                data-graph-mode={
-                  if @selected_run.execution_engine == "dag_v1", do: "dag", else: "legacy"
-                }
-                class="border-b border-[#21262d] p-4 md:p-5 lg:border-b-0 lg:border-r"
-              >
+          <details open class="sf-disclosure mt-4">
+            <summary>Durable controls and approval gates</summary>
+            <div class="space-y-5 p-4">
+              <div id="async-run-control-timeline">
+                <p class="sf-metadata">Durable controls · {length(@controls)} entries</p>
                 <div
-                  :if={@selected_run.execution_engine != "dag_v1"}
-                  class="mb-4 flex items-center justify-between"
+                  :if={@controls == []}
+                  id="async-run-controls-empty"
+                  class="mt-3 border border-dashed border-[var(--sf-hairline)] p-5 text-sm"
                 >
-                  <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-                    Execution graph
-                  </h4>
-                  <span class="font-mono text-[10px] text-gray-600">{length(@steps)} nodes</span>
+                  No operator controls have been recorded.
                 </div>
-
-                <div
-                  :if={@selected_run.execution_engine != "dag_v1"}
-                  id="async-run-steps"
-                  class="space-y-2"
+                <article
+                  :for={control <- @controls}
+                  id={"async-run-control-entry-#{control_value(control, :id, control_fingerprint(control))}"}
+                  data-status={control_value(control, :status, "recorded")}
+                  class="border-b border-[var(--sf-hairline)] py-3"
                 >
-                  <div
-                    :if={@steps == []}
-                    class="border border-dashed border-[#30363d] px-3 py-6 text-center text-xs text-gray-500"
-                  >
-                    Steps appear when the dispatcher claims this run.
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="text-sm font-medium">{control_title(control)}</p>
+                    <span class="sf-metadata">{control_value(control, :status, "recorded")}</span>
                   </div>
-                  <div
-                    :for={step <- @steps}
-                    id={"async-run-step-#{step.id}"}
-                    class="relative border border-[#252c35] bg-[#11161d] px-3 py-3"
-                  >
-                    <div class="flex items-start gap-3">
-                      <span class={[
-                        "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                        step.status == "completed" && "bg-emerald-400",
-                        step.status == "running" && "animate-pulse bg-cyan-400",
-                        step.status in ["failed", "cancelled"] && "bg-rose-400",
-                        step.status in ["paused", "interrupted", "waiting_approval"] &&
-                          "bg-amber-400",
-                        step.status in ["pending", "ready", "blocked", "skipped"] && "bg-gray-600"
-                      ]}></span>
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center justify-between gap-3">
-                          <p class="truncate text-xs font-medium text-gray-200">{step.title}</p>
-                          <span class="font-mono text-[9px] uppercase tracking-wider text-gray-500">{step.status}</span>
-                        </div>
-                        <p
-                          :if={step.depends_on != []}
-                          class="mt-1 truncate font-mono text-[9px] text-gray-600"
-                        >
-                          waits for {Enum.join(step.depends_on, ", ")}
-                        </p>
-                        <div class="mt-2 h-px bg-[#272e37]">
-                          <div
-                            role="progressbar"
-                            aria-label={"#{step.title} progress"}
-                            aria-valuemin="0"
-                            aria-valuemax="100"
-                            aria-valuenow={min(max(step.progress || 0, 0), 100)}
-                            class="h-full bg-cyan-400"
-                            style={"width: #{min(max(step.progress || 0, 0), 100)}%"}
-                          >
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div id="async-run-control-timeline" class="mt-5 border-t border-[#21262d] pt-4">
-                  <div class="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-                        Durable controls
-                      </h4>
-                      <p class="mt-1 text-[10px] text-gray-600">
-                        Ordered operator interventions and lifecycle commands
-                      </p>
-                    </div>
-                    <span class="font-mono text-[10px] tabular-nums text-gray-600">
-                      {length(@controls)} entries
-                    </span>
-                  </div>
-                  <div class="relative border-l border-[#303844] pl-4">
-                    <div
-                      :if={@controls == []}
-                      id="async-run-controls-empty"
-                      class="border border-dashed border-[#30363d] px-3 py-5 text-center text-xs text-gray-500"
-                    >
-                      No operator controls have been recorded.
-                    </div>
-                    <article
-                      :for={control <- @controls}
-                      id={"async-run-control-entry-#{control_value(control, :id, control_fingerprint(control))}"}
-                      data-status={control_value(control, :status, "recorded")}
-                      class="relative mb-2 border border-[#252c35] bg-[#11161d] px-3 py-3 last:mb-0"
-                    >
-                      <span class={[
-                        "absolute -left-[1.28rem] top-4 h-2 w-2 rounded-full ring-4 ring-[#0d1117]",
-                        control_tone(control_value(control, :status, "recorded"))
-                      ]}></span>
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
-                          <p class="truncate text-xs font-medium text-gray-200">
-                            {control_title(control)}
-                          </p>
-                          <p class="mt-1 line-clamp-3 text-[11px] leading-5 text-gray-500">
-                            {control_summary(control)}
-                          </p>
-                        </div>
-                        <span class="shrink-0 font-mono text-[9px] uppercase tracking-wider text-gray-500">
-                          {control_value(control, :status, "recorded")}
-                        </span>
-                      </div>
-                    </article>
-                  </div>
-                </div>
-
-                <div :if={@approvals != []} class="mt-5 border-t border-[#21262d] pt-4">
-                  <h4 class="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-300">
-                    Approval gates
-                  </h4>
-                  <div
-                    :for={approval <- @approvals}
-                    id={"async-run-approval-#{approval.id}"}
-                    class="mb-2 border border-amber-500/20 bg-amber-500/[0.05] px-3 py-2.5"
-                  >
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-xs font-medium text-amber-200">{approval.action}</span>
-                      <span class="font-mono text-[9px] uppercase tracking-wider text-amber-400">{approval.status}</span>
-                    </div>
-                    <p class="mt-1 text-[11px] leading-5 text-gray-400">{approval.reason}</p>
-                    <div :if={approval.status == "pending"} class="mt-2 flex items-center gap-2">
-                      <button
-                        id={"approve-run-action-#{approval.id}"}
-                        type="button"
-                        phx-click="decide_run_approval"
-                        phx-value-id={approval.id}
-                        phx-value-decision="approved"
-                        class="border border-emerald-500/30 bg-emerald-500/[0.08] px-2 py-1 font-mono text-[9px] font-semibold uppercase tracking-wider text-emerald-300 hover:bg-emerald-500/15"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        id={"deny-run-action-#{approval.id}"}
-                        type="button"
-                        phx-click="decide_run_approval"
-                        phx-value-id={approval.id}
-                        phx-value-decision="denied"
-                        class="border border-rose-500/30 bg-rose-500/[0.08] px-2 py-1 font-mono text-[9px] font-semibold uppercase tracking-wider text-rose-300 hover:bg-rose-500/15"
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                  <p class="mt-1 text-sm text-[var(--sf-text-secondary)]">
+                    {control_summary(control)}
+                  </p>
+                </article>
               </div>
-
-              <div class="min-w-0 p-4 md:p-5">
-                <div class="mb-4 flex items-center justify-between">
-                  <div>
-                    <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-                      Event journal
-                    </h4>
-                    <p class="mt-1 text-[10px] text-gray-600">
-                      Strict sequence order · reconnect-safe replay
-                    </p>
-                  </div>
-                  <span class="font-mono text-[10px] text-gray-500">
-                    cursor {@selected_run.event_sequence || 0}
-                  </span>
-                </div>
-
-                <div
-                  id="async-run-events"
-                  role="log"
-                  aria-live="polite"
-                  aria-relevant="additions"
-                  aria-atomic="false"
-                  class="max-h-[24rem] space-y-0 overflow-y-auto pr-1"
+              <div :if={@approvals != []}>
+                <h4 class="text-sm font-semibold">Approval gates</h4>
+                <article
+                  :for={approval <- @approvals}
+                  id={"async-run-approval-#{approval.id}"}
+                  class="border-b border-[var(--sf-hairline)] py-3"
                 >
-                  <div
-                    :if={@events == []}
-                    id="async-run-events-empty"
-                    class="border border-dashed border-[#30363d] px-3 py-8 text-center text-xs text-gray-500"
-                  >
-                    Waiting for the first persisted event.
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-sm font-medium">{approval.action}</span>
+                    <span class="sf-metadata">{approval.status}</span>
                   </div>
-                  <article
-                    :for={event <- @events}
-                    id={"run-event-#{event.id}"}
-                    class="group grid grid-cols-[2.5rem_minmax(0,1fr)] border-b border-[#20262e] py-3 last:border-0"
-                  >
-                    <div class="font-mono text-[10px] tabular-nums text-gray-600">
-                      {event.sequence |> Integer.to_string() |> String.pad_leading(3, "0")}
-                    </div>
-                    <div class="min-w-0">
-                      <div class="flex items-center justify-between gap-3">
-                        <p class="truncate font-mono text-[11px] font-medium text-gray-300">
-                          {event.type}
-                        </p>
-                        <span class="shrink-0 font-mono text-[9px] text-gray-600">{event.source}</span>
-                      </div>
-                      <p class="mt-1 text-[11px] leading-5 text-gray-500">
-                        {event_summary(event)}
-                      </p>
-                    </div>
-                  </article>
-                </div>
-
-                <div
-                  :if={@artifacts != []}
-                  id="async-run-artifacts"
-                  class="mt-5 border-t border-[#21262d] pt-4"
-                >
-                  <div class="mb-3 flex items-center justify-between gap-3">
-                    <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-                      Evidence & artifacts
-                    </h4>
-                    <span class="font-mono text-[10px] text-gray-600">{length(@artifacts)} saved</span>
+                  <p class="mt-1 text-sm text-[var(--sf-text-secondary)]">{approval.reason}</p>
+                  <div :if={approval.status == "pending"} class="mt-2 flex gap-2">
+                    <button
+                      id={"approve-run-action-#{approval.id}"}
+                      type="button"
+                      phx-click="decide_run_approval"
+                      phx-value-id={approval.id}
+                      phx-value-decision="approved"
+                      class="sf-control min-h-11 px-3"
+                    >Approve</button>
+                    <button
+                      id={"deny-run-action-#{approval.id}"}
+                      type="button"
+                      phx-click="decide_run_approval"
+                      phx-value-id={approval.id}
+                      phx-value-decision="denied"
+                      class="sf-control min-h-11 px-3"
+                    >Deny</button>
                   </div>
-                  <div class="space-y-2">
-                    <article
-                      :for={artifact <- @artifacts}
-                      id={"async-run-artifact-#{artifact.id}"}
-                      class="border border-[#30363d] bg-[#11161d] p-3"
-                    >
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="flex min-w-0 items-center gap-2">
-                          <span class="flex h-6 w-6 shrink-0 items-center justify-center border border-cyan-500/20 bg-cyan-500/[0.05]">
-                            <.icon name="hero-paper-clip" class="h-3 w-3 text-cyan-400" />
-                          </span>
-                          <div class="min-w-0">
-                            <p class="truncate text-[11px] font-medium text-gray-200">
-                              {artifact.name}
-                            </p>
-                            <p class="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-gray-600">
-                              {artifact.kind}
-                            </p>
-                          </div>
-                        </div>
-                        <span
-                          :if={artifact_provider(artifact)}
-                          class="shrink-0 border border-violet-500/20 bg-violet-500/[0.05] px-1.5 py-0.5 font-mono text-[9px] text-violet-300"
-                        >
-                          {artifact_provider(artifact)}
-                        </span>
-                      </div>
-
-                      <p
-                        :if={artifact_preview(artifact)}
-                        id={"async-run-artifact-preview-#{artifact.id}"}
-                        class="mt-3 line-clamp-5 border-l border-cyan-500/30 pl-3 text-[11px] leading-5 text-gray-400"
-                      >
-                        {artifact_preview(artifact)}
-                      </p>
-
-                      <details
-                        :if={artifact_content(artifact)}
-                        id={"async-run-artifact-detail-#{artifact.id}"}
-                        class="mt-3 border border-[#29313a] bg-[#0b0f14]"
-                      >
-                        <summary class="cursor-pointer px-3 py-2 font-mono text-[9px] font-semibold uppercase tracking-wider text-cyan-300">
-                          Open full artifact
-                        </summary>
-                        <pre class="max-h-96 overflow-auto whitespace-pre-wrap border-t border-[#29313a] p-3 font-mono text-[10px] leading-5 text-gray-300">{artifact_content(artifact)}</pre>
-                      </details>
-
-                      <div
-                        :if={artifact_sources(artifact) != []}
-                        id={"async-run-artifact-sources-#{artifact.id}"}
-                        class="mt-3 border-t border-[#252c35] pt-2"
-                      >
-                        <p class="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-gray-600">
-                          Sources
-                        </p>
-                        <div class="flex flex-wrap gap-1.5">
-                          <a
-                            :for={{source, index} <- Enum.with_index(artifact_sources(artifact))}
-                            id={"async-run-artifact-source-#{artifact.id}-#{index}"}
-                            href={source_url(source)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="max-w-full truncate border border-[#2c3540] bg-[#0c1117] px-2 py-1 font-mono text-[9px] text-gray-400"
-                          >
-                            {source_label(source)}
-                          </a>
-                        </div>
-                      </div>
-                    </article>
-                  </div>
-                </div>
+                </article>
               </div>
             </div>
+          </details>
+        <% else %>
+          <p class="p-6 text-sm text-[var(--sf-text-secondary)]">No active run</p>
+        <% end %>
+
+        <details open class="sf-disclosure mt-4">
+          <summary>Interactive session plane</summary>
+          <div id={"mission-control-interactive-slot-#{@interactive_revision}"} class="p-4">
+            {render_slot(@interactive_execution)}
           </div>
-        </div>
-      </div>
+        </details>
+      </section>
+
+      <section
+        id="mission-control-panel-journal"
+        role="tabpanel"
+        aria-labelledby="mission-control-mode-journal"
+        hidden={@mode != "journal"}
+        class="sf-mission-control-panel"
+      >
+        <details open class="sf-disclosure">
+          <summary>Ordered event journal</summary>
+          <div
+            id="async-run-events"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions"
+            aria-atomic="false"
+            class="max-h-[28rem] overflow-y-auto p-4"
+          >
+            <div :if={@events == []} id="async-run-events-empty" class="p-6 text-center text-sm">
+              Waiting for the first persisted event.
+            </div>
+            <article
+              :for={event <- @events}
+              id={"run-event-#{event.id}"}
+              class="grid grid-cols-[3rem_minmax(0,1fr)] border-b border-[var(--sf-hairline)] py-3"
+            >
+              <span class="font-mono text-xs">{event.sequence
+              |> Integer.to_string()
+              |> String.pad_leading(3, "0")}</span>
+              <div class="min-w-0">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="truncate text-sm font-medium">{event.type}</p>
+                  <span class="sf-metadata">{event.source}</span>
+                </div>
+                <p class="mt-1 text-sm text-[var(--sf-text-secondary)]">{event_summary(event)}</p>
+              </div>
+            </article>
+          </div>
+        </details>
+
+        <details :if={@artifacts != []} open id="async-run-artifacts" class="sf-disclosure mt-4">
+          <summary>Evidence and artifacts · {length(@artifacts)} saved</summary>
+          <div class="space-y-3 p-4">
+            <article
+              :for={artifact <- @artifacts}
+              id={"async-run-artifact-#{artifact.id}"}
+              class="border-b border-[var(--sf-hairline)] pb-3"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <p class="text-sm font-medium">{artifact.name}</p>
+                <span class="sf-metadata">{artifact.kind}</span>
+              </div>
+              <p
+                :if={artifact_preview(artifact)}
+                id={"async-run-artifact-preview-#{artifact.id}"}
+                class="mt-2 text-sm text-[var(--sf-text-secondary)]"
+              >
+                {artifact_preview(artifact)}
+              </p>
+              <details
+                :if={artifact_content(artifact)}
+                id={"async-run-artifact-detail-#{artifact.id}"}
+                class="mt-3"
+              >
+                <summary class="sf-control min-h-11">Open full artifact</summary>
+                <pre class="sf-code-surface mt-2 max-h-96 whitespace-pre-wrap p-3">{artifact_content(artifact)}</pre>
+              </details>
+              <div
+                :if={artifact_sources(artifact) != []}
+                id={"async-run-artifact-sources-#{artifact.id}"}
+                class="mt-3 flex flex-wrap gap-2"
+              >
+                <a
+                  :for={{source, index} <- Enum.with_index(artifact_sources(artifact))}
+                  id={"async-run-artifact-source-#{artifact.id}-#{index}"}
+                  href={source_url(source)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="sf-control min-h-11 px-3"
+                >
+                  {source_label(source)}
+                </a>
+              </div>
+            </article>
+          </div>
+        </details>
+      </section>
     </section>
     """
   end
@@ -1397,18 +1316,6 @@ defmodule IexCodeWeb.RunComponents do
     """
   end
 
-  attr :label, :string, required: true
-  attr :value, :string, required: true
-
-  defp run_fact(assigns) do
-    ~H"""
-    <div class="bg-[#11161d] px-3 py-2.5">
-      <div class="text-[9px] uppercase tracking-wider text-gray-600">{@label}</div>
-      <div class="mt-1 font-mono text-xs tabular-nums text-gray-300">{@value}</div>
-    </div>
-    """
-  end
-
   attr :status, :string, required: true
 
   defp run_status(assigns) do
@@ -1486,13 +1393,6 @@ defmodule IexCodeWeb.RunComponents do
   end
 
   defp elapsed_ms(_run), do: 0
-
-  defp manifest_enabled?(manifest) when map_size(manifest) == 0, do: false
-
-  defp manifest_enabled?(manifest) do
-    research = manifest_section(manifest)
-    manifest_get(research, :enabled) != false and map_size(research) > 0
-  end
 
   defp manifest_value(manifest, key, fallback) do
     research = manifest_section(manifest)
@@ -1641,13 +1541,6 @@ defmodule IexCodeWeb.RunComponents do
 
       _ ->
         "inactive"
-    end
-  end
-
-  defp workspace_lock_lease_title(lock) do
-    case lock_value(lock, :lease_expires_at) do
-      %DateTime{} = expires_at -> DateTime.to_iso8601(expires_at)
-      _ -> workspace_lock_lease(lock)
     end
   end
 
@@ -2166,40 +2059,6 @@ defmodule IexCodeWeb.RunComponents do
     display_value(value, "Persisted in the run control journal.")
   end
 
-  defp control_tone(status)
-       when status in ["completed", "applied", "approved", :completed, :applied, :approved],
-       do: "bg-emerald-400"
-
-  defp control_tone(status)
-       when status in [
-              "failed",
-              "denied",
-              "rejected",
-              "cancelled",
-              :failed,
-              :denied,
-              :rejected,
-              :cancelled
-            ],
-       do: "bg-rose-400"
-
-  defp control_tone(status)
-       when status in ["queued", "pending", "recorded", :queued, :pending, :recorded],
-       do: "bg-blue-400"
-
-  defp control_tone(status) when status in ["superseded", :superseded], do: "bg-gray-500"
-  defp control_tone(_status), do: "bg-amber-400"
-
-  defp artifact_provider(artifact) do
-    metadata = Map.get(artifact, :metadata, %{}) || %{}
-    provider = manifest_get(metadata, :provider) || manifest_get(metadata, :providers)
-
-    case provider do
-      providers when is_list(providers) -> Enum.map_join(providers, ", ", &display_value(&1, ""))
-      value -> display_optional(value)
-    end
-  end
-
   defp artifact_preview(artifact) do
     metadata = Map.get(artifact, :metadata, %{}) || %{}
 
@@ -2261,8 +2120,6 @@ defmodule IexCodeWeb.RunComponents do
     end
   end
 
-  defp preview_content(content), do: display_optional(content)
-
   defp source_label(source) when is_map(source) do
     manifest_get(source, :title) || manifest_get(source, :name) || manifest_get(source, :url) ||
       manifest_get(source, :uri) || "Recorded source"
@@ -2279,10 +2136,6 @@ defmodule IexCodeWeb.RunComponents do
   end
 
   defp source_url(_source), do: "#"
-
-  defp display_optional(nil), do: nil
-  defp display_optional(""), do: nil
-  defp display_optional(value), do: display_value(value, "")
 
   defp event_summary(event) do
     payload = event.payload || %{}

@@ -81,6 +81,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                        |> IO.iodata_to_binary()
   @workspace_tabs ~w(kanban swarm research calendar changes chat files terminal)
   @workspace_views ~w(deck kanban swarm research calendar changes chat files terminal)
+  @mission_control_modes ~w(overview topology execution journal)
   @runtime_refresh_interval 5_000
 
   @impl true
@@ -190,6 +191,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:run_count, length(durable_runs))
       |> assign(:run_counts, run_counts(durable_runs, pending_approval_count))
       |> assign(:run_dispatcher_stats, safe_dispatcher_stats())
+      |> assign(:mission_control_mode, "overview")
+      |> assign(:mission_control_phase, phase_from_steps(selected_run, run_steps))
       |> assign(:dispatch_mode, settings.default_dispatch_mode || "background")
       |> assign(:run_setup_open?, false)
       |> assign(:run_setup_mode, settings.default_run_mode || "swarm")
@@ -699,6 +702,13 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   def handle_event("switch_tab", %{"sidebar_tab" => _invalid}, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("switch_mission_control_mode", %{"mode" => mode}, socket)
+      when mode in @mission_control_modes,
+      do: {:noreply, assign(socket, :mission_control_mode, mode)}
+
+  def handle_event("switch_mission_control_mode", _invalid, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("return_to_instrument_deck", _params, socket) do
@@ -4427,10 +4437,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info(:operations_cleared, socket) do
-    operations =
-      Sessions.list_operations(socket.assigns.session.id, limit: @operation_retained_limit)
-
-    {:noreply, socket |> assign(:operations, operations) |> rebuild_instrument_summaries()}
+    {:noreply, socket |> assign(:operations, []) |> rebuild_instrument_summaries()}
   end
 
   @impl true
@@ -4941,11 +4948,39 @@ defmodule IexCodeWeb.WorkspaceLive do
       Enum.find(runs, &(&1.status in ~w(completed failed cancelled interrupted)))
   end
 
+  defp enter_mission_control(socket) do
+    case select_active_mission(socket.assigns.run_rows) do
+      nil -> clear_selected_run_projection(socket)
+      run -> select_run_projection(socket, run)
+    end
+  end
+
+  defp clear_selected_run_projection(socket) do
+    socket
+    |> assign(:selected_run, nil)
+    |> assign(:run_steps, [])
+    |> assign(:mission_control_phase, nil)
+    |> assign(:dag_projection, nil)
+    |> assign(:run_approvals, [])
+    |> assign(:run_controls, [])
+    |> assign(:run_manifest, %{})
+    |> assign(:run_artifacts, [])
+    |> assign(:run_agent_count, 0)
+    |> assign(:run_fleet_summary, run_fleet_summary([]))
+    |> assign(:run_fleet_loading?, false)
+    |> assign(:run_agent_guidance, %{})
+    |> assign(:run_agent_receipts, %{})
+    |> assign(:run_event_rows, [])
+    |> stream(:run_agents, [], reset: true, dom_id: &"run-agent-#{&1.id}")
+  end
+
   defp mission_phase(nil), do: nil
 
-  defp mission_phase(run) do
-    steps = Runs.list_step_summaries(run)
+  defp mission_phase(run), do: phase_from_steps(run, Runs.list_step_summaries(run))
 
+  defp phase_from_steps(nil, _steps), do: nil
+
+  defp phase_from_steps(run, steps) do
     case Enum.find(steps, &(&1.status == "running")) ||
            Enum.find(steps, &(&1.status == "paused")) do
       nil ->
@@ -4963,11 +4998,16 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp step_completion_key(step) do
-    timestamp =
-      step.completed_at || step.updated_at || step.inserted_at || ~U[1970-01-01 00:00:00Z]
-
-    {DateTime.to_unix(timestamp, :microsecond), step.id || ""}
+    {
+      timestamp_key(step.completed_at),
+      timestamp_key(step.updated_at),
+      timestamp_key(step.inserted_at),
+      step.id || ""
+    }
   end
+
+  defp timestamp_key(nil), do: 0
+  defp timestamp_key(%DateTime{} = timestamp), do: DateTime.to_unix(timestamp, :microsecond)
 
   defp research_summary_round(steps) do
     steps
@@ -5256,7 +5296,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     socket = if view == "deck", do: request_deck_git_refresh(socket), else: socket
     socket = if view == "files", do: ensure_workspace_files_loaded(socket), else: socket
-    socket = if view == "swarm", do: refresh_run_fleet(socket), else: socket
+    socket = if view == "swarm", do: enter_mission_control(socket), else: socket
     socket = if view == "research", do: refresh_research_results(socket), else: socket
     update_terminal_viewer(socket, previous_view, view)
   end
@@ -6407,6 +6447,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     socket
     |> assign(:selected_run, selected)
     |> assign(:run_steps, steps)
+    |> assign(:mission_control_phase, phase_from_steps(selected, steps))
     |> assign(:dag_projection, strict_dag_projection(selected, steps))
     |> assign(:run_approvals, approvals)
     |> assign(:run_controls, if(selected, do: Runs.list_controls(selected), else: []))
@@ -6445,6 +6486,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     socket
     |> assign(:selected_run, run)
     |> assign(:run_steps, steps)
+    |> assign(:mission_control_phase, phase_from_steps(run, steps))
     |> assign(:dag_projection, strict_dag_projection(run, steps))
     |> assign(:run_approvals, approvals)
     |> assign(:run_controls, Runs.list_controls(run))
