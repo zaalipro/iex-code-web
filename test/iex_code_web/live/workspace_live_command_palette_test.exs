@@ -35,6 +35,11 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
     assert has_element?(view, "#command-palette-results", "No matching switchboard controls")
     refute has_element?(view, "#command-palette-results", "palette_only_file.ex")
 
+    for hidden <- ["open_goal_modal", "start_goal"] do
+      render_change(view, "command_palette_search", %{"query" => hidden})
+      refute has_element?(view, "[data-palette-item-id='start_goal']")
+    end
+
     render_click(view, "command_palette_set_category", %{"category" => "sessions"})
     render_change(view, "command_palette_search", %{"query" => "Payments Refactor"})
     assert has_element?(view, "#command-palette-results", "Payments Refactor")

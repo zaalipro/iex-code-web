@@ -93,6 +93,8 @@ defmodule IexCodeWeb.ChallengerCommandPaletteStressTest do
              )
 
       assert CommandPalette.search("swarm", [], "views") == []
+      assert CommandPalette.search("open_goal_modal", [], "actions") == []
+      assert CommandPalette.search("start_goal", [], "actions") == []
     end
   end
 end

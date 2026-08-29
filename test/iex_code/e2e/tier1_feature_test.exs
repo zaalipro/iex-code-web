@@ -658,8 +658,14 @@ defmodule IexCode.E2E.Tier1FeatureTest do
       session = create_session_fixture(project)
 
       {:ok, view, _html} = mount_workspace(conn, session.id)
-      # Switch tab to files
-      html = switch_workspace_tab(view, "files")
+      # Switch to Files through the visible Signal Foundry switchboard.
+      view |> element("#all-instruments-trigger") |> render_click()
+
+      html =
+        view
+        |> element("[data-palette-item-id='view_files']")
+        |> render_click()
+
       assert html =~ "Files" or html =~ "explorer" or html =~ "lib"
     end
 

@@ -302,7 +302,12 @@ defmodule IexCode.E2E.Case do
   end
 
   def switch_workspace_tab(view, tab_name) do
-    render_click(view, "switch_tab", %{"tab" => tab_name})
+    render_click(view, "toggle_command_palette")
+    render_click(view, "command_palette_set_category", %{"category" => "views"})
+
+    view
+    |> element("[data-palette-item-id='view_#{tab_name}']")
+    |> render_click()
   end
 
   def toggle_workspace_swarm(view) do
