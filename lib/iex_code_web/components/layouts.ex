@@ -34,7 +34,7 @@ defmodule IexCodeWeb.Layouts do
       <button
         id={"#{@id}-button"}
         type="submit"
-        class="inline-flex min-h-10 items-center gap-2 rounded-lg px-3 text-xs font-medium text-gray-400 transition-colors hover:bg-[#21262d] hover:text-white active:translate-y-px focus-visible:ring-2 focus-visible:ring-[#ff8a68]/70"
+        class="sf-control inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-xs font-medium text-[var(--sf-text-secondary)] transition-colors hover:text-[var(--sf-text-primary)] active:translate-y-px"
       >
         <.icon name="hero-arrow-right-start-on-rectangle" class="size-4" />
         <span>Sign out</span>

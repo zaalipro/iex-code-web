@@ -74,7 +74,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialStressTest do
 
       # Switch to terminal tab
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       token = "E2E_LIVEVIEW_ROUNDTRIP_#{System.unique_integer([:positive])}"
@@ -108,7 +108,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Send high-throughput 3,000-line generator
@@ -148,11 +148,11 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialStressTest do
 
       # Connect Client A
       {:ok, view_a, _} = live(conn, ~p"/sessions/#{session.id}")
-      view_a |> element("#tab-btn-terminal") |> render_click()
+      view_a |> element("#instrument-card-terminal") |> render_click()
 
       # Connect Client B
       {:ok, view_b, _} = live(conn, ~p"/sessions/#{session.id}")
-      view_b |> element("#tab-btn-terminal") |> render_click()
+      view_b |> element("#instrument-card-terminal") |> render_click()
 
       # Client A sends command
       token = "SYNC_DUAL_CLIENT_#{System.unique_integer([:positive])}"
@@ -190,7 +190,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Start stream
@@ -233,7 +233,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       refute has_element?(view, "#terminal-agent-banner")
@@ -316,7 +316,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       unicode_cmd =

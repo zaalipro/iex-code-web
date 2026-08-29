@@ -19,14 +19,14 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
     assert Runs.list_runs(project_id: project.id) == []
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
     assert has_element?(view, "#kanban-empty-state")
     assert has_element?(view, "#kanban-empty-create-task")
     assert Kanban.list_tasks(project.id) == []
     assert Sessions.list_messages(session.id) == []
     assert Runs.list_runs(project_id: project.id) == []
 
-    view |> element("#sidebar-tab-chat") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "chat"})
     assert has_element?(view, "#chat-empty-state")
 
     now = DateTime.utc_now() |> DateTime.truncate(:second)
@@ -62,6 +62,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
 
     view
     |> form("#kanban-filter-form", %{"search" => "definitely-no-match"})
@@ -103,33 +104,14 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{alpha_session.id}")
 
-    assert has_element?(view, "#workspace-search-form[phx-change='search_workspace']")
+    render_click(view, "toggle_command_palette", %{"category" => "projects"})
+    render_change(view, "command_palette_search", %{"query" => "Beta Regression"})
+    assert has_element?(view, "[data-palette-item-id='project-#{beta_project.id}']")
+    refute has_element?(view, "[data-palette-item-id='project-#{alpha_project.id}']")
+    render_click(view, "close_command_palette")
 
-    view
-    |> form("#workspace-search-form", %{"query" => "Beta Regression"})
-    |> render_change()
-
-    assigns = live_assigns(view)
-    assert Enum.map(assigns.projects, & &1.id) == [beta_project.id]
-    assert Enum.map(assigns.sessions, & &1.id) == [beta_session.id]
-
-    assert MapSet.new(Enum.map(assigns.messages, & &1.id)) ==
+    assert MapSet.new(Enum.map(live_assigns(view).messages, & &1.id)) ==
              MapSet.new([alpha_message.id, beta_message.id])
-
-    render_click(view, "toggle_workspace_menu")
-    assert has_element?(view, "#workspace-switcher-search-form[phx-change='search_workspace']")
-
-    view
-    |> form("#workspace-switcher-search-form", %{"query" => ""})
-    |> render_change()
-
-    assigns = live_assigns(view)
-
-    assert MapSet.new(Enum.map(assigns.projects, & &1.id)) ==
-             MapSet.new([alpha_project.id, beta_project.id])
-
-    assert MapSet.new(Enum.map(assigns.sessions, & &1.id)) ==
-             MapSet.new([alpha_session.id, beta_session.id])
   end
 
   test "late run messages cannot cross a session switch or authorize foreign agent controls", %{
@@ -190,7 +172,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-    view |> element("#sidebar-tab-files") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "files"})
 
     assert has_element?(view, "#file-filter-form[phx-change='filter_files']")
 
@@ -283,7 +265,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-    view |> element("#header-focus-time-btn") |> render_click()
+    render_click(view, "open_time_picker")
     render_click(view, "select_schedule_status", %{"status" => "Busy"})
     render_click(view, "select_time_slot", %{"slot" => "02:00 PM - 03:00 PM"})
 
@@ -297,7 +279,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
     assert reverted.selected_time_slot == "10:30 AM - 11:00 AM"
     assert reverted.user_availability == "Available"
 
-    view |> element("#header-focus-time-btn") |> render_click()
+    render_click(view, "open_time_picker")
     render_click(view, "select_schedule_status", %{"status" => "In-meeting"})
     render_click(view, "toggle_custom_time")
 
@@ -372,7 +354,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#sidebar-tab-calendar") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "calendar"})
 
     assert has_element?(view, "#calendar-day-12 #calendar-task-12-#{current_month_task.id}")
     refute has_element?(view, "#calendar-day-12 #calendar-task-12-#{other_month_task.id}")
@@ -410,11 +392,6 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
 
     refute has_element?(view, "#command-palette-modal")
 
-    assert has_element?(
-             view,
-             "#header-swarm-toggle[aria-label='Interactive swarm mode: on']"
-           )
-
     assert Sessions.get_session!(session.id).swarm_mode
   end
 
@@ -441,18 +418,16 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-    assert has_element?(view, "#workspace-desktop-tabs.workspace-desktop-tabs")
-    assert has_element?(view, "#workspace-desktop-tabs .workspace-tab-label")
-    assert has_element?(view, "#workspace-header-actions #header-swarm-toggle[aria-label]")
-    assert has_element?(view, "#workspace-header-actions #header-focus-time-btn[aria-label]")
-    assert has_element?(view, "#workspace-header-actions #header-new-task-btn[aria-label]")
+    assert has_element?(view, "#mission-strip")
+    assert has_element?(view, "#project-switchboard-trigger[aria-label='Choose project']")
+    assert has_element?(view, "#runtime-switchboard-trigger[aria-label='Open runtime settings']")
 
-    view |> element("#sidebar-tab-changes") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "changes"})
     assert has_element?(view, "#changes-toolbar")
     assert has_element?(view, "#changes-layout #changes-staging-panel")
     assert has_element?(view, "#changes-layout #changes-diff-panel")
 
-    view |> element("#sidebar-tab-files") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "files"})
 
     assert has_element?(
              view,
@@ -461,7 +436,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
 
     assert has_element?(view, "#file-explorer-container #file-editor-panel")
 
-    view |> element("#sidebar-tab-kanban") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
     render_click(view, "open_task_drawer", %{"id" => task.id})
 
     assert has_element?(
@@ -501,22 +476,10 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
     assert_modal(view, "expanded-message-modal", "close_expand_message")
     render_click(view, "close_expand_message")
 
-    assert has_element?(
-             view,
-             "#workspace-settings-models[href='/sessions/#{session.id}/settings#models']"
-           )
-
-    assert has_element?(
-             view,
-             "#workspace-settings-general[href='/sessions/#{session.id}/settings#execution']"
-           )
-
+    render_click(view, "toggle_command_palette", %{"category" => "settings_account"})
+    assert has_element?(view, "[data-palette-item-id='settings-models']")
+    assert has_element?(view, "[data-palette-item-id='settings-execution']")
     assert has_element?(view, "#workspace-logout-form[action='/logout'][method='post']")
-
-    assert has_element?(
-             view,
-             "#profile-settings-card[href='/sessions/#{session.id}/settings#runtime']"
-           )
 
     render_click(view, "toggle_project_modal")
     assert_modal(view, "project-modal", "close_project_modal")

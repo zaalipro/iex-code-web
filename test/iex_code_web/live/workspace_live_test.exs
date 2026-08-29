@@ -12,10 +12,9 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     session = create_session_fixture(project)
     {:ok, view, html} = live(conn, ~p"/sessions/#{session.id}")
 
-    assert html =~ "Today&#39;s tasks" or html =~ "Today's tasks"
-    assert html =~ "Kanban"
-    assert has_element?(view, "button[phx-value-tab='kanban']")
-    assert has_element?(view, "button[phx-value-tab='swarm']")
+    assert has_element?(view, "#instrument-deck")
+    assert has_element?(view, "#instrument-card-kanban")
+    assert has_element?(view, "#instrument-card-swarm")
   end
 
   test "switches tabs between kanban, swarm, calendar, changes, chat, files, and terminal", %{
@@ -29,7 +28,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch to swarm tab
     view
-    |> element("#tab-btn-swarm")
+    |> element("#instrument-card-swarm")
     |> render_click()
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=swarm")
@@ -37,19 +36,14 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     assert render(view) =~ "PlannerAgent"
     assert render(view) =~ "ExplorerAgent"
 
-    # Switch to calendar tab
-    view
-    |> element("#tab-btn-calendar")
-    |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "calendar"})
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=calendar")
 
     assert render(view) =~ "Scheduled Tasks" or render(view) =~ "August, 2026"
 
     # Switch to changes tab
-    view
-    |> element("#tab-btn-changes")
-    |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "changes"})
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=changes")
 
@@ -57,23 +51,17 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     assert render(view) =~ "Canvas"
 
     # Switch to chat tab
-    view
-    |> element("#tab-btn-chat")
-    |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "chat"})
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=chat")
 
     # Switch to files tab
-    view
-    |> element("#tab-btn-files")
-    |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "files"})
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=files")
 
     # Switch to terminal tab
-    view
-    |> element("#tab-btn-terminal")
-    |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "terminal"})
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=terminal")
 
@@ -86,11 +74,9 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-    assert render(view) =~ "Swarm:"
+    render_click(view, "toggle_command_palette", %{"category" => "actions"})
 
-    view
-    |> element("button[phx-click='toggle_swarm']")
-    |> render_click()
+    render_click(view, "toggle_swarm")
 
     assert render(view) =~ "Swarm Mode" or render(view) =~ "Single Agent Mode"
   end
@@ -99,8 +85,10 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
 
-    # Click new session plus button
+    render_click(view, "toggle_command_palette", %{"category" => "sessions"})
+
     view
     |> element("button#new-session-btn")
     |> render_click()
@@ -121,6 +109,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
 
     # Click task card in expanded column
     view
@@ -138,6 +127,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
 
     # Click collapsed 'ready' ribbon
     view
@@ -162,7 +152,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch to swarm tab to observe telemetry
     view
-    |> element("#tab-btn-swarm")
+    |> element("#instrument-card-swarm")
     |> render_click()
 
     op = %Operation{
@@ -257,7 +247,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch to swarm tab
     view
-    |> element("#tab-btn-swarm")
+    |> element("#instrument-card-swarm")
     |> render_click()
 
     assert render(view) =~ "Root Swarm Goal"
@@ -311,7 +301,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch to changes tab (triggers the LiveView's git state refresh)
     view
-    |> element("#tab-btn-changes")
+    |> element("#instrument-card-changes")
     |> render_click()
 
     html = render(view)
@@ -343,6 +333,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "files"})
 
     # Filter files
     html = render_change(view, "filter_files", %{"filter" => "worker"})
@@ -373,7 +364,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch to terminal tab
     view
-    |> element("#tab-btn-terminal")
+    |> element("#instrument-card-terminal")
     |> render_click()
 
     # Execute terminal command via form
@@ -503,7 +494,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch to chat tab
     view
-    |> element("#tab-btn-chat")
+    |> element("#instrument-card-chat")
     |> render_click()
 
     html = render(view)
@@ -540,7 +531,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # 2. Switch to Scheduled (calendar) tab
     view
-    |> element("#tab-btn-calendar")
+    |> element("#instrument-card-calendar")
     |> render_click()
 
     html = render(view)
@@ -602,9 +593,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     session = create_session_fixture(project)
     {:ok, view, html} = live(conn, ~p"/sessions/#{session.id}")
 
-    # 1. Header live availability presence indicator
-    assert html =~ "header-focus-time-btn"
-    assert html =~ "Available"
+    assert html =~ "mission-strip"
 
     # 2. Open new task modal and trigger custom date picker popover
     html = render_click(view, "toggle_new_task_modal")
@@ -658,7 +647,6 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     # Apply presence
     html = render_click(view, "apply_time_picker")
     assert html =~ "Focus presence updated: Busy"
-    assert html =~ "header-focus-time-btn"
     assert html =~ "Busy"
   end
 
@@ -669,6 +657,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     project = create_project_fixture(%{root_path: "/tmp/e2e_dropdown_project"})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
 
     # 1. Open new task modal
     html = render_click(view, "toggle_new_task_modal")
@@ -745,6 +734,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "kanban"})
 
     # Open task drawer
     view
@@ -824,7 +814,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     |> render_hook("set_task_schedule_type", %{"type" => "scheduled"})
 
     # Check that LiveView state remains responsive
-    assert render(view) =~ "Today's tasks" or render(view) =~ "Today&#39;s tasks"
+    assert Process.alive?(view.pid)
   end
 
   test "handles saving complete settings fields and rendering usage history", %{
@@ -833,18 +823,12 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
   } do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
-    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-
-    # Open settings modal
-    view
-    |> render_hook("toggle_settings_modal", %{})
-
-    assert render(view) =~ "Provider Keys &amp; Settings" or
-             render(view) =~ "Provider Keys & Settings"
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/settings#models")
+    assert has_element?(view, "#settings-form")
 
     # Save full settings
     view
-    |> form("form[phx-submit='save_settings']", %{
+    |> form("#settings-form", %{
       "settings" => %{
         "default_model_provider" => "anthropic",
         "default_model" => "claude-3-7-sonnet",
@@ -860,7 +844,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     })
     |> render_submit()
 
-    assert render(view) =~ "Settings saved successfully"
+    assert has_element?(view, "#settings-save-status", "Settings saved")
     saved = IexCode.Settings.get_settings()
     assert saved.default_model_provider == "anthropic"
     assert saved.default_model == "claude-3-7-sonnet"
@@ -888,7 +872,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch to files tab
     view
-    |> element("#tab-btn-files")
+    |> element("#instrument-card-files")
     |> render_click()
 
     # Toggle folder collapse

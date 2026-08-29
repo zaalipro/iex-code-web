@@ -35,8 +35,9 @@ defmodule IexCodeWeb.WorkspaceLiveExecutionModesTest do
 
     assert draft
     assert draft.metadata["goal_auto_start"] == false
-    assert has_element?(view, "#async-run-#{draft.id}")
     assert has_element?(view, "#flash-info", "will not start until you choose Start")
+    render_click(view, "switch_tab", %{"tab" => "swarm"})
+    assert has_element?(view, "#async-run-#{draft.id}")
   end
 
   test "ordinary durable prompts honor the configured single-agent default", %{
@@ -62,6 +63,7 @@ defmodule IexCodeWeb.WorkspaceLiveExecutionModesTest do
     assert run.kind == "coding_agent"
     assert run.mode == "single"
     assert run.metadata["execution_policy"]["agent_max_turns"] == 7
+    render_click(view, "switch_tab", %{"tab" => "swarm"})
     assert has_element?(view, "#async-run-#{run.id}")
   end
 
@@ -82,9 +84,9 @@ defmodule IexCodeWeb.WorkspaceLiveExecutionModesTest do
     assert has_element?(view, "#dispatch-mode-background[aria-pressed='true']")
     assert has_element?(view, "#dispatch-mode-interactive[aria-pressed='false']")
 
-    view |> element("#sidebar-tab-chat") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "chat"})
 
-    assert has_element?(view, "#sidebar-tab-chat[aria-current='page']")
+    assert has_element?(view, "#mission-strip[data-active-view='chat']")
     assert has_element?(view, "#dispatch-mode-background[aria-pressed='true']")
     assert has_element?(view, "#dispatch-mode-interactive[aria-pressed='false']")
 
@@ -110,14 +112,14 @@ defmodule IexCodeWeb.WorkspaceLiveExecutionModesTest do
     view |> element("#dispatch-mode-interactive") |> render_click()
     assert has_element?(view, "#dispatch-mode-interactive[aria-pressed='true']")
 
-    view |> element("#tab-btn-chat") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "chat"})
     assert has_element?(view, "#dispatch-mode-interactive[aria-pressed='true']")
 
-    view |> element("#sidebar-tab-swarm") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "swarm"})
     assert has_element?(view, "#dispatch-mode-interactive[aria-pressed='true']")
 
     view |> element("#dispatch-mode-background") |> render_click()
-    view |> element("#sidebar-tab-files") |> render_click()
+    render_click(view, "switch_tab", %{"tab" => "files"})
 
     assert has_element?(view, "#dispatch-mode-background[aria-pressed='true']")
     assert has_element?(view, "#dispatch-mode-interactive[aria-pressed='false']")

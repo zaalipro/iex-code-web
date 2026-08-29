@@ -393,6 +393,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:show_command_palette, false)
       |> assign(:command_palette_query, "")
       |> assign(:command_palette_category, "all")
+      |> assign(:command_palette_form, to_form(%{"query" => ""}, as: :palette))
       |> assign(:command_palette_results, [])
       |> assign(:command_palette_selected_index, 0)
       # Git Branch & Staging Hub assigns
@@ -683,6 +684,15 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   def handle_event("switch_tab", %{"sidebar_tab" => _invalid}, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("return_to_instrument_deck", _params, socket) do
+    {:noreply,
+     push_patch(socket,
+       to: workspace_path(socket.assigns.workspace_route, "deck"),
+       replace: true
+     )}
+  end
 
   @impl true
   def handle_event("switch_changes_subtab", %{"tab" => tab}, socket) do
@@ -1710,6 +1720,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       socket
       |> assign(:show_command_palette, show?)
       |> assign(:command_palette_query, query)
+      |> assign(:command_palette_form, to_form(%{"query" => query}, as: :palette))
       |> assign(:command_palette_category, category)
       |> assign(:command_palette_results, results)
       |> assign(:command_palette_selected_index, 0)
@@ -1724,16 +1735,21 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("command_palette_search", %{"query" => query}, socket) when is_binary(query) do
+  def handle_event("command_palette_search", %{"palette" => %{"query" => query}}, socket)
+      when is_binary(query) do
     {:noreply,
      socket
      |> assign(:command_palette_query, query)
+     |> assign(:command_palette_form, to_form(%{"query" => query}, as: :palette))
      |> assign(
        :command_palette_results,
        palette_results(socket, query, socket.assigns.command_palette_category)
      )
      |> assign(:command_palette_selected_index, 0)}
   end
+
+  def handle_event("command_palette_search", %{"query" => query}, socket) when is_binary(query),
+    do: handle_event("command_palette_search", %{"palette" => %{"query" => query}}, socket)
 
   def handle_event("command_palette_search", _params, socket), do: {:noreply, socket}
 
@@ -3587,6 +3603,12 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("open_runtime_settings", _params, socket) do
+    {:noreply,
+     push_navigate(socket, to: settings_path(socket.assigns.workspace_route, "runtime"))}
+  end
+
+  @impl true
   def handle_event("toggle_project_modal", _params, socket) do
     {:noreply, assign(socket, :show_project_modal, !socket.assigns.show_project_modal)}
   end
@@ -5382,10 +5404,23 @@ defmodule IexCodeWeb.WorkspaceLive do
           navigation
 
         "all" ->
+          deck = Enum.filter(navigation, &(&1.id == "all-instruments"))
+
+          settings =
+            Enum.filter(
+              navigation,
+              &(&1.id in ~w(settings-models settings-execution settings-research settings-runtime))
+            )
+
+          account = Enum.filter(navigation, &(&1.id == "account-sign-out"))
+
           view_items ++
-            navigation ++
+            deck ++
             new_project ++
-            projects ++ new_session ++ session_items ++ confirmations ++ command_items
+            projects ++
+            new_session ++
+            session_items ++
+            confirmations ++ command_items ++ settings ++ account
       end
 
     Enum.uniq_by(rows, & &1.id)
@@ -5412,7 +5447,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       else:
         Enum.filter(rows, fn row ->
           String.contains?(String.downcase(row.title), normalized) or
-            String.contains?(String.downcase(row.id), normalized)
+            String.contains?(String.downcase(Map.get(row, :subtitle, "")), normalized)
         end)
   end
 
@@ -5466,7 +5501,11 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     Enum.filter(rows, fn row ->
       String.trim(q) == "" or
-        String.contains?(String.downcase(row.title), String.downcase(String.trim(q)))
+        String.contains?(String.downcase(row.title), String.downcase(String.trim(q))) or
+        String.contains?(
+          String.downcase(Map.get(row, :subtitle, "")),
+          String.downcase(String.trim(q))
+        )
     end)
   end
 

@@ -21,10 +21,11 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       s3 = create_session_fixture(p1, %{title: "Session 3"})
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{s1.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Rapidly switch between sessions via handle_params (render_patch)
       for target_session <- [s2, s3, s1, s2, s3, s1] do
-        render_patch(view, ~p"/sessions/#{target_session.id}")
+        render_patch(view, ~p"/sessions/#{target_session.id}?view=terminal")
 
         assert has_element?(
                  view,
@@ -42,9 +43,10 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       s2 = create_session_fixture(p, %{title: "Active S2"})
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{s1.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Switch to s2
-      render_patch(view, ~p"/sessions/#{s2.id}")
+      render_patch(view, ~p"/sessions/#{s2.id}?view=terminal")
       assert has_element?(view, "#terminal-xterm-container[data-session-id='#{s2.id}']")
 
       # Flood s1 terminal PubSub with 50 chunks
@@ -78,9 +80,10 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{s1.id}")
       assert render(view) =~ "Project Alpha"
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Switch to cross-project session
-      render_patch(view, ~p"/sessions/#{s2.id}")
+      render_patch(view, ~p"/sessions/#{s2.id}?view=terminal")
       assert render(view) =~ "Project Beta"
       assert has_element?(view, "#terminal-xterm-container[data-session-id='#{s2.id}']")
       assert Process.alive?(view.pid)
@@ -111,7 +114,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       actions = [
         "iex -S mix",
@@ -138,7 +141,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Rapid lifecycle manipulation
       for _ <- 1..10 do
@@ -158,7 +161,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       special_payloads = [
         # SIGINT (Ctrl+C)
@@ -189,7 +192,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Malformed resize params
       render_hook(view, "terminal_resize", %{"cols" => -100, "rows" => 0})
@@ -217,7 +220,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Send 40 distinct commands
       for i <- 1..40 do
@@ -243,7 +246,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # 1. Initially :user -> no banner
       refute has_element?(view, "#terminal-agent-banner")
@@ -286,7 +289,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Set occupant directly in TerminalSession
       _ = TerminalServer.ensure_started(session.id, workspace_path: project.root_path)
@@ -308,7 +311,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       for i <- 1..30 do
         agent_name = "RapidAgent_#{i}"
@@ -335,7 +338,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Start an agent command in a background task
       task =

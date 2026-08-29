@@ -100,6 +100,34 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
 
     refute has_element?(view, "#workspace-sidebar")
     refute has_element?(view, "#workspace-desktop-tabs")
+    assert has_element?(view, "#new-session-btn[type='button']")
+    assert has_element?(view, "#new-session-btn", "New Session")
+  end
+
+  test "server result order, rendered option order, and arrow selection stay identical", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "toggle_command_palette")
+
+    expected = Enum.map(:sys.get_state(view.pid).socket.assigns.command_palette_results, & &1.id)
+
+    rendered =
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#command-palette-results [data-palette-item-id]")
+      |> Enum.map(&(&1 |> LazyHTML.attribute("data-palette-item-id") |> List.first()))
+
+    assert rendered == expected
+
+    render_click(view, "command_palette_navigate", %{"direction" => "down"})
+    assert :sys.get_state(view.pid).socket.assigns.command_palette_selected_index == 1
+    assert has_element?(view, "#command-palette-input[aria-activedescendant='palette-item-1']")
+    assert has_element?(view, "#palette-item-1[aria-selected='true']")
   end
 
   test "palette selection indices are bounded and malformed input is a no-op", %{
@@ -184,6 +212,43 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
              view,
              "[data-palette-item-id='delete-session-#{session.id}'][data-confirm='Delete Keep this title? This cannot be undone.']"
            )
+
+    render_change(view, "command_palette_search", %{"query" => session.id})
+    refute has_element?(view, "[data-palette-item-id='delete-session-#{session.id}']")
+  end
+
+  test "switchboard materials are theme-token driven", %{conn: conn, workspace_path: path} do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "toggle_command_palette")
+
+    assert has_element?(view, "#command-palette-dialog.sf-chassis")
+    assert has_element?(view, "#command-palette-input.min-h-11")
+
+    source = File.read!("lib/iex_code_web/components/workspace_components.ex")
+    [palette_source | _] = source |> String.split("def command_palette", parts: 2) |> tl()
+    palette_source = palette_source |> String.split("defp palette_groups", parts: 2) |> hd()
+    refute palette_source =~ ~r/#[0-9a-fA-F]{6}/
+    refute palette_source =~ "gradient"
+  end
+
+  test "account selection uses the native logout form seam", %{conn: conn, workspace_path: path} do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+    render_click(view, "toggle_command_palette", %{"category" => "settings_account"})
+
+    index =
+      view.pid
+      |> :sys.get_state()
+      |> get_in([Access.key!(:socket), Access.key!(:assigns), :command_palette_results])
+      |> Enum.find_index(&(&1.id == "account-sign-out"))
+
+    render_click(view, "command_palette_select_item", %{"index" => index})
+    assert_push_event(view, "palette_submit_logout", %{})
+    assert has_element?(view, "#workspace-logout-form[action='/logout'][method='post']")
   end
 
   test "settings and logout rows are trusted route/form controls", %{
@@ -211,6 +276,7 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
     html = render(view)
     assert has_element?(view, "#workspace-logout-form[action='/logout'][method='post']")
     assert has_element?(view, "#workspace-logout-form input[name='_csrf_token']")
+    assert has_element?(view, "#workspace-logout-form-button.sf-control.min-h-11[type='submit']")
 
     refute html =~ "workspace-logout-form[href"
   end

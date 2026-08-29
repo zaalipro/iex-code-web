@@ -37,7 +37,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       workspace_path: path
     } do
       # 1. Switch to Files view
-      view |> element("#tab-btn-files") |> render_click()
+      view |> element("#instrument-card-files") |> render_click()
 
       # 2. Select file
       view
@@ -90,7 +90,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       view: view
     } do
       # 1. Switch to Changes view
-      view |> element("#tab-btn-changes") |> render_click()
+      view |> element("#instrument-card-changes") |> render_click()
 
       html = render(view)
       assert html =~ "lib/demo_worker.ex"
@@ -149,7 +149,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       session: session
     } do
       # 1. Switch to Swarm tab & open goal modal
-      view |> element("#tab-btn-swarm") |> render_click()
+      view |> element("#instrument-card-swarm") |> render_click()
 
       render_change(view, "update_run_setup", %{
         "run_setup" => %{
@@ -210,6 +210,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       session: session
     } do
       start_run_dispatcher!()
+      render_click(view, "switch_tab", %{"tab" => "swarm"})
       render_click(view, "open_goal_modal")
 
       view
@@ -249,6 +250,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       session: session
     } do
       start_run_dispatcher!()
+      render_click(view, "switch_tab", %{"tab" => "swarm"})
       render_click(view, "open_goal_modal")
 
       view
@@ -332,7 +334,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
 
     test "pauses, resumes, and cancels active session execution", %{view: view} do
       # 1. Switch to Swarm tab
-      view |> element("#tab-btn-swarm") |> render_click()
+      view |> element("#instrument-card-swarm") |> render_click()
 
       # 2. Pause session
       render_click(view, "pause_session")
@@ -370,7 +372,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
 
   describe "UI Control Actions & Dead Button Elimination" do
     test "switches calendar months and dates", %{view: view} do
-      view |> element("#tab-btn-calendar") |> render_click()
+      view |> element("#instrument-card-calendar") |> render_click()
 
       # Next month
       render_click(view, "calendar_next_month")
@@ -397,6 +399,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
         })
 
       # Open drawer
+      render_click(view, "switch_tab", %{"tab" => "kanban"})
       render_click(view, "open_task_drawer", %{"id" => task.id})
       assert render(view) =~ "Drawer Test Task"
 
@@ -415,18 +418,16 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       assert Kanban.get_task(task.id) == nil
     end
 
-    test "toggles prompt bar tool pills and usage history modal", %{view: view} do
+    test "toggles prompt bar tool pills while retired usage modal stays absent", %{view: view} do
       # Toggle tool pills
       render_click(view, "toggle_tool", %{"tool" => "ast_search"})
       render_click(view, "toggle_tool", %{"tool" => "swarm"})
 
-      # Toggle usage history
-      render_click(view, "toggle_all_usage_modal")
-      assert render(view) =~ "Usage History" or render(view) =~ "OBSERVED SESSION TOKENS"
+      refute has_element?(view, "#all-usage-modal")
     end
 
     test "executes terminal commands, handles replay and stop", %{view: view} do
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # Execute terminal command
       view
@@ -449,7 +450,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       session: session
     } do
       # Switch to chat tab
-      view |> element("#tab-btn-chat") |> render_click()
+      view |> element("#instrument-card-chat") |> render_click()
 
       # Simulate message with reasoning
       {:ok, msg} =

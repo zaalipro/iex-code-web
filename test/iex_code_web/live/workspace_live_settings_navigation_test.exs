@@ -69,4 +69,20 @@ defmodule IexCodeWeb.WorkspaceLiveSettingsNavigationTest do
     view |> element("[data-palette-item-id='settings-research']") |> render_click()
     assert_redirect(view, "/sessions/#{session.id}/settings#research")
   end
+
+  test "runtime trigger navigates exactly and the workbench action is truthful", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+    view |> element("#runtime-switchboard-trigger") |> render_click()
+    assert_redirect(view, "/sessions/#{session.id}/settings#runtime")
+
+    {:ok, workbench, _html} = live(conn, ~p"/sessions/#{session.id}?view=kanban")
+    assert has_element?(workbench, "#return-to-instrument-deck-action")
+    refute has_element?(workbench, "#new-mission-button")
+  end
 end

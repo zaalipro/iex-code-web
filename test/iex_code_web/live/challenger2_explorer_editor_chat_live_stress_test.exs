@@ -49,7 +49,7 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
 
       # Switch to Files tab
       view
-      |> element("#tab-btn-files")
+      |> element("#instrument-card-files")
       |> render_click()
 
       # Initially, folders are expanded by default on mount
@@ -103,7 +103,7 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-files")
+      |> element("#instrument-card-files")
       |> render_click()
 
       # Filter by "deep_mod" using filter_files event hook
@@ -136,7 +136,7 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{empty_sess.id}")
 
       view
-      |> element("#tab-btn-files")
+      |> element("#instrument-card-files")
       |> render_click()
 
       rendered = render(view)
@@ -158,7 +158,7 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-files")
+      |> element("#instrument-card-files")
       |> render_click()
 
       # Open file 1: lib/demo/sample.ex
@@ -259,6 +259,7 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
            workspace_path: path
          } do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "files"})
 
       # Open sample.ex in editor
       view
@@ -311,6 +312,7 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       session: session
     } do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "files"})
 
       view
       |> render_hook("select_file", %{"path" => "lib/demo/sample.ex"})

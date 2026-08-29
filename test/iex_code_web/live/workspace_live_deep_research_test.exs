@@ -28,10 +28,7 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-    assert has_element?(view, "#sidebar-tab-research")
-    assert has_element?(view, "#tab-btn-research")
-
-    view |> element("#tab-btn-research") |> render_click()
+    view |> element("#instrument-card-research") |> render_click()
     assert_patch(view, ~p"/sessions/#{session.id}/research")
 
     assert has_element?(view, "#deep-research-page")
@@ -54,12 +51,12 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
 
     assert has_element?(view, "#deep-research-page")
-    assert has_element?(view, "#sidebar-tab-research[aria-current='page']")
+    assert has_element?(view, "#mission-strip[data-active-view='research']")
     assert has_element?(view, "#deep-research-form")
 
     render_patch(view, ~p"/sessions/#{session.id}")
-    assert has_element?(view, "#sidebar-tab-kanban[aria-current='page']")
-    refute has_element?(view, "#deep-research-page")
+    assert has_element?(view, "#mission-strip[data-active-view='deck']")
+    assert has_element?(view, "#instrument-deck")
   end
 
   test "session patch clears attachments and refreshes the session-scoped report library", %{
@@ -124,7 +121,7 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-research") |> render_click()
+    view |> element("#instrument-card-research") |> render_click()
 
     html =
       view
@@ -420,7 +417,7 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    view |> element("#tab-btn-research") |> render_click()
+    view |> element("#instrument-card-research") |> render_click()
 
     assert has_element?(
              view,

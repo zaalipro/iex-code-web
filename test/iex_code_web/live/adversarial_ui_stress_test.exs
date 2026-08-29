@@ -32,7 +32,6 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
       modals_and_popovers = [
         "toggle_workspace_menu",
         "toggle_coach_menu",
-        "toggle_all_usage_modal",
         "toggle_date_picker_popover",
         "toggle_custom_time",
         "open_goal_modal",
@@ -40,7 +39,6 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
         "open_cancel_modal",
         "close_cancel_modal",
         "toggle_new_task_modal",
-        "toggle_settings_modal",
         "toggle_project_modal",
         "open_project_modal",
         "close_project_modal",
@@ -53,6 +51,10 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
           render_click(view, action, %{})
         end
       end
+
+      {:ok, settings_view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(settings_view, "toggle_settings_modal")
+      assert_redirect(settings_view, "/sessions/#{session.id}/settings#execution")
 
       # 3. Model switches and tool toggles
       render_click(view, "change_model", %{
@@ -107,6 +109,7 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
       workspace_write_file(path, "lib/legit_module.ex", "defmodule Legit do\n  :ok\nend")
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "files"})
 
       adversarial_paths = [
         "/etc/passwd",

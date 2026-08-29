@@ -369,26 +369,28 @@ defmodule IexCodeWeb.InstrumentComponents do
     <header
       id="mission-strip"
       data-active-view={@active_view}
-      class="flex min-w-0 flex-wrap items-center gap-3 border-b border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-4 py-3 text-[var(--sf-text-primary)] md:gap-4 md:px-6"
+      class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-4 py-3 text-[var(--sf-text-primary)] lg:grid-cols-[auto_minmax(16rem,1fr)_auto_auto_auto] lg:items-center lg:px-6"
     >
-      <button
-        id="signal-foundry-mark"
-        type="button"
-        phx-click="toggle_command_palette"
-        aria-label="Open IexCode Signal Foundry command palette"
-        class="sf-control inline-flex min-h-11 items-center gap-2 px-3 text-sm font-semibold"
-      >
-        <span aria-hidden="true" class="sf-live-mark h-2 w-2 rounded-full"></span>
-        <span>IexCode</span>
-      </button>
-      <button
-        id="all-instruments-trigger"
-        type="button"
-        phx-click="toggle_command_palette"
-        class="sf-control min-h-11 px-3 text-sm"
-      >All instruments</button>
+      <div class="flex min-w-0 items-center gap-2">
+        <button
+          id="signal-foundry-mark"
+          type="button"
+          phx-click="toggle_command_palette"
+          aria-label="Open IexCode Signal Foundry command palette"
+          class="sf-control inline-flex min-h-11 shrink-0 items-center gap-2 px-3 text-sm font-semibold"
+        >
+          <span aria-hidden="true" class="sf-live-mark h-2 w-2 rounded-full"></span>
+          <span>IexCode</span>
+        </button>
+        <button
+          id="all-instruments-trigger"
+          type="button"
+          phx-click="toggle_command_palette"
+          class="sf-control min-h-11 truncate px-3 text-sm"
+        >All instruments</button>
+      </div>
 
-      <div class="flex min-w-0 flex-1 basis-[16rem] items-center gap-1">
+      <div class="col-span-2 flex min-w-0 items-center gap-1 lg:col-span-1">
         <button
           id="project-switchboard-trigger"
           type="button"
@@ -411,28 +413,28 @@ defmodule IexCodeWeb.InstrumentComponents do
         </button>
       </div>
 
-      <div class="flex min-h-11 items-center gap-2" aria-controls="connection-status">
-        <span class="sf-success-mark h-2 w-2 rounded-full" aria-hidden="true"></span>
-        <span class="sf-body-copy text-sm">Connected</span>
+      <div class="flex min-w-0 items-center gap-2">
+        <div class="flex min-h-11 shrink-0 items-center gap-2" aria-controls="connection-status">
+          <span class="sf-success-mark h-2 w-2 rounded-full" aria-hidden="true"></span>
+          <span class="sf-body-copy text-sm">Connected</span>
+        </div>
+        <button
+          id="runtime-switchboard-trigger"
+          type="button"
+          phx-click="open_runtime_settings"
+          aria-label="Open runtime settings"
+          class="sf-control min-h-11 min-w-0 px-3 text-left"
+        >
+          <div data-runtime-label class="sf-body-copy truncate text-sm font-semibold">
+            {runtime_label(@runtime)}
+          </div>
+          <%= if @dispatcher_summary do %>
+            <div data-dispatcher-summary class="sf-metadata mt-1 truncate">{@dispatcher_summary}</div>
+          <% end %>
+        </button>
       </div>
 
-      <button
-        id="runtime-switchboard-trigger"
-        type="button"
-        phx-click="toggle_command_palette"
-        phx-value-category="settings_account"
-        aria-label="Open runtime settings"
-        class="sf-control min-h-11 min-w-0 px-3 text-left"
-      >
-        <div data-runtime-label class="sf-body-copy text-sm font-semibold">
-          {runtime_label(@runtime)}
-        </div>
-        <%= if @dispatcher_summary do %>
-          <div data-dispatcher-summary class="sf-metadata mt-1">{@dispatcher_summary}</div>
-        <% end %>
-      </button>
-
-      <div class="flex items-center gap-1">
+      <div class="flex items-center justify-end gap-1">
         <button
           id="theme-toggle-dark"
           type="button"
@@ -451,22 +453,24 @@ defmodule IexCodeWeb.InstrumentComponents do
         >Light</button>
       </div>
 
-      <button
-        id="command-palette-trigger"
-        type="button"
-        phx-click="toggle_command_palette"
-        aria-label="Open command palette, Cmd/Ctrl+K"
-        class="sf-control min-h-11 px-3 text-sm"
-      >Cmd/Ctrl+K</button>
-      {render_slot(@primary_action)}
-      <button
-        id="profile-settings-trigger"
-        type="button"
-        phx-click="toggle_command_palette"
-        phx-value-category="settings_account"
-        aria-label="Open profile and account settings"
-        class="sf-control min-h-11 min-w-11 px-3 text-sm"
-      >Profile</button>
+      <div class="col-span-2 flex min-w-0 items-center justify-end gap-1 lg:col-span-1">
+        <button
+          id="command-palette-trigger"
+          type="button"
+          phx-click="toggle_command_palette"
+          aria-label="Open command palette, Cmd/Ctrl+K"
+          class="sf-control min-h-11 px-3 font-mono text-xs"
+        >Cmd/Ctrl+K</button>
+        {render_slot(@primary_action)}
+        <button
+          id="profile-settings-trigger"
+          type="button"
+          phx-click="toggle_command_palette"
+          phx-value-category="settings_account"
+          aria-label="Open profile and account settings"
+          class="sf-control min-h-11 min-w-11 px-3 text-sm"
+        >Profile</button>
+      </div>
     </header>
     """
   end

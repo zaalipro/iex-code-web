@@ -158,13 +158,9 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     refute "app.db-wal" in files
     refute "erl_crash.dump" in files
 
-    render_click(view, "toggle_all_usage_modal")
-    assigns = live_assigns(view)
-    assert assigns.show_all_usage_modal
-    assert is_list(assigns.all_usage_history)
-
-    render_click(view, "close_all_usage_modal")
-    refute live_assigns(view).show_all_usage_modal
+    refute Map.has_key?(live_assigns(view), :show_all_usage_modal)
+    {:ok, settings_view, _html} = live(conn, ~p"/sessions/#{session.id}/settings#usage")
+    assert has_element?(settings_view, "#usage")
   end
 
   test "chat retains a byte-bounded preview while the inspector retrieves the durable body", %{

@@ -1894,6 +1894,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
   """
   attr :show, :boolean, default: false
   attr :query, :string, default: ""
+  attr :search_form, :map, required: true
   attr :category, :string, default: "all"
   attr :results, :list, default: []
   attr :selected_index, :integer, default: 0
@@ -1915,7 +1916,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
       <%= if @show do %>
         <div
           id="command-palette-modal"
-          class="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-[7vh] backdrop-blur-md"
+          class="fixed inset-0 z-50 flex items-start justify-center bg-[var(--sf-shadow)] px-4 pt-[7vh] backdrop-blur-md"
         >
           <div class="fixed inset-0" phx-click="close_command_palette" aria-hidden="true"></div>
           <div
@@ -1928,26 +1929,29 @@ defmodule IexCodeWeb.WorkspaceComponents do
             data-sheet-close-event="close_command_palette"
             data-sheet-return-id="command-palette-trigger"
             data-sheet-background-id="workspace-shell"
-            class="relative z-10 flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden rounded-[1.75rem] border border-[#30363d] bg-[#0d1117] shadow-2xl shadow-black/70"
+            class="sf-chassis relative z-10 flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden"
             phx-click-away="close_command_palette"
           >
             <h2 id="command-palette-title" class="sr-only">Signal Foundry switchboard</h2>
             <p id="command-palette-description" class="sr-only">
               Search instruments, projects, sessions, commands, settings, and account actions.
             </p>
-            <div class="flex min-h-16 items-center gap-3 border-b border-[#21262d] bg-[#11151c] px-5">
-              <.icon name="hero-magnifying-glass" class="size-5 shrink-0 text-[#ff8a68]" />
-              <form
+            <div class="flex min-h-16 items-center gap-3 border-b border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-5">
+              <.icon
+                name="hero-magnifying-glass"
+                class="size-5 shrink-0 text-[var(--sf-text-secondary)]"
+              />
+              <.form
+                for={@search_form}
                 id="command-palette-form"
                 phx-change="command_palette_search"
                 phx-submit="command_palette_submit_noop"
                 class="flex-1"
               >
-                <input
+                <.input
+                  field={@search_form[:query]}
                   id="command-palette-input"
                   type="text"
-                  name="query"
-                  value={@query}
                   role="combobox"
                   aria-label="Search Signal Foundry switchboard"
                   aria-autocomplete="list"
@@ -1960,19 +1964,19 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   autocomplete="off"
                   spellcheck="false"
                   placeholder="Find an instrument, project, session, or command"
-                  class="w-full border-0 bg-transparent p-0 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-0"
+                  class="min-h-11 w-full border-0 bg-transparent p-0 text-sm text-[var(--sf-text-primary)] placeholder:text-[var(--sf-text-secondary)] focus:outline-none focus:ring-0"
                 />
-              </form>
+              </.form>
               <button
                 id="command-palette-close"
                 type="button"
                 phx-click="close_command_palette"
                 aria-label="Close command palette"
-                class="min-h-11 rounded-xl border border-[#30363d] px-3 font-mono text-[11px] text-gray-400 transition-colors hover:text-white"
+                class="sf-control min-h-11 px-3 font-mono text-xs"
               >ESC</button>
             </div>
 
-            <div class="flex items-center gap-1.5 overflow-x-auto border-b border-[#21262d] px-5 py-2.5 font-mono text-[11px]">
+            <div class="flex items-center gap-1.5 overflow-x-auto border-b border-[var(--sf-hairline)] px-5 py-2.5 text-xs">
               <%= for {category, label} <- [{"all", "All"}, {"views", "Instruments"}, {"projects", "Projects"}, {"sessions", "Sessions"}, {"actions", "Commands"}, {"settings_account", "Settings / Account"}] do %>
                 <button
                   type="button"
@@ -1981,9 +1985,10 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   aria-pressed={to_string(@category == category)}
                   class={[
                     "min-h-11 shrink-0 rounded-xl border px-3 transition-colors",
-                    @category == category && "border-[#ff8a68]/50 bg-[#ff8a68]/10 text-[#ffb29d]",
+                    @category == category &&
+                      "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] text-[var(--sf-live-text)]",
                     @category != category &&
-                      "border-transparent text-gray-500 hover:border-[#30363d] hover:text-gray-200"
+                      "border-transparent text-[var(--sf-text-secondary)] hover:border-[var(--sf-hairline)] hover:text-[var(--sf-text-primary)]"
                   ]}
                 >{label}</button>
               <% end %>
@@ -1996,7 +2001,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
               class="flex-1 overflow-y-auto p-4 sm:p-5"
             >
               <%= if @results == [] do %>
-                <div class="py-16 text-center font-mono text-xs text-gray-500">
+                <div class="py-16 text-center text-sm text-[var(--sf-text-secondary)]">
                   No matching switchboard controls
                 </div>
               <% else %>
@@ -2004,7 +2009,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   <section aria-labelledby="switchboard-instruments-heading">
                     <h3
                       id="switchboard-instruments-heading"
-                      class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500"
+                      class="sf-metadata mb-2 text-xs font-semibold uppercase tracking-[0.16em]"
                     >
                       Instruments
                     </h3>
@@ -2036,7 +2041,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   >
                     <h3
                       id={"switchboard-#{group_id}-heading"}
-                      class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500"
+                      class="sf-metadata mb-2 text-xs font-semibold uppercase tracking-[0.16em]"
                     >
                       {label}
                     </h3>
@@ -2053,7 +2058,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 <% end %>
               <% end %>
             </div>
-            <div class="flex items-center justify-between border-t border-[#21262d] px-5 py-3 font-mono text-[10px] text-gray-600">
+            <div class="sf-metadata flex items-center justify-between border-t border-[var(--sf-hairline)] px-5 py-3 font-mono text-xs">
               <span>↑↓ navigate · enter select · esc close</span><span>Signal Foundry</span>
             </div>
           </div>
@@ -2077,8 +2082,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
       data-palette-item-id={@item.id}
       class={[
         "flex min-h-12 items-center rounded-xl border px-3 transition-colors",
-        @selected && "border-[#ff8a68]/50 bg-[#ff8a68]/10",
-        !@selected && "border-transparent hover:bg-[#161b22]"
+        @selected && "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)]",
+        !@selected && "border-transparent hover:bg-[var(--sf-raised-control)]"
       ]}
     >
       <IexCodeWeb.Layouts.logout_button id="workspace-logout-form" class="w-full" />
@@ -2086,9 +2091,44 @@ defmodule IexCodeWeb.WorkspaceComponents do
     """
   end
 
+  defp palette_option(%{item: %{id: "new-session"}} = assigns) do
+    ~H"""
+    <div
+      id={"palette-item-#{@index}"}
+      role="option"
+      aria-selected={to_string(@selected)}
+      tabindex="-1"
+      data-palette-item-id={@item.id}
+      class={[
+        "rounded-xl border transition-colors",
+        @selected && "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)]",
+        !@selected && "border-transparent hover:bg-[var(--sf-raised-control)]"
+      ]}
+    >
+      <button
+        id="new-session-btn"
+        type="button"
+        phx-click={
+          JS.push("command_palette_select_item", page_loading: true, value: %{index: @index})
+        }
+        class="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--sf-text-primary)]"
+      >
+        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)]"><.icon
+          name={@item.icon}
+          class="size-4"
+        /></span>
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm font-semibold">{@item.title}</span>
+          <span class="block truncate text-xs text-[var(--sf-text-secondary)]">{@item.subtitle}</span>
+        </span>
+      </button>
+    </div>
+    """
+  end
+
   defp palette_option(assigns) do
     ~H"""
-    <div id={if(@item.id == "new-session", do: "new-session-btn", else: nil)} class="contents">
+    <div class="contents">
       <button
         id={"palette-item-#{@index}"}
         type="button"
@@ -2114,25 +2154,25 @@ defmodule IexCodeWeb.WorkspaceComponents do
         }
         class={[
           "group flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors",
-          @selected && "border-[#ff8a68]/50 bg-[#ff8a68]/10 text-white",
-          !@selected && "border-transparent text-gray-300 hover:border-[#30363d] hover:bg-[#161b22]"
+          @selected &&
+            "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] text-[var(--sf-text-primary)]",
+          !@selected &&
+            "border-transparent text-[var(--sf-text-primary)] hover:border-[var(--sf-hairline)] hover:bg-[var(--sf-raised-control)]"
         ]}
       >
-        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[#30363d] bg-[#161b22] text-[#ff9b7f]"><.icon
+        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)]"><.icon
           name={Map.get(@item, :icon, "hero-cube")}
           class="size-4"
         /></span>
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-semibold">{@item.title}</span>
-          <span class="block truncate font-mono text-[10px] text-gray-500">{Map.get(
+          <span class="block truncate text-xs text-[var(--sf-text-secondary)]">{Map.get(
             @item,
             :subtitle,
             to_string(@item.category)
           )}</span>
         </span>
-        <span class="shrink-0 font-mono text-[9px] uppercase tracking-wider text-gray-600">{to_string(
-          @item.category
-        )}</span>
+        <span class="sf-metadata shrink-0 text-xs uppercase tracking-wider">{to_string(@item.category)}</span>
       </button>
     </div>
     """

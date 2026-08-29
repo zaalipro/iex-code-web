@@ -68,7 +68,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       refute initial.terminal_available?
       assert initial.instrument_summaries["terminal"].primary == "Terminal unavailable"
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
       _ = :sys.get_state(view.pid)
       attached = :sys.get_state(view.pid).socket.assigns
 
@@ -87,12 +87,12 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
 
       refute TerminalServer.running?(session.id)
 
-      view |> element("#tab-btn-terminal") |> render_click()
+      view |> element("#instrument-card-terminal") |> render_click()
 
       assert pid = TerminalServer.whereis(session.id)
       assert {:ok, %{viewer_count: 1}} = TerminalSession.get_state(session.id)
 
-      view |> element("#tab-btn-kanban") |> render_click()
+      render_click(view, "switch_tab", %{"tab" => "kanban"})
       _ = :sys.get_state(pid)
       assert {:ok, %{viewer_count: 0}} = TerminalSession.get_state(session.id)
     end
@@ -108,7 +108,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
 
       # Switch to terminal tab
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Assert outer session container and xterm container exist
@@ -128,7 +128,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Badges
@@ -163,7 +163,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Send raw input through hook event
@@ -180,7 +180,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Trigger resize hook event
@@ -199,7 +199,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Click quick action buttons
@@ -228,7 +228,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Click clear button
@@ -245,7 +245,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Click restart button
@@ -262,7 +262,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Click kill button
@@ -279,7 +279,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       render_hook(view, "request_terminal_history", %{})
@@ -363,7 +363,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Initially, occupant is :user so banner should not be present
@@ -397,7 +397,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Broadcast terminal exit
@@ -415,7 +415,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("#tab-btn-terminal")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       send(view.pid, {:terminal_cleared, %{session_id: session.id}})

@@ -21,14 +21,25 @@
         active_view={@active_view}
       >
         <:primary_action>
-          <button
-            id="new-mission-button"
-            type="button"
-            phx-click="open_goal_modal"
-            class="sf-control min-h-11 px-4 text-sm font-semibold"
-          >
-            New mission
-          </button>
+          <%= if @active_view == "deck" do %>
+            <button
+              id="new-mission-button"
+              type="button"
+              phx-click="open_goal_modal"
+              class="sf-control min-h-11 px-4 text-sm font-semibold"
+            >
+              New mission
+            </button>
+          <% else %>
+            <button
+              id="return-to-instrument-deck-action"
+              type="button"
+              phx-click="return_to_instrument_deck"
+              class="sf-control min-h-11 px-4 text-sm font-semibold"
+            >
+              Return to instruments
+            </button>
+          <% end %>
         </:primary_action>
       </.mission_strip>
 
@@ -4470,6 +4481,7 @@
   <.command_palette
     show={@show_command_palette}
     query={@command_palette_query}
+    search_form={@command_palette_form}
     category={@command_palette_category}
     results={@command_palette_results}
     selected_index={@command_palette_selected_index}
