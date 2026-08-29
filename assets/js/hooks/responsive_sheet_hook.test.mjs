@@ -88,12 +88,22 @@ class FakeElement extends FakeTarget {
   }
 }
 
+function effectivelyInert(element) {
+  if (!element) return false
+  return Boolean(element?.inert) || effectivelyInert(element?.parentElement)
+}
+
+function effectivelyAriaHidden(element) {
+  if (!element) return false
+  return element?.getAttribute?.("aria-hidden") === "true" || effectivelyAriaHidden(element?.parentElement)
+}
+
 class FakeMedia extends FakeTarget {
   constructor(matches) { super(); this.matches = matches; this.media = "(max-width: 639px)" }
   change(matches) { this.matches = matches; this.emit("change", {matches, media: this.media}) }
 }
 
-function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = false, noFocusables = false, dialog = false} = {}) {
+function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = false, noFocusables = false, dialog = false, confirmationTopology = false} = {}) {
   const media = new FakeMedia(viewportWidth === undefined ? mobile : viewportWidth <= 639)
   const document = new FakeTarget()
   const root = new FakeElement("root")
@@ -114,7 +124,16 @@ function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = 
   last.focusable = !noFocusables
   first.dataset.sheetInitialFocus = ""
   sheet.append(first, last)
-  root.append(background, trigger, sheet)
+  const workspaceViews = new FakeElement("workspace-views")
+  const missionControl = new FakeElement("mission-control")
+  missionControl.focusable = true
+  if (confirmationTopology) {
+    workspaceViews.append(trigger)
+    background.append(missionControl, workspaceViews)
+    root.append(background, sheet)
+  } else {
+    root.append(background, trigger, sheet)
+  }
   root.setOwnerDocument(document)
 
   document.activeElement = trigger
@@ -136,7 +155,7 @@ function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = 
   const hook = Object.create(ResponsiveSheet)
   hook.el = sheet
   hook.pushEvent = (event, payload) => pushed.push([event, payload])
-  return {hook, document, media, root, background, trigger, sheet, first, last, frames, cancelled, flushFrames, pushed}
+  return {hook, document, media, root, background, workspaceViews, missionControl, trigger, sheet, first, last, frames, cancelled, flushFrames, pushed}
 }
 
 test("exports the named and default ResponsiveSheet hook", () => {
@@ -290,6 +309,7 @@ test("destroyed cancels effects and returns focus only for an active mobile shee
   assert.equal(h.frames.size, 1)
   h.flushFrames()
   assert.deepEqual(h.trigger.focusCalls, [{preventScroll: true}])
+  assert.equal(h.document.activeElement, h.trigger)
 
   h.hook.destroyed()
   h.flushFrames()
@@ -300,6 +320,48 @@ test("destroyed cancels effects and returns focus only for an active mobile shee
   desktop.hook.destroyed()
   desktop.flushFrames()
   assert.equal(desktop.trigger.focusCalls.length, 0)
+})
+
+test("mobile cancellation restores the full workspace shell and initiating delete trigger", () => {
+  const h = setup({confirmationTopology: true})
+  h.sheet.dataset.sheetReturnId = h.trigger.id
+  h.hook.mounted()
+
+  assert.equal(h.background.contains(h.missionControl), true)
+  assert.equal(h.workspaceViews.contains(h.trigger), true)
+  assert.equal(h.background.inert, true)
+  assert.equal(h.background.getAttribute("aria-hidden"), "true")
+  assert.equal(effectivelyInert(h.workspaceViews), true)
+  assert.equal(effectivelyInert(h.missionControl), true)
+  assert.equal(effectivelyAriaHidden(h.workspaceViews), true)
+  assert.equal(effectivelyAriaHidden(h.missionControl), true)
+
+  h.hook.destroyed()
+  assert.equal(h.background.inert, false)
+  assert.equal(h.background.hasAttribute("aria-hidden"), false)
+  assert.equal(effectivelyInert(h.workspaceViews), false)
+  assert.equal(effectivelyInert(h.missionControl), false)
+  h.flushFrames()
+  assert.deepEqual(h.trigger.focusCalls, [{preventScroll: true}])
+})
+
+test("mobile success reads the updated stable return ID before teardown", () => {
+  const h = setup({confirmationTopology: true})
+  const stable = new FakeElement("task-detail-title")
+  stable.focusable = true
+  h.workspaceViews.append(stable)
+  stable.setOwnerDocument(h.document)
+  h.hook.mounted()
+
+  h.sheet.dataset.sheetReturnId = stable.id
+  h.hook.destroyed()
+  h.flushFrames()
+
+  assert.deepEqual(h.trigger.focusCalls, [])
+  assert.deepEqual(stable.focusCalls, [{preventScroll: true}])
+  assert.equal(h.document.activeElement, stable)
+  assert.equal(h.background.inert, false)
+  assert.equal(h.background.hasAttribute("aria-hidden"), false)
 })
 
 test("controller-owned sheets do not race their controller's actual-opener return", () => {

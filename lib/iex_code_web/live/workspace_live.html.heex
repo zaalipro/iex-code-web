@@ -313,11 +313,10 @@
                             for={@task_move_form}
                             id={"move-task-form-#{task.id}"}
                             phx-submit="move_task"
-                            phx-keydown={
-                              JS.push("cancel_task_move", value: %{id: task.id})
-                              |> JS.focus(to: "#move-task-trigger-#{task.id}")
-                            }
-                            phx-key="Escape"
+                            phx-hook="TaskMoveReturn"
+                            data-task-id={task.id}
+                            data-task-move-cancel-event="cancel_task_move"
+                            data-task-move-return-id={"move-task-trigger-#{task.id}"}
                             class="kanban-move-form"
                           >
                             <.input field={@task_move_form[:id]} type="hidden" />
@@ -2113,7 +2112,7 @@
                   ]}></span>
                   {@selected_task.status}
                 </span>
-                <h2 id="task-detail-title" class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}>
+                <h2 id="task-detail-title" tabindex="-1" class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}>
                   Task details
                 </h2>
                 <span class={["font-mono text-sm text-[var(--sf-text-secondary)]"]}>#{String.slice(
@@ -2444,8 +2443,8 @@
       phx-hook="ResponsiveSheet"
       role="presentation"
       data-sheet-close-event="cancel_task_delete"
-      data-sheet-return-id={"kanban-channel-trigger-#{pending_task.status}"}
-      data-sheet-background-id="workspace-views"
+      data-sheet-return-id={"delete-task-trigger-#{pending_task.id}"}
+      data-sheet-background-id="workspace-shell"
       class="kanban-confirmation-overlay fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
     >
       <div
@@ -2468,21 +2467,34 @@
         </p>
         <div class="mt-6 flex justify-end gap-3">
           <button id="cancel-task-delete" type="button" phx-click="cancel_task_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
-          <button id="confirm-task-delete" type="button" phx-click="confirm_task_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete task</button>
+          <button
+            id="confirm-task-delete"
+            type="button"
+            phx-click={
+              JS.set_attribute(
+                {"data-sheet-return-id", "kanban-channel-trigger-#{pending_task.status}"},
+                to: "#task-delete-confirmation-#{pending_task.id}"
+              )
+              |> JS.push("confirm_task_delete")
+            }
+            class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
+          >
+            Delete task
+          </button>
         </div>
       </div>
     </div>
   <% end %>
 
   <%= if match?({:subtask, _, _}, @pending_task_confirmation) do %>
-    <% {:subtask, pending_subtask_task, pending_subtask_id} = @pending_task_confirmation %>
+    <% {:subtask, _pending_subtask_task, pending_subtask_id} = @pending_task_confirmation %>
     <div
       id={"subtask-delete-confirmation-#{pending_subtask_id}"}
       phx-hook="ResponsiveSheet"
       role="presentation"
       data-sheet-close-event="cancel_subtask_delete"
-      data-sheet-return-id="task-detail-title"
-      data-sheet-background-id="workspace-views"
+      data-sheet-return-id={"delete-subtask-trigger-#{pending_subtask_id}"}
+      data-sheet-background-id="workspace-shell"
       class="kanban-confirmation-overlay fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
     >
       <div
@@ -2503,7 +2515,20 @@
         <p class="mt-2 text-sm text-[var(--sf-text-secondary)]">This removes the selected checklist item.</p>
         <div class="mt-6 flex justify-end gap-3">
           <button id="cancel-subtask-delete" type="button" phx-click="cancel_subtask_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
-          <button id="confirm-subtask-delete" type="button" phx-click="confirm_subtask_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete subtask</button>
+          <button
+            id="confirm-subtask-delete"
+            type="button"
+            phx-click={
+              JS.set_attribute(
+                {"data-sheet-return-id", "task-detail-title"},
+                to: "#subtask-delete-confirmation-#{pending_subtask_id}"
+              )
+              |> JS.push("confirm_subtask_delete")
+            }
+            class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
+          >
+            Delete subtask
+          </button>
         </div>
       </div>
     </div>

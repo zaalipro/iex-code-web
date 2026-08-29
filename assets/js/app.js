@@ -10,6 +10,8 @@ import ResponsiveSheet, {
   responsiveSheetWillOwnFocus
 } from "./hooks/responsive_sheet_hook.mjs"
 import TaskMoveFocus from "./hooks/task_move_focus_hook.js"
+import TaskMoveReturn from "./hooks/task_move_return_hook.mjs"
+import {modalSheetReturnId, restoreModalFocus} from "./hooks/modal_focus_return.mjs"
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
@@ -73,6 +75,7 @@ const Hooks = {
   InstrumentDeck,
   ResponsiveSheet,
   TaskMoveFocus,
+  TaskMoveReturn,
   ModalFocus: {
     mounted() {
       this.mobileSheetDelegated = responsiveSheetOwnsFocus(
@@ -176,7 +179,7 @@ const Hooks = {
       cancelAnimationFrame(this.initialFocusFrame)
       const previouslyFocused = this.previouslyFocused
       const previouslyFocusedId = this.previouslyFocusedId
-      const fallbackReturnId = this.el.closest?.("[data-sheet-return-id]")?.dataset.sheetReturnId
+      const fallbackReturnId = modalSheetReturnId(this.el)
 
       requestAnimationFrame(() => {
         const openModal = document.querySelector("[data-modal-focus]")
@@ -185,11 +188,12 @@ const Hooks = {
           this.background.removeAttribute("aria-hidden")
         }
 
-        const restoredTarget = previouslyFocused?.isConnected
-          ? previouslyFocused
-          : previouslyFocusedId && document.getElementById(previouslyFocusedId)
-        const focusTarget = restoredTarget || (fallbackReturnId && document.getElementById(fallbackReturnId))
-        focusTarget?.focus({preventScroll: true})
+        restoreModalFocus({
+          document,
+          previouslyFocused,
+          previouslyFocusedId,
+          fallbackReturnId
+        })
       })
     }
   },

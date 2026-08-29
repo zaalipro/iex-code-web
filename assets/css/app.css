@@ -345,7 +345,6 @@
 
 .kanban-confirmation-dialog {
   max-height: min(88dvh, 36rem);
-  overflow-y: auto;
   overscroll-behavior: contain;
 }
 
@@ -1638,6 +1637,11 @@
   background-color: var(--sf-instrument-raised);
   box-shadow: inset 0 1px 0 var(--sf-inset-highlight), 0 28px 72px -40px var(--sf-shadow);
   color: var(--sf-text-primary);
+}
+
+.sf-chassis.kanban-confirmation-dialog {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .sf-workbench-header {

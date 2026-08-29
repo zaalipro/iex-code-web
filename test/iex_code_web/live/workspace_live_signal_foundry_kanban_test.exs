@@ -138,12 +138,18 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
     refute has_element?(view, "button#task-card-#{task.id} button")
     refute has_element?(view, "button#task-card-#{task.id} form")
     render_click(view, "open_task_move", %{"id" => task.id})
-    assert has_element?(view, "#move-task-form-#{task.id}")
-    assert has_element?(view, "#move-task-form-#{task.id}[phx-keydown][phx-key='Escape']")
 
     assert has_element?(
              view,
-             "#move-task-form-#{task.id}[phx-keydown*='move-task-trigger-#{task.id}']"
+             "#move-task-form-#{task.id}[phx-hook='TaskMoveReturn'][data-task-id='#{task.id}'][data-task-move-cancel-event='cancel_task_move'][data-task-move-return-id='move-task-trigger-#{task.id}']"
+           )
+
+    refute has_element?(view, "#move-task-form-#{task.id}[phx-keydown]")
+    refute has_element?(view, "#move-task-form-#{task.id}[phx-update='ignore']")
+
+    assert has_element?(
+             view,
+             "#move-task-form-#{task.id} .kanban-move-cancel[phx-click*='cancel_task_move'][phx-click*='move-task-trigger-#{task.id}']"
            )
 
     assert has_element?(view, "select[name='move_task[status]']")
@@ -155,6 +161,13 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
                "#move-task-status-#{task.id} option[value='#{status}']"
              )
     end
+
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    assert document
+           |> LazyHTML.query("[phx-hook='TaskMoveReturn']")
+           |> LazyHTML.to_tree()
+           |> length() == 1
 
     view
     |> form("#move-task-form-#{task.id}", %{
@@ -215,7 +228,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
     assert prior_announcement == "Moved Cancel to done"
     render_click(view, "cancel_task_move", %{"id" => Ecto.UUID.generate()})
     assert has_element?(view, "#move-task-form-#{task.id}")
-    view |> element("#move-task-form-#{task.id}") |> render_keydown(%{"key" => "Escape"})
+    render_click(view, "cancel_task_move", %{"id" => task.id})
     refute has_element?(view, "#move-task-form-#{task.id}")
     assert Kanban.get_task!(task.id).status == "done"
     assert assigns(view).expanded_task_status == prior_status
@@ -280,7 +293,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
 
     refute has_element?(view, "#task-detail-drawer[aria-modal='true']")
 
-    assert has_element?(view, "#task-detail-title")
+    assert has_element?(view, "#task-detail-title[tabindex='-1']")
     refute has_element?(view, "#task-detail-drawer[phx-update='ignore']")
     refute has_element?(view, "#task-detail-drawer[phx-hook='ModalFocus']")
   end
@@ -319,6 +332,19 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
     refute template =~ "xl:relative xl:z-auto xl:w-96"
   end
 
+  test "task move return hook registration stays additive and card focus remains separate" do
+    javascript = File.read!("assets/js/app.js")
+    move_return = File.read!("assets/js/hooks/task_move_return_hook.mjs")
+    card_focus = File.read!("assets/js/hooks/task_move_focus_hook.js")
+
+    assert javascript =~ ~S|import TaskMoveReturn from "./hooks/task_move_return_hook.mjs"|
+    assert javascript =~ "TaskMoveFocus,\n  TaskMoveReturn,"
+    assert javascript =~ "hooks: {...colocatedHooks, ...Hooks}"
+    assert move_return =~ "move-task-trigger-${this.taskId}"
+    assert card_focus =~ "const taskCardId = /^task-card-"
+    refute card_focus =~ "move-task-trigger-"
+  end
+
   test "task and subtask delete controls use authorized confirmation sheets", %{
     view: view,
     project: project,
@@ -345,7 +371,17 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
 
     assert has_element?(
              view,
-             "[id^='subtask-delete-confirmation-'][data-sheet-return-id='task-detail-title'] #cancel-subtask-delete"
+             "[id^='subtask-delete-confirmation-'][data-sheet-background-id='workspace-shell']"
+           )
+
+    assert has_element?(
+             view,
+             "[id^='subtask-delete-confirmation-'][data-sheet-background-id='workspace-shell'][data-sheet-return-id='delete-subtask-trigger-#{subtask_id}'] #cancel-subtask-delete"
+           )
+
+    assert has_element?(
+             view,
+             "#confirm-subtask-delete[phx-click*='set_attr'][phx-click*='task-detail-title'][phx-click*='subtask-delete-confirmation-#{subtask_id}'][phx-click*='confirm_subtask_delete']"
            )
 
     assert Kanban.get_task!(task.id).subtasks != []
@@ -353,7 +389,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
     refute has_element?(view, "[id^='subtask-delete-confirmation-']")
 
     render_click(view, "request_delete_subtask", %{"task_id" => task.id, "id" => subtask_id})
-    render_click(view, "confirm_subtask_delete")
+    view |> element("#confirm-subtask-delete") |> render_click()
     assert Kanban.get_task!(task.id).subtasks == []
 
     render_click(view, "request_delete_task", %{"id" => task.id})
@@ -361,7 +397,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
 
     assert has_element?(
              view,
-             "[id^='task-delete-confirmation-'][data-sheet-background-id='workspace-views'][data-sheet-return-id='kanban-channel-trigger-triage']"
+             "[id^='task-delete-confirmation-'][data-sheet-background-id='workspace-shell'][data-sheet-return-id='delete-task-trigger-#{task.id}']"
            )
 
     assert has_element?(
@@ -373,7 +409,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
 
     assert has_element?(
              view,
-             "[id^='task-delete-confirmation-'] #confirm-task-delete"
+             "[id^='task-delete-confirmation-'] #confirm-task-delete[phx-click*='set_attr'][phx-click*='kanban-channel-trigger-triage'][phx-click*='task-delete-confirmation-#{task.id}'][phx-click*='confirm_task_delete']"
            )
 
     refute has_element?(view, "#instrument-workbench-kanban [data-confirm]")
@@ -382,22 +418,28 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
     assert Kanban.get_task!(task.id)
 
     render_click(view, "request_delete_task", %{"id" => task.id})
-    render_click(view, "confirm_task_delete")
+    view |> element("#confirm-task-delete") |> render_click()
     assert Kanban.get_task(task.id) == nil
   end
 
   test "confirmation sheets preserve safe areas, bounded scrolling, and desktop focus fallback" do
     css = File.read!("assets/css/app.css")
     javascript = File.read!("assets/js/app.js")
+    modal_return = File.read!("assets/js/hooks/modal_focus_return.mjs")
 
     assert css =~
              ~r/\.kanban-confirmation-overlay\s*\{[^}]*safe-area-inset-top[^}]*safe-area-inset-right[^}]*safe-area-inset-bottom[^}]*safe-area-inset-left/s
 
-    assert css =~
-             ~r/\.kanban-confirmation-dialog\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/s
+    chassis_index = :binary.match(css, ".sf-chassis {") |> elem(0)
+    effective_index = :binary.match(css, ".sf-chassis.kanban-confirmation-dialog {") |> elem(0)
+    assert effective_index > chassis_index
 
-    assert javascript =~ ~S|closest?.("[data-sheet-return-id]")?.dataset.sheetReturnId|
-    assert javascript =~ "const focusTarget = restoredTarget ||"
+    assert css =~
+             ~r/\.sf-chassis\.kanban-confirmation-dialog\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s
+
+    assert javascript =~ "modalSheetReturnId(this.el)"
+    assert javascript =~ "restoreModalFocus({"
+    assert modal_return =~ "const focusTarget = restoredTarget ||"
   end
 
   test "legacy destructive event names only open pending confirmation", %{
