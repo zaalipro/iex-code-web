@@ -382,6 +382,7 @@ defmodule IexCodeWeb.AdversarialLiveviewStressTest do
 
       # Clean up scheduled task
       render_click(view, "delete_scheduled_task", %{"id" => created.id})
+      render_click(view, "confirm_calendar_task_delete")
       assert Kanban.get_task(created.id) == nil
       assert Process.alive?(view.pid)
     end

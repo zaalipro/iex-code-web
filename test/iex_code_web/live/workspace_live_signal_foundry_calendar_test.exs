@@ -106,6 +106,12 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
            |> length() == 1
 
     assert document |> LazyHTML.query("#calendar-grid") |> LazyHTML.to_tree() |> length() == 1
+
+    assert document
+           |> LazyHTML.query("#calendar-grid > .calendar-day")
+           |> LazyHTML.to_tree()
+           |> length() == 42
+
     assert document |> LazyHTML.query("#prompt-composer") |> LazyHTML.to_tree() |> length() == 1
 
     assert has_element?(
@@ -274,6 +280,34 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
     end
   end
 
+  test "today and month navigation update authoritative calendar state", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    view = open_calendar(conn, session)
+    initial = assigns(view)
+
+    render_click(view, "calendar_next_month")
+    next = assigns(view)
+
+    assert {next.calendar_year, next.calendar_month} !=
+             {initial.calendar_year, initial.calendar_month}
+
+    render_click(view, "calendar_prev_month")
+    restored = assigns(view)
+
+    assert {restored.calendar_year, restored.calendar_month} ==
+             {initial.calendar_year, initial.calendar_month}
+
+    today = Date.utc_today() |> Date.to_iso8601()
+    render_click(view, "select_calendar_day", %{"date" => today})
+    assert assigns(view).selected_calendar_date == today
+    assert assigns(view).new_task_date == today
+    assert has_element?(view, "#new-task-modal")
+  end
+
   test "server-owned calendar delete confirmation is scoped, source-sensitive, cancellable, and cleans up",
        %{
          conn: conn,
@@ -304,7 +338,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
 
       assert has_element?(
                view,
-               "#confirm-calendar-task-delete[phx-click='delete_scheduled_task'][phx-value-id='#{task.id}'][phx-disable-with='Deleting…']"
+               "#confirm-calendar-task-delete[phx-click*='confirm_calendar_task_delete'][phx-click*='calendar-focus-return-target'][phx-disable-with='Deleting…']"
              )
 
       render_click(view, "cancel_calendar_task_delete")
@@ -322,8 +356,10 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
            )
 
     refute has_element?(view, "#calendar-detail-delete-trigger-#{task.id}[data-confirm]")
+    assert has_element?(view, "#calendar-delete-confirmation-#{task.id}", "Delete safely")
+    refute has_element?(view, "#confirm-calendar-task-delete[phx-value-id]")
 
-    render_click(view, "delete_scheduled_task", %{"id" => task.id})
+    render_click(view, "confirm_calendar_task_delete")
     refute has_element?(view, "#calendar-delete-confirmation-#{task.id}")
     refute has_element?(view, "#scheduled-task-detail-modal")
     assert Kanban.get_task(project.id, task.id) == nil
@@ -366,6 +402,194 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
              view,
              "#edit-scheduled-task-form button[type='submit'][phx-disable-with='Saving…']"
            )
+
+    view
+    |> form("#edit-scheduled-task-form", %{
+      "task" => %{
+        "id" => task.id,
+        "title" => "Edited factual title",
+        "description" => "Updated instructions",
+        "priority" => "high",
+        "assignee" => "planner",
+        "cron_expression" => ""
+      }
+    })
+    |> render_submit()
+
+    assert Kanban.get_task(project.id, task.id).title == "Edited factual title"
+    refute has_element?(view, "#edit-scheduled-task-modal")
+  end
+
+  test "historical selected month remains factual while forward agenda stays date bounded", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    today = Date.utc_today()
+    previous_month_last = Date.add(%{today | day: 1}, -1)
+    historical = %{previous_month_last | day: min(14, previous_month_last.day)}
+
+    task =
+      create_task!(project, session, %{
+        title: "Historical month task",
+        status: "scheduled",
+        scheduled_at: utc_at(historical)
+      })
+
+    view = open_calendar(conn, session)
+
+    render_click(view, "calendar_prev_month")
+    assert has_element?(view, "#calendar-grid #calendar-task-#{historical.day}-#{task.id}")
+    refute has_element?(view, "#calendar-mobile-agenda-item-#{task.id}")
+  end
+
+  test "running a scheduled task from calendar navigates one canonical swarm surface", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    task =
+      create_task!(project, session, %{
+        title: "Canonical run",
+        status: "scheduled",
+        scheduled_at: utc_at(Date.utc_today())
+      })
+
+    view = open_calendar(conn, session)
+
+    render_click(view, "run_scheduled_task", %{"id" => task.id})
+    assert_patch(view, ~p"/sessions/#{session.id}?view=swarm")
+    _ = :sys.get_state(view.pid)
+    state = assigns(view)
+    assert state.active_view == "swarm"
+    assert state.active_tab == "swarm"
+    refute has_element?(view, "#instrument-workbench-calendar")
+    assert has_element?(view, "#interactive-operation-history-note")
+    document = view |> render() |> LazyHTML.from_fragment()
+    assert document |> LazyHTML.query("#prompt-composer") |> LazyHTML.to_tree() |> length() == 1
+  end
+
+  test "calendar deletion is authoritative to retained pending state", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    first =
+      create_task!(project, session, %{
+        title: "First retained",
+        scheduled_at: utc_at(Date.utc_today())
+      })
+
+    second =
+      create_task!(project, session, %{
+        title: "Second forged",
+        scheduled_at: utc_at(Date.utc_today())
+      })
+
+    view = open_calendar(conn, session)
+
+    render_click(view, "confirm_calendar_task_delete")
+    assert Kanban.get_task(project.id, first.id)
+
+    render_click(view, "delete_scheduled_task", %{"id" => first.id})
+    assert Kanban.get_task(project.id, first.id)
+
+    render_click(view, "request_calendar_task_delete", %{"id" => first.id, "source" => "mobile"})
+    render_click(view, "confirm_calendar_task_delete", %{"id" => second.id})
+    assert Kanban.get_task(project.id, first.id)
+    assert Kanban.get_task(project.id, second.id)
+    assert has_element?(view, "#calendar-delete-confirmation-#{first.id}")
+
+    render_click(view, "confirm_calendar_task_delete")
+    refute Kanban.get_task(project.id, first.id)
+    assert Kanban.get_task(project.id, second.id)
+  end
+
+  test "calendar confirmation title is bounded and exclusively server-derived", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    title = String.duplicate("Server title ", 20)
+    task = create_task!(project, session, %{title: title, scheduled_at: utc_at(Date.utc_today())})
+    view = open_calendar(conn, session)
+
+    render_click(view, "request_calendar_task_delete", %{
+      "id" => task.id,
+      "source" => "mobile",
+      "title" => "FORGED CLIENT TITLE"
+    })
+
+    pending = assigns(view).pending_calendar_task_delete
+    assert pending.title == String.slice(title, 0, 160)
+    assert String.length(pending.title) == 160
+    refute has_element?(view, "#calendar-delete-confirmation-#{task.id}", "FORGED CLIENT TITLE")
+    assert has_element?(view, "#calendar-delete-confirmation-#{task.id}", pending.title)
+  end
+
+  test "calendar and Kanban confirmation requests cannot stack owners", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    task =
+      create_task!(project, session, %{
+        title: "Stack guard",
+        scheduled_at: utc_at(Date.utc_today())
+      })
+
+    view = open_calendar(conn, session)
+
+    render_click(view, "request_delete_task", %{"id" => task.id})
+    assert has_element?(view, "#task-delete-confirmation-#{task.id}")
+    render_click(view, "request_calendar_task_delete", %{"id" => task.id, "source" => "mobile"})
+    refute has_element?(view, "#task-delete-confirmation-#{task.id}")
+    assert has_element?(view, "#calendar-delete-confirmation-#{task.id}")
+
+    render_click(view, "request_delete_task", %{"id" => task.id})
+    assert has_element?(view, "#task-delete-confirmation-#{task.id}")
+    refute has_element?(view, "#calendar-delete-confirmation-#{task.id}")
+
+    render_click(view, "delete_session", %{"id" => session.id})
+    assert has_element?(view, "#delete-session-confirmation")
+    refute has_element?(view, "#task-delete-confirmation-#{task.id}")
+
+    render_click(view, "request_calendar_task_delete", %{"id" => task.id, "source" => "desktop"})
+    refute has_element?(view, "#delete-session-confirmation")
+    assert has_element?(view, "#calendar-delete-confirmation-#{task.id}")
+  end
+
+  test "stale retained calendar deletion closes safely without mutating another task", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    stale =
+      create_task!(project, session, %{
+        title: "Stale retained",
+        scheduled_at: utc_at(Date.utc_today())
+      })
+
+    survivor =
+      create_task!(project, session, %{title: "Survivor", scheduled_at: utc_at(Date.utc_today())})
+
+    view = open_calendar(conn, session)
+    render_click(view, "request_calendar_task_delete", %{"id" => stale.id, "source" => "desktop"})
+    IexCode.Repo.delete!(stale)
+
+    render_click(view, "confirm_calendar_task_delete")
+    refute has_element?(view, "#calendar-delete-confirmation-#{stale.id}")
+    assert Kanban.get_task(project.id, survivor.id)
   end
 
   test "malformed and foreign task IDs cannot open a calendar confirmation", %{
@@ -418,5 +642,46 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
     refute has_element?(view, "#calendar-delete-confirmation-#{task.id}")
     refute has_element?(view, "#scheduled-task-detail-modal")
     assert assigns(view).selected_scheduled_task == nil
+    render_click(view, "confirm_calendar_task_delete")
+    assert Kanban.get_task(project.id, task.id)
+  end
+
+  test "calendar visual contracts use neutral tokens, readable type, coarse targets and safe areas" do
+    template = File.read!("lib/iex_code_web/live/workspace_live.html.heex")
+    css = File.read!("assets/css/app.css")
+
+    detail =
+      template
+      |> String.split("Scheduled Task Details Modal", parts: 2)
+      |> List.last()
+      |> String.split("Create Agent Task Modal", parts: 2)
+      |> hd()
+
+    for forbidden <- [
+          "bg-[#",
+          "text-white",
+          "text-gray-",
+          "text-cyan-",
+          "text-orange-",
+          "shadow-orange",
+          "✕"
+        ] do
+      refute detail =~ forbidden
+    end
+
+    assert detail =~ "var(--sf-instrument-raised)"
+    assert detail =~ ~s|<.icon name="hero-x-mark"|
+    assert css =~ ".calendar-agenda-row"
+    assert css =~ "border-bottom: 1px solid var(--sf-hairline)"
+    assert css =~ ".calendar-agenda-time"
+    assert css =~ "font-size: 0.875rem"
+    assert css =~ "@media (pointer: coarse) and (min-width: 40rem)"
+    assert css =~ ".calendar-day-task { min-height: 44px; }"
+    assert css =~ "env(safe-area-inset-top)"
+    assert css =~ "env(safe-area-inset-right)"
+    assert css =~ "env(safe-area-inset-bottom)"
+    assert css =~ "env(safe-area-inset-left)"
+    assert css =~ ".sf-chassis.calendar-confirmation-dialog"
+    assert css =~ "max-height: calc(100dvh"
   end
 end

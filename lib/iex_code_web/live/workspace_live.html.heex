@@ -815,7 +815,7 @@
                   phx-click="select_calendar_day"
                   phx-value-day={today.day}
                   phx-value-date={Date.to_iso8601(today)}
-                  class="sf-control min-h-11 px-3 text-xs font-semibold"
+                  class="sf-control min-h-11 px-3 text-sm font-semibold"
                 >
                   Today
                 </button>
@@ -842,7 +842,7 @@
                   type="button"
                   phx-click="open_time_picker"
                   phx-disable-with="Opening…"
-                  class="sf-control inline-flex min-h-11 items-center gap-2 px-3 text-xs font-semibold"
+                  class="sf-control inline-flex min-h-11 items-center gap-2 px-3 text-sm font-semibold"
                   title="Set focus time and availability window"
                 >
                   <.icon name="hero-clock" class="size-4" />
@@ -852,6 +852,9 @@
             </:local_modes>
             <:primary_field>
               <div class="calendar-workbench">
+                <div id="calendar-focus-return-target" tabindex="-1" class="sr-only">
+                  Schedule Chronometer
+                </div>
                 <section
                   id="calendar-mobile-agenda"
                   data-mobile-default="true"
@@ -911,7 +914,7 @@
                             phx-value-id={task.id}
                             phx-disable-with="Running…"
                             aria-label={"Run #{task.title} now"}
-                            class="sf-control min-h-11 px-3 text-xs font-semibold"
+                            class="sf-control min-h-11 px-3 text-sm font-semibold"
                           >Run now</button>
                           <button
                             id={"calendar-mobile-agenda-edit-#{task.id}"}
@@ -920,7 +923,7 @@
                             phx-value-id={task.id}
                             phx-disable-with="Opening…"
                             aria-label={"Edit #{task.title}"}
-                            class="sf-control min-h-11 px-3 text-xs font-semibold"
+                            class="sf-control min-h-11 px-3 text-sm font-semibold"
                           >Edit</button>
                           <button
                             id={"calendar-mobile-agenda-delete-trigger-#{task.id}"}
@@ -930,7 +933,7 @@
                             phx-value-source="mobile"
                             phx-disable-with="Opening…"
                             aria-label={"Delete #{task.title}"}
-                            class="sf-control calendar-delete-control min-h-11 px-3 text-xs font-semibold"
+                            class="sf-control calendar-delete-control min-h-11 px-3 text-sm font-semibold"
                           >Delete</button>
                         </div>
                       </article>
@@ -1080,7 +1083,7 @@
                                 phx-value-id={task.id}
                                 phx-disable-with="Running…"
                                 aria-label={"Run #{task.title} now"}
-                                class="sf-control min-h-11 px-3 text-xs font-semibold"
+                                class="sf-control min-h-11 px-3 text-sm font-semibold"
                               >Run</button>
                               <button
                                 id={"calendar-desktop-agenda-edit-#{task.id}"}
@@ -1089,7 +1092,7 @@
                                 phx-value-id={task.id}
                                 phx-disable-with="Opening…"
                                 aria-label={"Edit #{task.title}"}
-                                class="sf-control min-h-11 px-3 text-xs font-semibold"
+                                class="sf-control min-h-11 px-3 text-sm font-semibold"
                               >Edit</button>
                               <button
                                 id={"calendar-desktop-agenda-delete-trigger-#{task.id}"}
@@ -1099,7 +1102,7 @@
                                 phx-value-source="desktop"
                                 phx-disable-with="Opening…"
                                 aria-label={"Delete #{task.title}"}
-                                class="sf-control calendar-delete-control min-h-11 px-3 text-xs font-semibold"
+                                class="sf-control calendar-delete-control min-h-11 px-3 text-sm font-semibold"
                               >Delete</button>
                             </div>
                           </article>
@@ -2596,7 +2599,7 @@
         aria-modal="true"
         aria-labelledby="calendar-delete-confirmation-title"
         tabindex="-1"
-        class="sf-chassis sf-sheet-scroll w-full max-w-md overflow-y-auto p-6"
+        class="calendar-confirmation-dialog sf-chassis sf-sheet-scroll w-full max-w-md p-6"
       >
         <p class="sf-metadata">Destructive schedule action</p>
         <h2
@@ -2606,8 +2609,9 @@
           Delete scheduled task?
         </h2>
         <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
-          This permanently removes the selected task and its future schedule. This action cannot
-          be undone.
+          This permanently removes
+          <strong class="text-[var(--sf-text-primary)]">{pending_calendar_delete.title}</strong>
+          and its future schedule. This action cannot be undone.
         </p>
         <div class="mt-6 flex justify-end gap-3 pb-[env(safe-area-inset-bottom)]">
           <button
@@ -2621,8 +2625,13 @@
           <button
             id="confirm-calendar-task-delete"
             type="button"
-            phx-click="delete_scheduled_task"
-            phx-value-id={pending_calendar_delete.task_id}
+            phx-click={
+              JS.set_attribute(
+                {"data-sheet-return-id", pending_calendar_delete.outcome_return_id},
+                to: "#calendar-delete-confirmation-#{pending_calendar_delete.task_id}"
+              )
+              |> JS.push("confirm_calendar_task_delete")
+            }
             phx-disable-with="Deleting…"
             class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
           >
@@ -3114,7 +3123,7 @@
 
   <%!-- Scheduled Task Details Modal --%>
   <%= if @show_scheduled_task_modal && @selected_scheduled_task do %>
-    <div class="workspace-modal-backdrop fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 p-3 backdrop-blur-md animate-in fade-in duration-150 sm:p-4">
+    <div class="workspace-modal-backdrop fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[var(--sf-shadow)] p-3 backdrop-blur-md animate-in fade-in duration-150 sm:p-4">
       <div
         id="scheduled-task-detail-modal"
         phx-hook="ModalFocus"
@@ -3125,34 +3134,26 @@
         aria-modal="true"
         aria-labelledby="scheduled-task-detail-modal-title"
         tabindex="-1"
-        class="workspace-modal-panel my-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto rounded-3xl border border-[#21262d] bg-[#11151c] p-4 font-sans shadow-2xl space-y-5 animate-in zoom-in-95 duration-150 sm:max-h-[calc(100dvh-2rem)] sm:p-6"
+        class="workspace-modal-panel my-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto rounded-3xl border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-4 font-sans space-y-5 animate-in zoom-in-95 duration-150 sm:max-h-[calc(100dvh-2rem)] sm:p-6"
       >
         <%!-- Modal Header --%>
-        <div class="flex items-start justify-between pb-3 border-b border-[#21262d]">
+        <div class="flex items-start justify-between pb-3 border-b border-[var(--sf-hairline)]">
           <div class="flex items-center gap-3">
-            <div class="w-11 h-11 rounded-2xl bg-[#1c2128] border border-[#30363d] flex items-center justify-center text-orange-400 shadow-inner shrink-0">
-              <.icon name="hero-calendar" class="w-5 h-5 text-orange-400" />
+            <div class="w-11 h-11 rounded-2xl bg-[var(--sf-raised-control)] border border-[var(--sf-hairline)] flex items-center justify-center text-[var(--sf-text-primary)] shadow-none shrink-0">
+              <.icon name="hero-calendar" class="w-5 h-5 text-[var(--sf-text-primary)]" />
             </div>
             <div>
               <div class="flex items-center gap-2 mb-0.5">
-                <span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-semibold">
+                <span class="text-sm font-mono uppercase tracking-wider px-2 py-0.5 rounded-md bg-[var(--sf-raised-control)] border border-[var(--sf-hairline)] text-[var(--sf-text-primary)] font-semibold">
                   ● {@selected_scheduled_task.status}
                 </span>
-                <span class={[
-                  "text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-md font-semibold",
-                  @selected_scheduled_task.priority == "critical" &&
-                    "bg-red-500/15 border border-red-500/30 text-red-300",
-                  @selected_scheduled_task.priority == "high" &&
-                    "bg-orange-500/15 border border-orange-500/30 text-orange-300",
-                  @selected_scheduled_task.priority in ["medium", "low"] &&
-                    "bg-blue-500/15 border border-blue-500/30 text-blue-300"
-                ]}>
+                <span class="rounded-md border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 py-0.5 font-mono text-sm font-semibold uppercase tracking-wider text-[var(--sf-text-secondary)]">
                   {String.capitalize(@selected_scheduled_task.priority || "medium")} Priority
                 </span>
               </div>
               <h3
                 id="scheduled-task-detail-modal-title"
-                class="text-base font-bold text-white tracking-tight"
+                class="text-base font-bold text-[var(--sf-text-primary)] tracking-tight"
               >
                 {@selected_scheduled_task.title}
               </h3>
@@ -3161,20 +3162,20 @@
           <button
             phx-click="close_scheduled_task_modal"
             aria-label="Close scheduled task details"
-            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-gray-400 transition-smooth hover:bg-[#1c2128] hover:text-white"
+            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-[var(--sf-text-secondary)] transition-smooth hover:bg-[var(--sf-raised-control)] hover:text-[var(--sf-text-primary)]"
             title="Close"
           >
-            ✕
+            <.icon name="hero-x-mark" class="size-4" />
           </button>
         </div>
 
         <%!-- Meta Grid --%>
-        <div class="grid grid-cols-2 gap-3 font-mono text-xs">
-          <div class="p-3 bg-[#161b22] border border-[#21262d] rounded-2xl">
-            <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-              <.icon name="hero-clock" class="w-3.5 h-3.5 text-blue-400" /> Scheduled Timing
+        <div class="grid grid-cols-2 gap-3 font-mono text-sm">
+          <div class="p-3 bg-[var(--sf-instrument)] border border-[var(--sf-hairline)] rounded-2xl">
+            <div class="text-sm text-[var(--sf-text-secondary)] uppercase tracking-wider mb-1 flex items-center gap-1.5">
+              <.icon name="hero-clock" class="w-3.5 h-3.5 text-[var(--sf-text-secondary)]" /> Scheduled Timing
             </div>
-            <div class="text-white font-medium">
+            <div class="text-[var(--sf-text-primary)] font-medium">
               <%= if @selected_scheduled_task.scheduled_at do %>
                 {Calendar.strftime(@selected_scheduled_task.scheduled_at, "%b %d, %Y · %I:%M %p")}
               <% else %>
@@ -3187,15 +3188,15 @@
             </div>
           </div>
 
-          <div class="p-3 bg-[#161b22] border border-[#21262d] rounded-2xl">
-            <div class="text-[10px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-              <.icon name="hero-user-circle" class="w-3.5 h-3.5 text-purple-400" />
+          <div class="p-3 bg-[var(--sf-instrument)] border border-[var(--sf-hairline)] rounded-2xl">
+            <div class="text-sm text-[var(--sf-text-secondary)] uppercase tracking-wider mb-1 flex items-center gap-1.5">
+              <.icon name="hero-user-circle" class="w-3.5 h-3.5 text-[var(--sf-text-secondary)]" />
               Assignee & Worker
             </div>
-            <div class="text-white font-medium flex items-center gap-1.5">
+            <div class="text-[var(--sf-text-primary)] font-medium flex items-center gap-1.5">
               <span>{@selected_scheduled_task.assignee}</span>
               <%= if @selected_scheduled_task.worker_pid do %>
-                <span class="text-[10px] text-emerald-400 font-mono">PID: {@selected_scheduled_task.worker_pid}</span>
+                <span class="text-sm text-[var(--sf-text-secondary)] font-mono">PID: {@selected_scheduled_task.worker_pid}</span>
               <% end %>
             </div>
           </div>
@@ -3203,28 +3204,28 @@
 
         <%!-- Description Box --%>
         <div class="space-y-1.5 font-sans">
-          <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider">
+          <div class="text-sm font-mono text-[var(--sf-text-secondary)] uppercase tracking-wider">
             Task Instructions & Requirements
           </div>
-          <div class="p-3.5 bg-[#0d1117] border border-[#21262d] rounded-2xl text-xs leading-relaxed text-gray-300 font-sans whitespace-pre-wrap">
+          <div class="p-3.5 bg-[var(--sf-canvas-deep)] border border-[var(--sf-hairline)] rounded-2xl text-sm leading-relaxed text-[var(--sf-text-primary)] font-sans whitespace-pre-wrap">
             {@selected_scheduled_task.description || "No specific instructions provided."}
           </div>
         </div>
 
         <%!-- Execution Progress & Latest Telemetry --%>
         <%= if @selected_scheduled_task.latest_summary do %>
-          <div class="p-3 bg-[#161b22] border border-[#21262d] rounded-2xl text-xs font-mono">
-            <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">
+          <div class="p-3 bg-[var(--sf-instrument)] border border-[var(--sf-hairline)] rounded-2xl text-sm font-mono">
+            <div class="text-sm text-[var(--sf-text-secondary)] uppercase tracking-wider mb-1">
               Latest Execution Telemetry
             </div>
-            <div class="text-emerald-400">
+            <div class="text-[var(--sf-text-secondary)]">
               {@selected_scheduled_task.latest_summary}
             </div>
           </div>
         <% end %>
 
         <%!-- Modal Actions --%>
-        <div class="flex items-center justify-between pt-3 border-t border-[#21262d]">
+        <div class="flex items-center justify-between pt-3 border-t border-[var(--sf-hairline)]">
           <button
             id={"calendar-detail-delete-trigger-#{@selected_scheduled_task.id}"}
             type="button"
@@ -3232,7 +3233,7 @@
             phx-value-id={@selected_scheduled_task.id}
             phx-value-source="detail"
             phx-disable-with="Opening…"
-            class="min-h-11 px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-mono transition-smooth flex items-center gap-1.5"
+            class="flex min-h-11 items-center gap-1.5 rounded-xl border border-[var(--sf-live-mark)] bg-transparent px-3.5 py-2 font-mono text-sm text-[var(--sf-live-text)] transition-smooth hover:bg-[var(--sf-raised-control)]"
           >
             <.icon name="hero-trash" class="w-3.5 h-3.5" />
             <span>Delete Task</span>
@@ -3244,7 +3245,7 @@
               phx-click="open_edit_scheduled_task"
               phx-value-id={@selected_scheduled_task.id}
               phx-disable-with="Opening…"
-              class="min-h-11 px-3.5 py-2 bg-[#1c2128] hover:bg-[#21262d] text-cyan-300 rounded-xl text-xs font-mono border border-cyan-500/30 transition-smooth flex items-center gap-1.5"
+              class="min-h-11 px-3.5 py-2 bg-[var(--sf-raised-control)] hover:bg-[var(--sf-raised-control)] text-[var(--sf-text-primary)] rounded-xl text-sm font-mono border border-[var(--sf-hairline)] transition-smooth flex items-center gap-1.5"
             >
               <.icon name="hero-pencil-square" class="w-3.5 h-3.5" />
               <span>Edit Task</span>
@@ -3254,7 +3255,7 @@
               phx-click="run_scheduled_task"
               phx-value-id={@selected_scheduled_task.id}
               phx-disable-with="Running…"
-              class="min-h-11 px-4 py-2 bg-[#ff5e3a] hover:bg-[#ff4e24] text-white rounded-xl text-xs font-mono font-bold shadow-lg shadow-orange-500/20 transition-smooth flex items-center gap-1.5"
+              class="sf-control min-h-11 px-4 py-2 text-sm font-semibold"
             >
               <.icon name="hero-play" class="w-3.5 h-3.5" />
               <span>Run Now</span>
@@ -3267,7 +3268,7 @@
 
   <!-- Edit Scheduled Task Modal -->
   <%= if @show_edit_scheduled_task_modal && @selected_scheduled_task do %>
-    <div class="workspace-modal-backdrop fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 p-3 backdrop-blur-md animate-in fade-in duration-150 sm:p-4">
+    <div class="workspace-modal-backdrop fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[var(--sf-shadow)] p-3 backdrop-blur-md animate-in fade-in duration-150 sm:p-4">
       <div
         id="edit-scheduled-task-modal"
         phx-hook="ModalFocus"
@@ -3278,27 +3279,27 @@
         aria-modal="true"
         aria-labelledby="edit-scheduled-task-modal-title"
         tabindex="-1"
-        class="workspace-modal-panel my-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto rounded-3xl border border-[#21262d] bg-[#11151c] p-4 font-mono text-xs shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 sm:max-h-[calc(100dvh-2rem)] sm:p-6"
+        class="workspace-modal-panel my-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto rounded-3xl border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-4 font-mono text-sm space-y-4 animate-in zoom-in-95 duration-150 sm:max-h-[calc(100dvh-2rem)] sm:p-6"
       >
-        <div class="flex items-center justify-between pb-3 border-b border-[#21262d]">
+        <div class="flex items-center justify-between pb-3 border-b border-[var(--sf-hairline)]">
           <h3
             id="edit-scheduled-task-modal-title"
-            class="text-sm font-bold text-white flex items-center gap-2"
+            class="text-sm font-bold text-[var(--sf-text-primary)] flex items-center gap-2"
           >
-            <.icon name="hero-pencil-square" class="w-4 h-4 text-cyan-400" /> Edit Scheduled Task
+            <.icon name="hero-pencil-square" class="w-4 h-4 text-[var(--sf-text-primary)]" /> Edit Scheduled Task
           </h3>
           <button
             phx-click="close_edit_scheduled_task"
             aria-label="Close edit scheduled task modal"
-            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-gray-400 hover:text-white"
-          >✕</button>
+            class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
+          ><.icon name="hero-x-mark" class="size-4" /></button>
         </div>
 
         <.form
           for={@scheduled_task_form}
           id="edit-scheduled-task-form"
           phx-submit="update_scheduled_task"
-          class="space-y-3 font-mono text-xs"
+          class="space-y-3 font-mono text-sm"
         >
           <.input field={@scheduled_task_form[:id]} type="hidden" />
           <.input
@@ -3307,7 +3308,7 @@
             type="text"
             label="Title"
             required
-            class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 font-sans text-xs text-white focus:border-cyan-500 focus:outline-none"
+            class="min-h-11 w-full rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 font-sans text-sm text-[var(--sf-text-primary)] focus:border-[var(--sf-focus-ring)] focus:outline-none"
           />
           <.input
             field={@scheduled_task_form[:description]}
@@ -3315,7 +3316,7 @@
             type="textarea"
             label="Description / Instructions"
             rows="2"
-            class="min-h-20 w-full resize-y rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 font-sans text-xs text-white focus:border-cyan-500 focus:outline-none"
+            class="min-h-20 w-full resize-y rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 font-sans text-sm text-[var(--sf-text-primary)] focus:border-[var(--sf-focus-ring)] focus:outline-none"
           />
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <.input
@@ -3324,7 +3325,7 @@
               type="select"
               label="Priority"
               options={Enum.map(["low", "medium", "high", "critical"], &{String.capitalize(&1), &1})}
-              class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 text-xs text-white"
+              class="min-h-11 w-full rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 text-sm text-[var(--sf-text-primary)]"
             />
             <.input
               field={@scheduled_task_form[:assignee]}
@@ -3332,7 +3333,7 @@
               type="select"
               label="Assignee"
               options={["default", "planner", "coder", "verifier"]}
-              class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 text-xs text-white"
+              class="min-h-11 w-full rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 text-sm text-[var(--sf-text-primary)]"
             />
           </div>
           <.input
@@ -3341,9 +3342,9 @@
             type="text"
             label="Cron Expression (Optional)"
             placeholder="e.g. 0 0 * * *"
-            class="min-h-11 w-full rounded-xl border border-[#30363d] bg-[#0d1117] px-3 py-2 font-mono text-xs text-amber-300"
+            class="min-h-11 w-full rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 font-mono text-sm text-[var(--sf-text-primary)]"
           />
-          <div class="flex justify-end gap-2 pt-3 border-t border-[#21262d]">
+          <div class="flex justify-end gap-2 pt-3 border-t border-[var(--sf-hairline)]">
             <button
               type="button"
               phx-click="close_edit_scheduled_task"
@@ -3352,7 +3353,7 @@
             <button
               type="submit"
               phx-disable-with="Saving…"
-              class="sf-control min-h-11 border-cyan-500 bg-cyan-600 px-5 font-bold text-white hover:bg-cyan-500"
+              class="sf-control min-h-11 px-5 font-bold"
             >Save changes</button>
           </div>
         </.form>
@@ -3387,7 +3388,7 @@
             phx-click="toggle_new_task_modal"
             aria-label="Close create task modal"
             class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-gray-400 hover:bg-[#1c2128] hover:text-white"
-          >✕</button>
+          ><.icon name="hero-x-mark" class="size-4" /></button>
         </div>
 
         <.form for={@task_form} id="task-create-form" phx-submit="create_task" class="space-y-4">

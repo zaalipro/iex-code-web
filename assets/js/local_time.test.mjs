@@ -21,6 +21,14 @@ test("returns the exact opaque fallback for invalid and non-string input", () =>
     ok: false,
     text: fallback
   })
+  assert.deepEqual(formatLocalTime(42, "en-US", "UTC", fallback), {
+    ok: false,
+    text: fallback
+  })
+  assert.deepEqual(formatLocalTime({iso: "2026-08-28T12:30:00Z"}, "en-US", "UTC", fallback), {
+    ok: false,
+    text: fallback
+  })
   assert.deepEqual(formatLocalTime("   ", "en-US", "UTC", fallback), {
     ok: false,
     text: fallback

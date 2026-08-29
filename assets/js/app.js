@@ -13,6 +13,12 @@ import TaskMoveFocus from "./hooks/task_move_focus_hook.js"
 import TaskMoveReturn from "./hooks/task_move_return_hook.mjs"
 import LocalTime from "./hooks/local_time_hook"
 import {modalSheetReturnId, restoreModalFocus} from "./hooks/modal_focus_return.mjs"
+import {
+  acquireModalBackground,
+  modalBackgroundId,
+  releaseModalBackground,
+  topmostUsableModal
+} from "./hooks/modal_focus_background.mjs"
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
@@ -91,9 +97,8 @@ const Hooks = {
         ? activeElement
         : lastInteractionTarget?.isConnected ? lastInteractionTarget : null
       this.previouslyFocusedId = this.previouslyFocused?.id || null
-      this.background = document.getElementById("workspace-shell")
-      if (this.background) this.background.inert = true
-      this.background?.setAttribute("aria-hidden", "true")
+      this.background = document.getElementById(modalBackgroundId(this.el))
+      acquireModalBackground(this.background, this)
 
       this.focusableSelector = [
         "a[href]",
@@ -108,11 +113,9 @@ const Hooks = {
         this.el.querySelectorAll(this.focusableSelector)
       ).filter((element) => element.getClientRects().length > 0 && !element.inert)
 
-      this.topmostModal = () => {
-        const dialogs = Array.from(document.querySelectorAll("[data-modal-focus]"))
-          .filter((dialog) => dialog.getClientRects().length > 0)
-        return dialogs.at(-1)
-      }
+      this.topmostModal = () => topmostUsableModal(
+        document.querySelectorAll("[data-modal-focus]")
+      )
 
       this.focusInitialElement = () => {
         let preferred = null
@@ -184,11 +187,7 @@ const Hooks = {
       const fallbackReturnId = modalSheetReturnId(this.el)
 
       requestAnimationFrame(() => {
-        const openModal = document.querySelector("[data-modal-focus]")
-        if (!openModal && this.background) {
-          this.background.inert = false
-          this.background.removeAttribute("aria-hidden")
-        }
+        releaseModalBackground(this.background, this)
 
         restoreModalFocus({
           document,

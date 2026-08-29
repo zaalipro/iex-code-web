@@ -1238,7 +1238,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                |> select_run_projection(run)
                |> assign(:pending_calendar_task_delete, nil)
                |> refresh_kanban_summary()
-               |> assign(:active_tab, "swarm")
+               |> navigate_workspace_socket("swarm")
                |> put_flash(
                  :info,
                  "Task '#{task.title}' dispatched to the session via the durable run queue"
@@ -1279,10 +1279,14 @@ defmodule IexCodeWeb.WorkspaceLive do
         {return_id, background_id} = calendar_delete_context(source, task.id)
 
         {:noreply,
-         assign(socket, :pending_calendar_task_delete, %{
+         socket
+         |> clear_pending_confirmations()
+         |> assign(:pending_calendar_task_delete, %{
            task_id: task.id,
+           title: bounded_confirmation_title(task.title),
            return_id: return_id,
-           background_id: background_id
+           background_id: background_id,
+           outcome_return_id: "calendar-focus-return-target"
          })}
 
       _ ->
@@ -1299,27 +1303,56 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("delete_scheduled_task", %{"id" => task_id}, socket) do
-    case scoped_task(socket, task_id) do
+    case socket.assigns.pending_calendar_task_delete do
+      %{task_id: ^task_id} ->
+        handle_event("confirm_calendar_task_delete", %{}, socket)
+
+      %{task_id: _other} ->
+        {:noreply, socket}
+
       nil ->
-        {:noreply, maybe_clear_deleted_scheduled_task(socket, task_id)}
+        handle_event(
+          "request_calendar_task_delete",
+          %{"id" => task_id, "source" => "desktop"},
+          socket
+        )
+    end
+  end
 
-      task ->
-        case Kanban.delete_task(task) do
-          {:ok, _deleted} ->
-            tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+  def handle_event("delete_scheduled_task", _params, socket), do: {:noreply, socket}
 
-            {:noreply,
-             socket
-             |> assign(:tasks, tasks)
-             |> assign(:show_scheduled_task_modal, false)
-             |> assign(:selected_scheduled_task, nil)
-             |> assign(:pending_calendar_task_delete, nil)
-             |> refresh_kanban_summary()
-             |> put_flash(:info, "Scheduled task removed")}
-
-          {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to remove task: #{inspect(reason)}")}
+  @impl true
+  def handle_event("confirm_calendar_task_delete", params, socket) when map_size(params) == 0 do
+    case socket.assigns.pending_calendar_task_delete do
+      %{task_id: task_id} ->
+        case scoped_task(socket, task_id) do
+          %Kanban.Task{} = task -> delete_authorized_scheduled_task(socket, task)
+          nil -> {:noreply, maybe_clear_deleted_scheduled_task(socket, task_id)}
         end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("confirm_calendar_task_delete", _params, socket), do: {:noreply, socket}
+
+  defp delete_authorized_scheduled_task(socket, task) do
+    case Kanban.delete_task(task) do
+      {:ok, _deleted} ->
+        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+        {:noreply,
+         socket
+         |> assign(:tasks, tasks)
+         |> assign(:show_scheduled_task_modal, false)
+         |> assign(:selected_scheduled_task, nil)
+         |> assign(:pending_calendar_task_delete, nil)
+         |> refresh_kanban_summary()
+         |> put_flash(:info, "Scheduled task removed")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to remove task: #{inspect(reason)}")}
     end
   end
 
@@ -2775,6 +2808,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:noreply,
        socket
        |> clear_task_move_state()
+       |> clear_pending_confirmations()
        |> assign(:pending_task_confirmation, {:subtask, task, canonical_subtask_id})}
     else
       _ -> {:noreply, put_flash(socket, :error, "Task not found")}
@@ -2884,6 +2918,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         {:noreply,
          socket
          |> clear_task_move_state()
+         |> clear_pending_confirmations()
          |> assign(:pending_task_confirmation, {:task, task})}
 
       _ ->
@@ -5247,6 +5282,25 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
+  defp clear_pending_confirmations(socket) do
+    socket
+    |> assign(:pending_calendar_task_delete, nil)
+    |> assign(:pending_task_confirmation, nil)
+    |> assign(:pending_session_delete, nil)
+  end
+
+  defp bounded_confirmation_title(title) when is_binary(title) do
+    title
+    |> String.replace_invalid()
+    |> String.slice(0, 160)
+    |> case do
+      "" -> "Selected task"
+      bounded -> bounded
+    end
+  end
+
+  defp bounded_confirmation_title(_title), do: "Selected task"
+
   defp calendar_delete_context("mobile", task_id),
     do: {"calendar-mobile-agenda-delete-trigger-#{task_id}", "workspace-shell"}
 
@@ -5762,6 +5816,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         {:noreply,
          socket
          |> assign(:show_command_palette, false)
+         |> clear_pending_confirmations()
          |> assign(:pending_session_delete, session)}
 
       _ ->

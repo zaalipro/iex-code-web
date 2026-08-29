@@ -647,6 +647,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
 
       # Delete task
       render_click(view, "delete_scheduled_task", %{"id" => sched_task.id})
+      render_click(view, "confirm_calendar_task_delete")
       assert Kanban.get_task(sched_task.id) == nil
     end
   end
