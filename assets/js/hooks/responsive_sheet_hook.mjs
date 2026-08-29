@@ -20,6 +20,16 @@ function nonblank(value) {
   return typeof value === "string" && value.trim() !== ""
 }
 
+export function responsiveSheetOwnsFocus(dialog, window = globalThis.window) {
+  return dialog?.dataset?.responsiveSheetActive === "true" &&
+    window?.matchMedia?.("(max-width: 639px)")?.matches === true
+}
+
+export function responsiveSheetWillOwnFocus(dialog, window = globalThis.window) {
+  return dialog?.dataset?.sheetReturnOwner === "controller" &&
+    window?.matchMedia?.("(max-width: 639px)")?.matches === true
+}
+
 function scheduleFrame(hook, callback) {
   const request = hook.window?.requestAnimationFrame || globalThis.requestAnimationFrame
   if (typeof request !== "function") return null

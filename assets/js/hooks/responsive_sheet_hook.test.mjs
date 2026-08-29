@@ -282,3 +282,47 @@ test("controller-owned sheets do not race their controller's actual-opener retur
   h.flushFrames()
   assert.equal(h.trigger.focusCalls.length, 0)
 })
+
+test("empty sheets focus their host and repeated sync stays single-listener", () => {
+  const h = setup({noFocusables: true})
+  h.sheet.querySelector = () => null
+  h.hook.mounted()
+  h.hook.sync()
+  h.hook.updated()
+  assert.equal(h.document.listenerCount("keydown"), 1)
+  assert.equal(h.media.listenerCount("change"), 1)
+  h.flushFrames()
+  assert.deepEqual(h.sheet.focusCalls, [{preventScroll: true}])
+})
+
+test("changed close and return datasets take effect without leaking prior ownership", () => {
+  const h = setup()
+  const alternate = new FakeElement("alternate-return")
+  alternate.focusable = true
+  h.root.append(alternate)
+  alternate.setOwnerDocument(h.document)
+  h.hook.mounted()
+  h.sheet.dataset.sheetCloseEvent = "close_changed"
+  h.sheet.dataset.sheetReturnId = "alternate-return"
+  h.hook.updated()
+  h.document.emit("keydown", {key: "Escape"})
+  assert.deepEqual(h.pushed, [["close_changed", {}]])
+  h.hook.destroyed()
+  h.flushFrames()
+  assert.deepEqual(alternate.focusCalls, [{preventScroll: true}])
+})
+
+test("missing and disconnected return targets are harmless", () => {
+  const missing = setup()
+  missing.sheet.dataset.sheetReturnId = "missing"
+  missing.hook.mounted()
+  missing.hook.destroyed()
+  assert.doesNotThrow(() => missing.flushFrames())
+
+  const disconnected = setup()
+  disconnected.trigger.isConnected = false
+  disconnected.hook.mounted()
+  disconnected.hook.destroyed()
+  disconnected.flushFrames()
+  assert.equal(disconnected.trigger.focusCalls.length, 0)
+})

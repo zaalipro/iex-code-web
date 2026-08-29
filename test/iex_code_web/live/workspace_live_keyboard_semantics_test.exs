@@ -43,6 +43,11 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
 
     assert has_element?(
              view,
+             "[data-palette-item-id='delete-session-#{session.id}']"
+           )
+
+    refute has_element?(
+             view,
              "[data-palette-item-id='delete-session-#{session.id}'][data-confirm]"
            )
 

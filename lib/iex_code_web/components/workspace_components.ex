@@ -2221,7 +2221,6 @@ defmodule IexCodeWeb.WorkspaceComponents do
         data-palette-option-id={"palette-item-#{@index}"}
         data-palette-href={Map.get(@item, :href)}
         data-palette-surface={if(@item.category == :view, do: Map.get(@item, :tab), else: nil)}
-        data-confirm={Map.get(@item, :confirmation)}
         phx-click={
           JS.push("command_palette_select_item", page_loading: true, value: %{index: @index})
         }

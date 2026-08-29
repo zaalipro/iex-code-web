@@ -396,6 +396,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:command_palette_form, to_form(%{"query" => ""}, as: :palette))
       |> assign(:command_palette_results, [])
       |> assign(:command_palette_selected_index, 0)
+      |> assign(:pending_session_delete, nil)
       # Git Branch & Staging Hub assigns
       |> assign(:git_branches, [])
       |> assign(:current_branch, "main")
@@ -1733,6 +1734,25 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("close_command_palette", _params, socket) do
     {:noreply, assign(socket, :show_command_palette, false)}
   end
+
+  @impl true
+  def handle_event("cancel_session_delete", _params, socket) do
+    {:noreply, assign(socket, :pending_session_delete, nil)}
+  end
+
+  @impl true
+  def handle_event("confirm_session_delete", params, socket) when map_size(params) == 0 do
+    with %Sessions.Session{id: session_id, project_id: project_id} <-
+           socket.assigns.pending_session_delete,
+         true <- project_id == socket.assigns.project.id,
+         %Sessions.Session{project_id: ^project_id} = session <- fetch_session(session_id) do
+      delete_authorized_session(assign(socket, :pending_session_delete, nil), session)
+    else
+      _ -> {:noreply, assign(socket, :pending_session_delete, nil)}
+    end
+  end
+
+  def handle_event("confirm_session_delete", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("command_palette_search", %{"palette" => %{"query" => query}}, socket)
@@ -3371,48 +3391,41 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
-  @impl true
   def handle_event("delete_session", %{"id" => session_id}, socket) do
-    case fetch_session(session_id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Session not found")}
+    open_session_delete_confirmation(socket, session_id)
+  end
 
-      %Sessions.Session{project_id: project_id} = session
-      when project_id == socket.assigns.project.id ->
-        # Stop the SessionServer first so it doesn't keep running against a deleted row
-        stop_session_server(session.id)
+  def handle_event("delete_session", _params, socket), do: {:noreply, socket}
 
-        case Sessions.delete_session(session) do
-          {:ok, _} ->
-            remaining = Sessions.list_sessions_for_project(socket.assigns.project.id)
+  defp delete_authorized_session(socket, session) do
+    stop_session_server(session.id)
 
-            if remaining == [] do
-              case Sessions.create_session(%{
-                     project_id: socket.assigns.project.id,
-                     title: "Coding Session 1"
-                   }) do
-                {:ok, new_s} ->
-                  {:noreply, push_patch(socket, to: ~p"/sessions/#{new_s.id}")}
+    case Sessions.delete_session(session) do
+      {:ok, _} ->
+        case Sessions.list_sessions_for_project(socket.assigns.project.id) do
+          [] ->
+            case Sessions.create_session(%{
+                   project_id: socket.assigns.project.id,
+                   title: "Coding Session 1"
+                 }) do
+              {:ok, replacement} ->
+                {:noreply, push_patch(socket, to: ~p"/sessions/#{replacement.id}")}
 
-                {:error, reason} ->
-                  {:noreply,
-                   put_flash(
-                     socket,
-                     :error,
-                     "Failed to create replacement session: #{inspect(reason)}"
-                   )}
-              end
-            else
-              [next | _] = remaining
-              {:noreply, push_patch(socket, to: ~p"/sessions/#{next.id}")}
+              {:error, reason} ->
+                {:noreply,
+                 put_flash(
+                   socket,
+                   :error,
+                   "Failed to create replacement session: #{inspect(reason)}"
+                 )}
             end
 
-          {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to delete session: #{inspect(reason)}")}
+          [next | _] ->
+            {:noreply, push_patch(socket, to: ~p"/sessions/#{next.id}")}
         end
 
-      _foreign_session ->
-        {:noreply, put_flash(socket, :error, "Session not found in this project")}
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to delete session: #{inspect(reason)}")}
     end
   end
 
@@ -5299,10 +5312,11 @@ defmodule IexCodeWeb.WorkspaceLive do
          confirmation: confirmation
        })
        when is_binary(confirmation) do
-    socket = assign(socket, :show_command_palette, false)
-    # Keep the native confirmation seam on the indexed option; this branch is
-    # reached only from server-produced rows whose id and payload agree.
-    handle_event("delete_session", %{"id" => session_id}, socket)
+    if Enum.any?(socket.assigns.all_sessions, &(to_string(&1.id) == session_id)) do
+      open_session_delete_confirmation(assign(socket, :show_command_palette, false), session_id)
+    else
+      {:noreply, socket}
+    end
   end
 
   defp execute_command_palette_item(socket, %{
@@ -5340,6 +5354,20 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp execute_command_palette_item(socket, _item), do: {:noreply, socket}
+
+  defp open_session_delete_confirmation(socket, session_id) do
+    case fetch_session(session_id) do
+      %Sessions.Session{project_id: project_id} = session
+      when project_id == socket.assigns.project.id ->
+        {:noreply,
+         socket
+         |> assign(:show_command_palette, false)
+         |> assign(:pending_session_delete, session)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
 
   defp palette_open_category(%{"category" => category}), do: normalize_palette_category(category)
   defp palette_open_category(_), do: "all"

@@ -5,7 +5,10 @@ import {hooks as colocatedHooks} from "phoenix-colocated/iex_code"
 import topbar from "../vendor/topbar"
 import TerminalHook from "./hooks/terminal_hook"
 import InstrumentDeck from "./hooks/instrument_deck_hook.mjs"
-import ResponsiveSheet from "./hooks/responsive_sheet_hook.mjs"
+import ResponsiveSheet, {
+  responsiveSheetOwnsFocus,
+  responsiveSheetWillOwnFocus
+} from "./hooks/responsive_sheet_hook.mjs"
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
@@ -70,6 +73,12 @@ const Hooks = {
   ResponsiveSheet,
   ModalFocus: {
     mounted() {
+      this.mobileSheetDelegated = responsiveSheetOwnsFocus(
+        this.el.closest?.('[phx-hook="ResponsiveSheet"]'),
+        window
+      )
+      if (this.mobileSheetDelegated) return
+
       const activeElement = document.activeElement
       this.previouslyFocused = activeElement instanceof HTMLElement && activeElement !== document.body
         ? activeElement
@@ -159,6 +168,8 @@ const Hooks = {
       this.initialFocusFrame = requestAnimationFrame(this.focusInitialElement)
     },
     destroyed() {
+      if (this.mobileSheetDelegated) return
+
       document.removeEventListener("keydown", this.handleKeyDown, true)
       cancelAnimationFrame(this.initialFocusFrame)
       const previouslyFocused = this.previouslyFocused
@@ -242,8 +253,7 @@ const Hooks = {
         const dialog = this.paletteDialog()
         if (!dialog) return
 
-        const mobileSheetOwnsFocus = dialog?.dataset?.responsiveSheetActive === "true" &&
-          window.matchMedia("(max-width: 639px)").matches
+        const mobileSheetOwnsFocus = responsiveSheetOwnsFocus(dialog, window)
 
         if (e.key === "Escape") {
           if (mobileSheetOwnsFocus) return
@@ -274,8 +284,7 @@ const Hooks = {
 
         setTimeout(() => {
           const dialog = this.paletteDialog()
-          const mobileSheetOwnsFocus = dialog?.dataset?.sheetReturnOwner === "controller" &&
-            window.matchMedia("(max-width: 639px)").matches
+          const mobileSheetOwnsFocus = responsiveSheetWillOwnFocus(dialog, window)
           if (mobileSheetOwnsFocus) return
 
           const input = document.getElementById("command-palette-input")

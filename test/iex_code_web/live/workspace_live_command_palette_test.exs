@@ -232,7 +232,12 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
 
     assert has_element?(
              view,
-             "[data-palette-item-id='delete-session-#{session.id}'][data-confirm='Delete Keep this title? This cannot be undone.']"
+             "[data-palette-item-id='delete-session-#{session.id}']"
+           )
+
+    refute has_element?(
+             view,
+             "[data-palette-item-id='delete-session-#{session.id}'][data-confirm]"
            )
 
     render_change(view, "command_palette_search", %{"query" => session.id})

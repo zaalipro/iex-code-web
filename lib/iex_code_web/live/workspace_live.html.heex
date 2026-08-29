@@ -2261,15 +2261,12 @@
           />
         </div>
 
-        <!-- RIGHT TASK DETAIL DRAWER / INSPECTOR -->
+        <%!-- RIGHT TASK DETAIL DRAWER / INSPECTOR --%>
         <%= if @show_task_drawer and @selected_task do %>
           <aside
             id="task-detail-drawer"
             phx-hook="ResponsiveSheet"
-            role="dialog"
-            aria-modal="true"
             aria-label="Task details"
-            aria-labelledby="task-detail-title"
             tabindex="-1"
             data-sheet-close-event="close_task_drawer"
             data-sheet-return-id={"task-card-#{@selected_task.id}"}
@@ -2289,16 +2286,18 @@
                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                   {@selected_task.status}
                 </span>
-                <h2 id="task-detail-title" class="sr-only">Task details: {@selected_task.title}</h2>
+                <h2 id="task-detail-title" class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}>Task details</h2>
                 <span class="font-mono text-xs text-gray-500">#{String.slice(
                   @selected_task.id,
                   0..5
                 )}</span>
               </div>
               <button
+                id="close-task-detail-drawer"
+                type="button"
                 phx-click="close_task_drawer"
                 aria-label="Close task drawer"
-                class="text-gray-400 hover:text-white p-1 rounded-lg"
+                class={["sf-control inline-flex min-h-11 min-w-11 items-center justify-center p-2"]}
               >
                 <.icon name="hero-x-mark" class="w-4 h-4" />
               </button>
@@ -2598,7 +2597,7 @@
         <% end %>
       </div>
 
-      <!-- FLOATING RAINBOW GLOW PROMPT INPUT BOX -->
+      <%!-- Shared command dock --%>
       <footer
         id="prompt-composer"
         aria-label="Agent prompt composer"
@@ -2636,7 +2635,8 @@
             </button>
           </div>
 
-          <div class="sf-command-dock sf-command-dock-shell">
+          <%!-- Setup tray and prompt form stay siblings inside one shared vertical shell. --%>
+          <div class={["sf-command-dock-shell"]}>
             <section
               :if={@run_setup_open?}
               id="run-setup-tray"
@@ -2930,7 +2930,7 @@
                 <!-- Bottom Action Toolbar -->
                 <div class="sf-command-dock-toolbar flex min-w-0 items-center justify-between gap-2 pt-2 border-t border-[#21262d] px-1">
                   <!-- Left Tool / Model Badges -->
-                  <div class="flex min-w-0 items-center gap-1.5 sm:gap-2">
+                  <div data-command-tools class={["flex min-w-0 items-center gap-1.5 sm:gap-2"]}>
                     <!-- Model Pill Dropdown -->
                     <div
                       class="relative"
@@ -3062,10 +3062,11 @@
                     </div>
                   </div>
 
-                  <!-- Prompt dispatch mode -->
+                  <%!-- Prompt dispatch mode --%>
                   <div
                       id="dispatch-mode-switcher"
-                      class="flex shrink-0 items-center border border-[#30363d] bg-[#11161d] p-0.5"
+                      data-command-dispatch
+                      class={["flex shrink-0 items-center border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] p-0.5"]}
                       role="group"
                       aria-label="Prompt dispatch mode"
                     >
@@ -3075,6 +3076,7 @@
                         phx-click="set_dispatch_mode"
                         phx-value-mode="background"
                         aria-pressed={to_string(@dispatch_mode == "background")}
+                        aria-label="Use background dispatch mode"
                         title="Persist and run asynchronously"
                         class={[
                           "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
@@ -3091,6 +3093,7 @@
                         phx-click="set_dispatch_mode"
                         phx-value-mode="interactive"
                         aria-pressed={to_string(@dispatch_mode == "interactive")}
+                        aria-label="Use interactive dispatch mode"
                         title="Send to the live session"
                         class={[
                           "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
@@ -3104,11 +3107,11 @@
                     </div>
 
                   <!-- Right Send Button -->
-                  <div class="tooltip-trigger shrink-0">
+                  <div data-command-send class={["tooltip-trigger shrink-0"]}>
                     <button
                       type="submit"
                       phx-disable-with="Executing..."
-                      class="sf-control sf-command-send min-h-11 px-4 text-xs font-semibold transition-colors"
+                      class={["sf-control sf-command-send min-h-11 px-4 text-xs font-semibold transition-colors"]}
                     >
                       {if @dispatch_mode == "background", do: "Queue run", else: "Send"}
                     </button>
@@ -4481,6 +4484,65 @@
               Apply
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <%= if @pending_session_delete do %>
+    <div
+      id="delete-session-confirmation"
+      phx-hook="ResponsiveSheet"
+      role="presentation"
+      data-sheet-close-event="cancel_session_delete"
+      data-sheet-return-id="command-palette-trigger"
+      data-sheet-background-id="workspace-shell"
+      class={[
+        "fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] p-4 sm:items-center"
+      ]}
+    >
+      <div
+        id="delete-session-confirmation-dialog"
+        phx-hook="ModalFocus"
+        data-modal-focus
+        data-cancel-event="cancel_session_delete"
+        data-initial-focus="#cancel-session-delete"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-session-confirmation-title"
+        tabindex="-1"
+        class={["sf-chassis w-full max-w-md p-6"]}
+      >
+        <h2
+          id="delete-session-confirmation-title"
+          class={["text-lg font-semibold text-[var(--sf-text-primary)]"]}
+        >
+          Delete session?
+        </h2>
+        <p class={["mt-2 text-sm text-[var(--sf-text-secondary)]"]}>
+          This permanently removes
+          <strong class={["text-[var(--sf-text-primary)]"]}>{@pending_session_delete.title}</strong>
+          and its history.
+        </p>
+        <div class={["mt-6 flex justify-end gap-3"]}>
+          <button
+            id="cancel-session-delete"
+            type="button"
+            phx-click="cancel_session_delete"
+            class={["sf-control min-h-11 px-4 text-sm"]}
+          >
+            Cancel
+          </button>
+          <button
+            id="delete-session-confirm"
+            type="button"
+            phx-click="confirm_session_delete"
+            class={[
+              "sf-control min-h-11 border-[var(--sf-live-mark)] bg-transparent px-4 text-sm text-[var(--sf-live-text)]"
+            ]}
+          >
+            Delete session
+          </button>
         </div>
       </div>
     </div>

@@ -84,12 +84,16 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
 
       # 2. Delete first session
       render_click(view, "delete_session", %{"id" => s1.id})
+      assert has_element?(view, "#delete-session-confirmation")
+      render_click(view, "confirm_session_delete")
       remaining = Sessions.list_sessions_for_project(project.id)
       assert length(remaining) == 1
       assert hd(remaining).id == s2.id
 
       # 3. Delete last session -> should auto-generate a fresh Coding Session 1 fallback
       render_click(view, "delete_session", %{"id" => s2.id})
+      assert has_element?(view, "#delete-session-confirmation")
+      render_click(view, "confirm_session_delete")
       fallback = Sessions.list_sessions_for_project(project.id)
       assert length(fallback) == 1
       assert hd(fallback).title == "Coding Session 1"
@@ -131,7 +135,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       assigns = live_assigns(view)
       assert assigns.session.id == current_session.id
       assert assigns.project.id == current_project.id
-      assert render(view) =~ "Session not found in this project"
+      refute has_element?(view, "#delete-session-confirmation")
 
       File.rm_rf(foreign_root)
     end
