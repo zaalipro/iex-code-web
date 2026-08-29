@@ -5,6 +5,7 @@ import {hooks as colocatedHooks} from "phoenix-colocated/iex_code"
 import topbar from "../vendor/topbar"
 import TerminalHook from "./hooks/terminal_hook"
 import InstrumentDeck from "./hooks/instrument_deck_hook.mjs"
+import ResponsiveSheet from "./hooks/responsive_sheet_hook.mjs"
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
 // Theme behavior lives in the supported application bundle rather than an
@@ -66,6 +67,7 @@ document.addEventListener("click", (event) => {
 const Hooks = {
   TerminalHook,
   InstrumentDeck,
+  ResponsiveSheet,
   ModalFocus: {
     mounted() {
       const activeElement = document.activeElement
@@ -240,10 +242,15 @@ const Hooks = {
         const dialog = this.paletteDialog()
         if (!dialog) return
 
+        const mobileSheetOwnsFocus = dialog?.dataset?.responsiveSheetActive === "true" &&
+          window.matchMedia("(max-width: 639px)").matches
+
         if (e.key === "Escape") {
+          if (mobileSheetOwnsFocus) return
           e.preventDefault()
           this.pushEvent("close_command_palette", {})
         } else if (e.key === "Tab") {
+          if (mobileSheetOwnsFocus) return
           this.trapFocus(e, dialog)
         } else if (e.key === "ArrowDown") {
           e.preventDefault()
@@ -266,6 +273,11 @@ const Hooks = {
         this.rememberFocus()
 
         setTimeout(() => {
+          const dialog = this.paletteDialog()
+          const mobileSheetOwnsFocus = dialog?.dataset?.sheetReturnOwner === "controller" &&
+            window.matchMedia("(max-width: 639px)").matches
+          if (mobileSheetOwnsFocus) return
+
           const input = document.getElementById("command-palette-input")
           if (input) {
             input.focus()
@@ -359,6 +371,7 @@ const Hooks = {
       return match ? Number(match[1]) : null
     }
   }
+
 }
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")

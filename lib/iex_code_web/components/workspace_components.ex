@@ -1886,6 +1886,86 @@ defmodule IexCodeWeb.WorkspaceComponents do
   end
 
   # ============================================================================
+  # Signal Foundry shared workbench chassis
+  # ============================================================================
+
+  @doc """
+  Renders the shared presentational frame used by each focused instrument.
+
+  Surface-specific workflows own the slot contents and trusted return targets;
+  the chassis owns only their stable order and workbench identity.
+  """
+  attr :id, :string, required: true
+  attr :surface, :string, required: true
+  attr :index, :string, required: true
+  attr :title, :string, required: true
+  attr :status, :string, required: true
+  attr :return_to, :string, required: true
+  attr :return_instrument_id, :string, required: true
+  slot :primary_action
+  slot :local_modes
+  slot :primary_field, required: true
+  slot :signal_panel
+  slot :command_dock
+
+  def workbench_chassis(assigns) do
+    ~H"""
+    <section
+      id={@id}
+      data-workbench-surface={@surface}
+      aria-labelledby={"#{@id}-title"}
+      class="sf-chassis sf-workbench-enter"
+    >
+      <header class="sf-workbench-header">
+        <.link
+          id={"return-to-instrument-deck-#{@surface}"}
+          patch={@return_to}
+          replace={true}
+          data-return-instrument-id={@return_instrument_id}
+          class="sf-control sf-workbench-return"
+        >
+          <span aria-hidden="true">&larr;</span>
+          <span>Instrument Deck</span>
+        </.link>
+        <p class="sf-metadata sf-workbench-index">Instrument {@index}</p>
+        <h2 id={"#{@id}-title"} class="sf-workbench-title">{@title}</h2>
+        <p id={"#{@id}-status"} role="status" aria-live="polite" class="sf-workbench-status">
+          {@status}
+        </p>
+        <div :if={@primary_action != []} data-workbench-primary-action>
+          {render_slot(List.first(@primary_action))}
+        </div>
+      </header>
+
+      <div :if={@local_modes != []} data-workbench-local-modes class="sf-workbench-local-modes">
+        {render_slot(@local_modes)}
+      </div>
+
+      <div id={"#{@id}-fields"} data-workbench-fields class="sf-workbench-fields">
+        <div data-workbench-primary-field class="sf-focus-surface sf-workbench-primary-field">
+          {render_slot(@primary_field)}
+        </div>
+        <aside
+          :if={@signal_panel != []}
+          data-workbench-signal-panel
+          class="sf-focus-surface sf-workbench-signal-panel"
+        >
+          {render_slot(@signal_panel)}
+        </aside>
+      </div>
+
+      <footer
+        :if={@command_dock != []}
+        data-workbench-command-dock
+        class="sf-workbench-command-dock"
+      >
+        {render_slot(@command_dock)}
+      </footer>
+    </section>
+    """
+  end
+
+  # ============================================================================
   # M2: Global Command Palette (Cmd+K)
   # ============================================================================
 
@@ -1929,6 +2009,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
             data-sheet-close-event="close_command_palette"
             data-sheet-return-id="command-palette-trigger"
             data-sheet-background-id="workspace-shell"
+            data-sheet-return-owner="controller"
+            phx-hook="ResponsiveSheet"
             class="sf-chassis relative z-10 flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden"
             phx-click-away="close_command_palette"
           >
@@ -2140,15 +2222,6 @@ defmodule IexCodeWeb.WorkspaceComponents do
         data-palette-href={Map.get(@item, :href)}
         data-palette-surface={if(@item.category == :view, do: Map.get(@item, :tab), else: nil)}
         data-confirm={Map.get(@item, :confirmation)}
-        data-sheet-close-event={
-          if(@item.category == :confirmation, do: "close_command_palette", else: nil)
-        }
-        data-sheet-return-id={
-          if(@item.category == :confirmation, do: "palette-item-#{@index}", else: nil)
-        }
-        data-sheet-background-id={
-          if(@item.category == :confirmation, do: "workspace-shell", else: nil)
-        }
         phx-click={
           JS.push("command_palette_select_item", page_loading: true, value: %{index: @index})
         }

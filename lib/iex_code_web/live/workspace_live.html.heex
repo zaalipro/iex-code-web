@@ -2265,7 +2265,15 @@
         <%= if @show_task_drawer and @selected_task do %>
           <aside
             id="task-detail-drawer"
+            phx-hook="ResponsiveSheet"
+            role="dialog"
+            aria-modal="true"
             aria-label="Task details"
+            aria-labelledby="task-detail-title"
+            tabindex="-1"
+            data-sheet-close-event="close_task_drawer"
+            data-sheet-return-id={"task-card-#{@selected_task.id}"}
+            data-sheet-background-id="kanban-board"
             class="absolute inset-y-0 right-0 z-40 flex h-full w-full max-w-none flex-col overflow-y-auto border-l border-[#21262d] bg-[#11151c] shadow-2xl shadow-black/60 transition-smooth animate-in slide-in-from-right xl:relative xl:z-auto xl:w-96 xl:max-w-96 xl:shrink-0 xl:shadow-none"
           >
             <!-- Drawer Header -->
@@ -2281,6 +2289,7 @@
                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                   {@selected_task.status}
                 </span>
+                <h2 id="task-detail-title" class="sr-only">Task details: {@selected_task.title}</h2>
                 <span class="font-mono text-xs text-gray-500">#{String.slice(
                   @selected_task.id,
                   0..5
@@ -2593,13 +2602,19 @@
       <footer
         id="prompt-composer"
         aria-label="Agent prompt composer"
-        class="max-h-[calc(100dvh-3.5rem)] shrink-0 overflow-y-auto overscroll-contain bg-gradient-to-t from-[#0a0d12] via-[#0a0d12]/95 to-transparent p-2 pt-0 sm:p-3 sm:pt-0 xl:p-5 xl:pt-0"
+        data-command-dock-state={
+          if(@run_setup_open? or @active_view == "chat",
+            do: "expanded",
+            else: if(@active_view == "deck", do: "compact", else: "focus-expand")
+          )
+        }
+        class="sf-command-composer max-h-[calc(100dvh-3.5rem)] shrink-0 overflow-y-auto overscroll-contain p-2 pt-0 sm:p-3 sm:pt-0 xl:p-5 xl:pt-0"
       >
         <div class="max-w-4xl mx-auto">
           <!-- Announcement Pill -->
-          <div class="hidden sm:flex items-center gap-2 mb-2 px-2">
+          <div class="flex items-center gap-2 mb-2 px-2">
             <span class="text-[#ff8a68] text-xs">◆</span>
-            <span class="text-xs font-mono text-gray-400">
+            <span class="hidden text-xs font-mono text-gray-400 sm:inline">
               <%= if @dispatch_mode == "background" do %>
                 Durable mode · queued work continues after you disconnect
               <% else %>
@@ -2610,20 +2625,25 @@
               id="toggle-run-setup"
               type="button"
               phx-click="toggle_run_setup"
+              data-run-setup-toggle
               aria-expanded={@run_setup_open?}
-              aria-controls="run-setup-panel"
-              class="ml-auto inline-flex items-center gap-1.5 border border-[#30363d] bg-[#10151b] px-2.5 py-1 font-mono text-[10px] text-gray-300 transition-colors hover:border-[#ff7e5f]/50 hover:text-white"
+              aria-controls="run-setup-tray"
+              aria-label={if @run_setup_open?, do: "Close run setup", else: "Open run setup"}
+              class="sf-control ml-auto inline-flex min-h-11 items-center gap-1.5 px-3 font-mono text-xs transition-colors"
             >
               <.icon name="hero-adjustments-horizontal" class="h-3 w-3 text-[#ff8a68]" />
               Run setup
             </button>
           </div>
 
-          <!-- Rainbow Border Glow Container -->
-          <div class="rainbow-box-wrapper shadow-2xl">
-            <div class="bg-[#11151c] rounded-[1.2rem] p-3">
+          <div class="sf-command-dock sf-command-dock-shell">
+            <section
+              :if={@run_setup_open?}
+              id="run-setup-tray"
+              aria-label="Run setup"
+              class="sf-sheet-scroll sf-run-setup-tray"
+            >
               <.form
-                :if={@run_setup_open?}
                 for={@run_setup_form}
                 id="run-setup-panel"
                 phx-change="update_run_setup"
@@ -2859,12 +2879,13 @@
                   </div>
                 </fieldset>
               </.form>
+            </section>
 
               <.form
                 for={@prompt_form}
                 id="prompt-form"
                 phx-submit="submit_prompt"
-                class="flex flex-col gap-2"
+                class="sf-command-dock-form"
               >
                 <input
                   id="prompt-request-id"
@@ -2907,62 +2928,9 @@
                 ></textarea>
 
                 <!-- Bottom Action Toolbar -->
-                <div class="flex min-w-0 items-center justify-between gap-2 pt-2 border-t border-[#21262d] px-1">
+                <div class="sf-command-dock-toolbar flex min-w-0 items-center justify-between gap-2 pt-2 border-t border-[#21262d] px-1">
                   <!-- Left Tool / Model Badges -->
                   <div class="flex min-w-0 items-center gap-1.5 sm:gap-2">
-                    <button
-                      id="toggle-run-setup-mobile"
-                      type="button"
-                      phx-click="toggle_run_setup"
-                      aria-expanded={@run_setup_open?}
-                      aria-controls="run-setup-panel"
-                      aria-label={
-                        if @run_setup_open?, do: "Close run setup", else: "Open run setup"
-                      }
-                      class="inline-flex h-7 w-7 shrink-0 items-center justify-center border border-[#30363d] bg-[#10151b] text-[#ff8a68] sm:hidden"
-                    >
-                      <.icon name="hero-adjustments-horizontal" class="h-3.5 w-3.5" />
-                    </button>
-                    <div
-                      id="dispatch-mode-switcher"
-                      class="flex shrink-0 items-center border border-[#30363d] bg-[#11161d] p-0.5"
-                      role="group"
-                      aria-label="Prompt dispatch mode"
-                    >
-                      <button
-                        id="dispatch-mode-background"
-                        type="button"
-                        phx-click="set_dispatch_mode"
-                        phx-value-mode="background"
-                        aria-pressed={to_string(@dispatch_mode == "background")}
-                        title="Persist and run asynchronously"
-                        class={[
-                          "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
-                          @dispatch_mode == "background" && "bg-[#ff7e5f] text-white",
-                          @dispatch_mode != "background" && "text-gray-500 hover:text-gray-200"
-                        ]}
-                      >
-                        <.icon name="hero-queue-list" class="h-3 w-3" />
-                        <span class="hidden lg:inline">Background</span>
-                      </button>
-                      <button
-                        id="dispatch-mode-interactive"
-                        type="button"
-                        phx-click="set_dispatch_mode"
-                        phx-value-mode="interactive"
-                        aria-pressed={to_string(@dispatch_mode == "interactive")}
-                        title="Send to the live session"
-                        class={[
-                          "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
-                          @dispatch_mode == "interactive" && "bg-[#30363d] text-white",
-                          @dispatch_mode != "interactive" && "text-gray-500 hover:text-gray-200"
-                        ]}
-                      >
-                        <.icon name="hero-bolt" class="h-3 w-3" />
-                        <span class="hidden lg:inline">Interactive</span>
-                      </button>
-                    </div>
-
                     <!-- Model Pill Dropdown -->
                     <div
                       class="relative"
@@ -3094,12 +3062,53 @@
                     </div>
                   </div>
 
+                  <!-- Prompt dispatch mode -->
+                  <div
+                      id="dispatch-mode-switcher"
+                      class="flex shrink-0 items-center border border-[#30363d] bg-[#11161d] p-0.5"
+                      role="group"
+                      aria-label="Prompt dispatch mode"
+                    >
+                      <button
+                        id="dispatch-mode-background"
+                        type="button"
+                        phx-click="set_dispatch_mode"
+                        phx-value-mode="background"
+                        aria-pressed={to_string(@dispatch_mode == "background")}
+                        title="Persist and run asynchronously"
+                        class={[
+                          "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
+                          @dispatch_mode == "background" && "bg-[#ff7e5f] text-white",
+                          @dispatch_mode != "background" && "text-gray-500 hover:text-gray-200"
+                        ]}
+                      >
+                        <.icon name="hero-queue-list" class="h-3 w-3" />
+                        <span class="hidden lg:inline">Background</span>
+                      </button>
+                      <button
+                        id="dispatch-mode-interactive"
+                        type="button"
+                        phx-click="set_dispatch_mode"
+                        phx-value-mode="interactive"
+                        aria-pressed={to_string(@dispatch_mode == "interactive")}
+                        title="Send to the live session"
+                        class={[
+                          "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
+                          @dispatch_mode == "interactive" && "bg-[#30363d] text-white",
+                          @dispatch_mode != "interactive" && "text-gray-500 hover:text-gray-200"
+                        ]}
+                      >
+                        <.icon name="hero-bolt" class="h-3 w-3" />
+                        <span class="hidden lg:inline">Interactive</span>
+                      </button>
+                    </div>
+
                   <!-- Right Send Button -->
                   <div class="tooltip-trigger shrink-0">
                     <button
                       type="submit"
                       phx-disable-with="Executing..."
-                      class="px-4 py-1.5 rounded-xl bg-gradient-to-r from-[#ff7e5f] to-[#feb47b] text-white font-semibold text-xs font-mono shadow-md shadow-orange-500/20 hover:opacity-90 transition-smooth"
+                      class="sf-control sf-command-send min-h-11 px-4 text-xs font-semibold transition-colors"
                     >
                       {if @dispatch_mode == "background", do: "Queue run", else: "Send"}
                     </button>
@@ -3117,7 +3126,6 @@
                   </div>
                 </div>
               </.form>
-            </div>
           </div>
         </div>
       </footer>
