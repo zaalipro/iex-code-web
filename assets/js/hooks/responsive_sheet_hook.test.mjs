@@ -93,8 +93,8 @@ class FakeMedia extends FakeTarget {
   change(matches) { this.matches = matches; this.emit("change", {matches, media: this.media}) }
 }
 
-function setup({mobile = true, backgroundAria, backgroundInert = false, noFocusables = false, dialog = false} = {}) {
-  const media = new FakeMedia(mobile)
+function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = false, noFocusables = false, dialog = false} = {}) {
+  const media = new FakeMedia(viewportWidth === undefined ? mobile : viewportWidth <= 639)
   const document = new FakeTarget()
   const root = new FakeElement("root")
   const background = new FakeElement("workspace-shell", {inert: backgroundInert})
@@ -199,6 +199,20 @@ test("mobile-only dialog semantics activate and restore truthfully", () => {
   h.media.change(false)
   assert.equal(h.sheet.getAttribute("role"), null)
   assert.equal(h.sheet.getAttribute("aria-modal"), null)
+})
+
+test("drawer semantics are modal at 639 and nonmodal at 640, 1279, and 1280", () => {
+  for (const [width, mobile] of [[639, true], [640, false], [1279, false], [1280, false]]) {
+    const h = setup({viewportWidth: width, dialog: true})
+    h.hook.mounted()
+
+    assert.equal(h.sheet.getAttribute("role"), mobile ? "dialog" : null, `${width}px role`)
+    assert.equal(h.sheet.getAttribute("aria-modal"), mobile ? "true" : null, `${width}px modal`)
+    assert.equal(h.background.inert, mobile, `${width}px background inert`)
+    assert.equal(h.document.listenerCount("keydown"), mobile ? 1 : 0, `${width}px focus owner`)
+
+    h.hook.destroyed()
+  }
 })
 
 test("cleanup restores the exact prior background state and composes sibling owners", () => {

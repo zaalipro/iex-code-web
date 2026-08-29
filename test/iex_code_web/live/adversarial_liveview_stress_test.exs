@@ -333,8 +333,11 @@ defmodule IexCodeWeb.AdversarialLiveviewStressTest do
       assert updated_task.priority == "critical"
 
       # 6. Delete task
-      html_deleted = render_click(view, "delete_task", %{"id" => task.id})
-      assert html_deleted =~ "Task deleted"
+      render_click(view, "delete_task", %{"id" => task.id})
+      assert Kanban.get_task!(task.id)
+      assert has_element?(view, "[id^='task-delete-confirmation-']")
+      render_click(view, "confirm_task_delete")
+      assert Kanban.get_task(task.id) == nil
 
       assert Process.alive?(view.pid)
     end

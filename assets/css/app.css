@@ -335,6 +335,20 @@
 
 .sf-task-detail-drawer button { min-height: 44px; }
 
+.kanban-confirmation-overlay {
+  padding:
+    max(1rem, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+}
+
+.kanban-confirmation-dialog {
+  max-height: min(88dvh, 36rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .card-dragging { opacity: 0.42; }
 
 @media (max-width: 639px) {
@@ -355,6 +369,17 @@
     border-left: 0;
     border-radius: 30px 30px 0 0;
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 640px) {
+  .sf-task-detail-drawer {
+    position: relative;
+    z-index: auto;
+    width: 24rem;
+    max-width: 24rem;
+    flex-shrink: 0;
+    box-shadow: none;
   }
 }
 

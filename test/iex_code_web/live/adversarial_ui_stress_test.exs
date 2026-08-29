@@ -427,7 +427,9 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
 
       # 9. Delete task
       render_click(view, "delete_task", %{"id" => task.id})
-      render_click(view, "close_task_drawer")
+      assert Kanban.get_task!(task.id)
+      assert has_element?(view, "[id^='task-delete-confirmation-']")
+      render_click(view, "confirm_task_delete")
 
       assert Kanban.get_task(task.id) == nil
       assert Process.alive?(view.pid)

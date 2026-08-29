@@ -100,6 +100,9 @@ defmodule IexCodeWeb.EmpiricalLiveviewMutationTest do
       # 6. Finally delete the valid task
       render_click(view, "delete_task", %{"id" => task.id})
       assert Process.alive?(view.pid)
+      assert Kanban.get_task!(task.id)
+      assert has_element?(view, "[id^='task-delete-confirmation-']")
+      render_click(view, "confirm_task_delete")
       assert Kanban.get_task(task.id) == nil
     end
   end

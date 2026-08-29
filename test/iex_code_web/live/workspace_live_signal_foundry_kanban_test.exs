@@ -203,13 +203,21 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
     _ = :sys.get_state(view.pid)
     render_click(view, "expand_task_status", %{"status" => "todo"})
     render_click(view, "open_task_move", %{"id" => task.id})
+
+    view
+    |> form("#move-task-form-#{task.id}", %{"move_task" => %{"id" => task.id, "status" => "done"}})
+    |> render_submit()
+
+    render_click(view, "expand_task_status", %{"status" => "done"})
+    render_click(view, "open_task_move", %{"id" => task.id})
     prior_status = assigns(view).expanded_task_status
     prior_announcement = assigns(view).task_move_announcement
+    assert prior_announcement == "Moved Cancel to done"
     render_click(view, "cancel_task_move", %{"id" => Ecto.UUID.generate()})
     assert has_element?(view, "#move-task-form-#{task.id}")
-    render_click(view, "cancel_task_move", %{"id" => task.id})
+    view |> element("#move-task-form-#{task.id}") |> render_keydown(%{"key" => "Escape"})
     refute has_element?(view, "#move-task-form-#{task.id}")
-    assert Kanban.get_task!(task.id).status == "todo"
+    assert Kanban.get_task!(task.id).status == "done"
     assert assigns(view).expanded_task_status == prior_status
     assert assigns(view).task_move_announcement == prior_announcement
 
@@ -277,6 +285,40 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
     refute has_element?(view, "#task-detail-drawer[phx-hook='ModalFocus']")
   end
 
+  test "task detail layout and sheet semantics share the 639/640 boundary" do
+    css = File.read!("assets/css/app.css")
+    template = File.read!("lib/iex_code_web/live/workspace_live.html.heex")
+    hook = File.read!("assets/js/hooks/responsive_sheet_hook.mjs")
+
+    [_, mobile_max] =
+      Regex.run(~r/@media \(max-width: (\d+)px\)\s*\{.*?\.sf-task-detail-drawer/s, css)
+
+    [_, inline_min, inline_rule] =
+      Regex.run(
+        ~r/@media \(min-width: (\d+)px\)\s*\{\s*\.sf-task-detail-drawer\s*\{([^}]*)\}/s,
+        css
+      )
+
+    mobile_max = String.to_integer(mobile_max)
+    inline_min = String.to_integer(inline_min)
+
+    presentation = fn width ->
+      if width <= mobile_max and width < inline_min, do: :modal, else: :inline
+    end
+
+    assert Enum.map([639, 640, 1279, 1280], presentation) ==
+             [:modal, :inline, :inline, :inline]
+
+    assert mobile_max == 639
+    assert inline_min == 640
+    assert inline_rule =~ "position: relative"
+    assert inline_rule =~ "width: 24rem"
+    assert inline_rule =~ "max-width: 24rem"
+    assert hook =~ ~S|matchMedia?.("(max-width: 639px)")|
+    assert template =~ ~S|data-sheet-dialog="true"|
+    refute template =~ "xl:relative xl:z-auto xl:w-96"
+  end
+
   test "task and subtask delete controls use authorized confirmation sheets", %{
     view: view,
     project: project,
@@ -299,6 +341,13 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
 
     render_click(view, "request_delete_subtask", %{"task_id" => task.id, "id" => subtask_id})
     assert has_element?(view, "[id^='subtask-delete-confirmation-'][phx-hook='ResponsiveSheet']")
+    refute has_element?(view, "#workspace-shell [id^='subtask-delete-confirmation-']")
+
+    assert has_element?(
+             view,
+             "[id^='subtask-delete-confirmation-'][data-sheet-return-id='task-detail-title'] #cancel-subtask-delete"
+           )
+
     assert Kanban.get_task!(task.id).subtasks != []
     render_click(view, "cancel_subtask_delete")
     refute has_element?(view, "[id^='subtask-delete-confirmation-']")
@@ -309,12 +358,75 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
 
     render_click(view, "request_delete_task", %{"id" => task.id})
     assert has_element?(view, "[id^='task-delete-confirmation-'][phx-hook='ResponsiveSheet']")
+
+    assert has_element?(
+             view,
+             "[id^='task-delete-confirmation-'][data-sheet-background-id='workspace-views'][data-sheet-return-id='kanban-channel-trigger-triage']"
+           )
+
+    assert has_element?(
+             view,
+             "[id^='task-delete-confirmation-dialog-'].kanban-confirmation-dialog"
+           )
+
+    refute has_element?(view, "#workspace-shell [id^='task-delete-confirmation-']")
+
+    assert has_element?(
+             view,
+             "[id^='task-delete-confirmation-'] #confirm-task-delete"
+           )
+
+    refute has_element?(view, "#instrument-workbench-kanban [data-confirm]")
+
     render_click(view, "cancel_task_delete")
     assert Kanban.get_task!(task.id)
 
     render_click(view, "request_delete_task", %{"id" => task.id})
     render_click(view, "confirm_task_delete")
     assert Kanban.get_task(task.id) == nil
+  end
+
+  test "confirmation sheets preserve safe areas, bounded scrolling, and desktop focus fallback" do
+    css = File.read!("assets/css/app.css")
+    javascript = File.read!("assets/js/app.js")
+
+    assert css =~
+             ~r/\.kanban-confirmation-overlay\s*\{[^}]*safe-area-inset-top[^}]*safe-area-inset-right[^}]*safe-area-inset-bottom[^}]*safe-area-inset-left/s
+
+    assert css =~
+             ~r/\.kanban-confirmation-dialog\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/s
+
+    assert javascript =~ ~S|closest?.("[data-sheet-return-id]")?.dataset.sheetReturnId|
+    assert javascript =~ "const focusTarget = restoredTarget ||"
+  end
+
+  test "legacy destructive event names only open pending confirmation", %{
+    view: view,
+    project: project,
+    session: session
+  } do
+    subtask_id = Ecto.UUID.generate()
+
+    {:ok, task} =
+      Kanban.create_task(%{
+        project_id: project.id,
+        session_id: session.id,
+        title: "No direct delete",
+        status: "triage",
+        subtasks: [
+          %{"id" => subtask_id, "title" => "No direct subtask delete", "completed" => false}
+        ]
+      })
+
+    _ = :sys.get_state(view.pid)
+    render_click(view, "delete_subtask", %{"task_id" => task.id, "id" => subtask_id})
+    assert Kanban.get_task!(task.id).subtasks != []
+    assert has_element?(view, "[id^='subtask-delete-confirmation-']")
+    render_click(view, "cancel_subtask_delete")
+
+    render_click(view, "delete_task", %{"id" => task.id})
+    assert Kanban.get_task!(task.id)
+    assert has_element?(view, "[id^='task-delete-confirmation-']")
   end
 
   test "stale and PubSub-updated confirmations clear without deleting by client data", %{

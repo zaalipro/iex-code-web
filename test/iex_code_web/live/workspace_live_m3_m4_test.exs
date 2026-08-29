@@ -415,6 +415,9 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
 
       # Delete task
       render_click(view, "delete_task", %{"id" => task.id})
+      assert Kanban.get_task!(task.id)
+      assert has_element?(view, "[id^='task-delete-confirmation-']")
+      render_click(view, "confirm_task_delete")
       assert Kanban.get_task(task.id) == nil
     end
 

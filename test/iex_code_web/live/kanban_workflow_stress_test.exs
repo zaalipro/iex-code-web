@@ -126,7 +126,13 @@ defmodule IexCodeWeb.KanbanWorkflowStressTest do
       [sub1, sub2 | remaining] = task_after_toggles.subtasks
 
       render_hook(view, "delete_subtask", %{"id" => sub1["id"], "task_id" => task.id})
+      assert Kanban.get_task!(task.id).subtasks == task_after_toggles.subtasks
+      assert has_element?(view, "[id^='subtask-delete-confirmation-']")
+      render_hook(view, "confirm_subtask_delete", %{})
+
       render_hook(view, "delete_subtask", %{"id" => sub2["id"], "task_id" => task.id})
+      assert has_element?(view, "[id^='subtask-delete-confirmation-']")
+      render_hook(view, "confirm_subtask_delete", %{})
 
       task_after_deletions = Kanban.get_task!(task.id)
       assert length(task_after_deletions.subtasks) == 3
@@ -166,9 +172,12 @@ defmodule IexCodeWeb.KanbanWorkflowStressTest do
       render_hook(view, "close_task_drawer", %{})
       refute has_element?(view, "#drawer-edit-task-#{task.id}")
 
-      # Delete task via handle_event
+      # The public delete event must only open confirmation.
       render_hook(view, "delete_task", %{"id" => task.id})
-      assert render(view) =~ "Task deleted"
+      assert Kanban.get_task!(task.id)
+      assert has_element?(view, "[id^='task-delete-confirmation-']")
+
+      render_hook(view, "confirm_task_delete", %{})
       assert Kanban.get_task(task.id) == nil
     end
 

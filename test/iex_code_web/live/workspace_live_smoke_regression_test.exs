@@ -441,7 +441,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
 
     assert has_element?(
              view,
-             "aside#task-detail-drawer[aria-label='Task details'].w-full.max-w-none.xl\\:max-w-96"
+             "aside#task-detail-drawer[aria-label='Task details'][data-sheet-dialog='true'].sf-task-detail-drawer.w-full.max-w-none"
            )
   end
 

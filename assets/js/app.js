@@ -176,6 +176,7 @@ const Hooks = {
       cancelAnimationFrame(this.initialFocusFrame)
       const previouslyFocused = this.previouslyFocused
       const previouslyFocusedId = this.previouslyFocusedId
+      const fallbackReturnId = this.el.closest?.("[data-sheet-return-id]")?.dataset.sheetReturnId
 
       requestAnimationFrame(() => {
         const openModal = document.querySelector("[data-modal-focus]")
@@ -184,9 +185,10 @@ const Hooks = {
           this.background.removeAttribute("aria-hidden")
         }
 
-        const focusTarget = previouslyFocused?.isConnected
+        const restoredTarget = previouslyFocused?.isConnected
           ? previouslyFocused
           : previouslyFocusedId && document.getElementById(previouslyFocusedId)
+        const focusTarget = restoredTarget || (fallbackReturnId && document.getElementById(fallbackReturnId))
         focusTarget?.focus({preventScroll: true})
       })
     }

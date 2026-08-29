@@ -2486,8 +2486,7 @@ defmodule IexCodeWeb.WorkspaceLive do
        |> assign(
          :task_move_form,
          to_form(%{"id" => task.id, "status" => task.status}, as: :move_task)
-       )
-       |> assign(:task_move_announcement, nil)}
+       )}
     else
       _ -> {:noreply, put_flash(socket, :error, "Task not found")}
     end
@@ -2701,25 +2700,11 @@ defmodule IexCodeWeb.WorkspaceLive do
     task_id =
       params["task_id"] || (socket.assigns.selected_task && socket.assigns.selected_task.id)
 
-    case scoped_task(socket, task_id) do
-      %Kanban.Task{} = task ->
-        case Kanban.delete_subtask(task, subtask_id) do
-          {:ok, updated} ->
-            tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
-
-            {:noreply,
-             socket
-             |> assign(:tasks, tasks)
-             |> assign(:selected_task, updated)
-             |> put_flash(:info, "Subtask deleted")}
-
-          {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to delete subtask: #{inspect(reason)}")}
-        end
-
-      _ ->
-        {:noreply, socket}
-    end
+    handle_event(
+      "request_delete_subtask",
+      %{"id" => subtask_id, "task_id" => task_id},
+      socket
+    )
   end
 
   def handle_event("delete_subtask", _params, socket), do: {:noreply, socket}
@@ -2836,10 +2821,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("delete_task", %{"id" => id}, socket) do
-    case scoped_task(socket, id) do
-      %Kanban.Task{} = task -> delete_authorized_task(socket, task)
-      _ -> {:noreply, put_flash(socket, :error, "Task not found")}
-    end
+    handle_event("request_delete_task", %{"id" => id}, socket)
   end
 
   def handle_event("delete_task", _params, socket), do: {:noreply, socket}

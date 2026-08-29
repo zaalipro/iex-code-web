@@ -2094,7 +2094,7 @@
             data-sheet-close-event="close_task_drawer"
             data-sheet-return-id={"task-card-#{@selected_task.id}"}
             data-sheet-background-id="kanban-board"
-            class={["sf-task-detail-drawer absolute inset-y-0 right-0 z-40 flex h-full w-full max-w-none flex-col overflow-y-auto border-l border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] shadow-[0_24px_72px_-38px_var(--sf-shadow)] transition-smooth animate-in slide-in-from-right xl:relative xl:z-auto xl:w-96 xl:max-w-96 xl:shrink-0 xl:shadow-none"]}
+            class={["sf-task-detail-drawer absolute inset-y-0 right-0 z-40 flex h-full w-full max-w-none flex-col overflow-y-auto border-l border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] shadow-[0_24px_72px_-38px_var(--sf-shadow)] transition-smooth animate-in slide-in-from-right"]}
           >
             <%!-- Drawer Header --%>
             <div class={["sf-task-detail-header flex items-center justify-between border-b border-[var(--sf-hairline)] p-4"]}>
@@ -2429,78 +2429,6 @@
 
       </div>
 
-        <%= if match?({:task, _}, @pending_task_confirmation) do %>
-          <% {:task, pending_task} = @pending_task_confirmation %>
-          <div
-            id={"task-delete-confirmation-#{pending_task.id}"}
-            phx-hook="ResponsiveSheet"
-            role="presentation"
-            data-sheet-close-event="cancel_task_delete"
-            data-sheet-return-id={"delete-task-trigger-#{pending_task.id}"}
-            data-sheet-background-id="workspace-views"
-            class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] p-4 sm:items-center"
-          >
-            <div
-              id={"task-delete-confirmation-dialog-#{pending_task.id}"}
-              phx-hook="ModalFocus"
-              data-modal-focus
-              data-cancel-event="cancel_task_delete"
-              data-initial-focus="#cancel-task-delete"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="task-delete-confirmation-title"
-              tabindex="-1"
-              class="sf-chassis w-full max-w-md p-6"
-            >
-              <h2 id="task-delete-confirmation-title" class="text-lg font-semibold text-[var(--sf-text-primary)]">
-                Delete task?
-              </h2>
-              <p class="mt-2 text-sm text-[var(--sf-text-secondary)]">
-                This permanently removes <strong>{pending_task.title}</strong> and its subtasks.
-              </p>
-              <div class="mt-6 flex justify-end gap-3">
-                <button id="cancel-task-delete" type="button" phx-click="cancel_task_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
-                <button id="confirm-task-delete" type="button" phx-click="confirm_task_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete task</button>
-              </div>
-            </div>
-          </div>
-        <% end %>
-
-        <%= if match?({:subtask, _, _}, @pending_task_confirmation) do %>
-          <% {:subtask, pending_subtask_task, pending_subtask_id} = @pending_task_confirmation %>
-          <div
-            id={"subtask-delete-confirmation-#{pending_subtask_id}"}
-            phx-hook="ResponsiveSheet"
-            role="presentation"
-            data-sheet-close-event="cancel_subtask_delete"
-            data-sheet-return-id={"delete-subtask-trigger-#{pending_subtask_id}"}
-            data-sheet-background-id="workspace-views"
-            class="fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] p-4 sm:items-center"
-          >
-            <div
-              id={"subtask-delete-confirmation-dialog-#{pending_subtask_id}"}
-              phx-hook="ModalFocus"
-              data-modal-focus
-              data-cancel-event="cancel_subtask_delete"
-              data-initial-focus="#cancel-subtask-delete"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="subtask-delete-confirmation-title"
-              tabindex="-1"
-              class="sf-chassis w-full max-w-md p-6"
-            >
-              <h2 id="subtask-delete-confirmation-title" class="text-lg font-semibold text-[var(--sf-text-primary)]">
-                Delete subtask?
-              </h2>
-              <p class="mt-2 text-sm text-[var(--sf-text-secondary)]">This removes the selected checklist item.</p>
-              <div class="mt-6 flex justify-end gap-3">
-                <button id="cancel-subtask-delete" type="button" phx-click="cancel_subtask_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
-                <button id="confirm-subtask-delete" type="button" phx-click="confirm_subtask_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete subtask</button>
-              </div>
-            </div>
-          </div>
-        <% end %>
-
       <%!-- Shared command dock --%>
       <%= if @active_view != "kanban" do %>
         <.shared_command_dock workspace_assigns={assigns} />
@@ -2508,6 +2436,78 @@
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>
     </main>
   </div>
+
+  <%= if match?({:task, _}, @pending_task_confirmation) do %>
+    <% {:task, pending_task} = @pending_task_confirmation %>
+    <div
+      id={"task-delete-confirmation-#{pending_task.id}"}
+      phx-hook="ResponsiveSheet"
+      role="presentation"
+      data-sheet-close-event="cancel_task_delete"
+      data-sheet-return-id={"kanban-channel-trigger-#{pending_task.status}"}
+      data-sheet-background-id="workspace-views"
+      class="kanban-confirmation-overlay fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
+    >
+      <div
+        id={"task-delete-confirmation-dialog-#{pending_task.id}"}
+        phx-hook="ModalFocus"
+        data-modal-focus
+        data-cancel-event="cancel_task_delete"
+        data-initial-focus="#cancel-task-delete"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-delete-confirmation-title"
+        tabindex="-1"
+        class="kanban-confirmation-dialog sf-chassis w-full max-w-md p-6"
+      >
+        <h2 id="task-delete-confirmation-title" class="text-lg font-semibold text-[var(--sf-text-primary)]">
+          Delete task?
+        </h2>
+        <p class="mt-2 text-sm text-[var(--sf-text-secondary)]">
+          This permanently removes <strong>{pending_task.title}</strong> and its subtasks.
+        </p>
+        <div class="mt-6 flex justify-end gap-3">
+          <button id="cancel-task-delete" type="button" phx-click="cancel_task_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
+          <button id="confirm-task-delete" type="button" phx-click="confirm_task_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete task</button>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <%= if match?({:subtask, _, _}, @pending_task_confirmation) do %>
+    <% {:subtask, pending_subtask_task, pending_subtask_id} = @pending_task_confirmation %>
+    <div
+      id={"subtask-delete-confirmation-#{pending_subtask_id}"}
+      phx-hook="ResponsiveSheet"
+      role="presentation"
+      data-sheet-close-event="cancel_subtask_delete"
+      data-sheet-return-id="task-detail-title"
+      data-sheet-background-id="workspace-views"
+      class="kanban-confirmation-overlay fixed inset-0 z-50 flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
+    >
+      <div
+        id={"subtask-delete-confirmation-dialog-#{pending_subtask_id}"}
+        phx-hook="ModalFocus"
+        data-modal-focus
+        data-cancel-event="cancel_subtask_delete"
+        data-initial-focus="#cancel-subtask-delete"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="subtask-delete-confirmation-title"
+        tabindex="-1"
+        class="kanban-confirmation-dialog sf-chassis w-full max-w-md p-6"
+      >
+        <h2 id="subtask-delete-confirmation-title" class="text-lg font-semibold text-[var(--sf-text-primary)]">
+          Delete subtask?
+        </h2>
+        <p class="mt-2 text-sm text-[var(--sf-text-secondary)]">This removes the selected checklist item.</p>
+        <div class="mt-6 flex justify-end gap-3">
+          <button id="cancel-subtask-delete" type="button" phx-click="cancel_subtask_delete" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
+          <button id="confirm-subtask-delete" type="button" phx-click="confirm_subtask_delete" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Delete subtask</button>
+        </div>
+      </div>
+    </div>
+  <% end %>
 
 
 
