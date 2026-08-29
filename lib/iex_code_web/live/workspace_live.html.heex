@@ -1439,31 +1439,42 @@
         <% end %>
 
         <!-- DEDICATED DEEP RESEARCH WORKSPACE -->
-        <%= if @active_tab == "research" do %>
+        <%= if @active_view == "research" do %>
           <% level = research_level_semantics(@research_launch_level) %>
+          <.workbench_chassis
+            id="instrument-workbench-research"
+            surface="research"
+            index="03"
+            title="Research Radar"
+            status={research_workbench_status(@selected_research_run, @research_results)}
+            return_to={workspace_path(@workspace_route, "deck")}
+            return_instrument_id="instrument-card-research"
+          >
+            <:primary_action>
+              <.link
+                id="research-open-settings"
+                navigate={settings_path(@workspace_route, "providers")}
+                class="sf-control min-h-11 inline-flex items-center justify-center gap-2 px-4 text-sm font-semibold"
+              >
+                <.icon name="hero-adjustments-horizontal" class="h-4 w-4" /> Provider settings
+              </.link>
+            </:primary_action>
+            <:primary_field>
           <div id="deep-research-page" class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
             <div class="mx-auto max-w-7xl space-y-5">
-              <header class="flex flex-col gap-5 border-b border-[#252c35] pb-6 lg:flex-row lg:items-end lg:justify-between">
+              <header class="flex flex-col gap-5 border-b border-[var(--sf-hairline)] pb-6 lg:flex-row lg:items-end lg:justify-between">
                 <div class="max-w-3xl">
-                  <div class="mb-2 flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-300">
-                    <span class="h-1.5 w-1.5 bg-violet-400"></span> Evidence workspace
+                  <div class="mb-2 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.2em] text-[var(--sf-live-text)]">
+                    <span class="h-1.5 w-1.5 bg-[var(--sf-live-mark)]"></span> Evidence workspace
                   </div>
-                  <h2 class="text-3xl font-semibold tracking-[-0.04em] text-white sm:text-4xl">
+                  <h2 class="text-3xl font-semibold tracking-[-0.04em] text-[var(--sf-text-primary)] sm:text-4xl">
                     Deep research, without hidden work.
                   </h2>
-                  <p class="mt-3 max-w-[68ch] text-sm leading-6 text-gray-400">
+                  <p class="mt-3 max-w-[68ch] text-sm leading-6 text-[var(--sf-text-secondary)]">
                     Define an exact bounded investigation, attach prior research, and keep the
                     requested execution contract visible before any work begins.
                   </p>
                 </div>
-                <.link
-                  id="research-open-settings"
-                  navigate={~p"/sessions/#{@session.id}/settings#providers"}
-                  class="inline-flex min-h-11 items-center justify-center gap-2 border border-[#303844] bg-[#11161d] px-4 font-mono text-[10px] font-semibold uppercase tracking-wider text-gray-300 transition-colors hover:border-violet-400/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60"
-                >
-                  <.icon name="hero-adjustments-horizontal" class="h-4 w-4 text-violet-300" />
-                  Provider settings
-                </.link>
               </header>
 
               <div class="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]">
@@ -1472,8 +1483,10 @@
                   id="deep-research-form"
                   phx-change="update_research_launch"
                   phx-submit="submit_deep_research"
-                  class="min-w-0 border border-[#29313a] bg-[#0d1218] p-4 sm:p-5"
+                  class="min-w-0 border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-4 sm:p-5"
                 >
+                  <section id="research-stage-objective" class="research-stage">
+                    <div class="research-stage-heading"><span class="sf-metadata">01</span><h3>Objective</h3></div>
                   <input
                     id="deep-research-request-id"
                     type="hidden"
@@ -1482,12 +1495,12 @@
                   />
                   <div class="mb-5 flex items-center justify-between gap-4">
                     <div>
-                      <h3 class="text-base font-semibold text-white">Research brief</h3>
-                      <p class="mt-1 text-xs leading-5 text-gray-500">
+                      <h3 class="text-base font-semibold text-[var(--sf-text-primary)]">Research brief</h3>
+                      <p class="mt-1 text-xs leading-5 text-[var(--sf-text-secondary)]">
                         Queued as a durable finite DAG with exact level limits.
                       </p>
                     </div>
-                    <span class="border border-violet-500/20 bg-violet-500/[0.05] px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-violet-300">
+                    <span class="border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">
                       async · durable
                     </span>
                   </div>
@@ -1500,29 +1513,32 @@
                     label="What should I investigate?"
                     placeholder="Compare evidence, identify disagreements, and recommend a defensible implementation…"
                     required
-                    class="block min-h-32 w-full resize-y border border-[#303844] bg-[#090d12] px-3 py-2.5 text-sm leading-6 text-gray-100 outline-none transition-colors placeholder:text-gray-700 focus:border-violet-500/60 focus-visible:ring-2 focus-visible:ring-violet-400/30"
+                    class="block min-h-32 w-full resize-y border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2.5 text-sm leading-6 text-[var(--sf-text-primary)] outline-none transition-colors placeholder:text-[var(--sf-text-secondary)] focus:border-[var(--sf-live-mark)] focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
                   />
 
+                  </section>
+                  <section id="research-stage-depth" class="research-stage">
+                    <div class="research-stage-heading"><span class="sf-metadata">02</span><h3>Depth</h3></div>
                   <fieldset id="deep-research-levels" class="mt-5">
-                    <legend class="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    <legend class="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-[var(--sf-text-secondary)]">
                       Research level
                     </legend>
                     <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                       <label
                         :for={
-                          {level_name, title, contract} <- [
-                            {"low", "Low", "1 round · 2-way query fanout"},
-                            {"medium", "Medium", "2 rounds · 3-way query fanout"},
-                            {"high", "High", "3 rounds · 4-way query fanout"},
-                            {"ultra", "Ultra", "4 rounds · 10-way query fanout"}
+                          {level_name, title} <- [
+                            {"low", "Low"},
+                            {"medium", "Medium"},
+                            {"high", "High"},
+                            {"ultra", "Ultra"}
                           ]
                         }
                         class={[
-                          "cursor-pointer border p-3 transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-violet-300/70",
+                          "cursor-pointer border p-3 transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-[var(--sf-focus-ring)]",
                           @research_launch_level == level_name &&
-                            "border-violet-400/50 bg-violet-500/[0.07]",
+                            "border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)]",
                           @research_launch_level != level_name &&
-                            "border-[#303844] bg-[#10151b] hover:border-[#46515e]"
+                            "border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] hover:border-[var(--sf-text-secondary)]"
                         ]}
                         data-level={level_name}
                         data-subagents={research_level_semantics(level_name).subagents}
@@ -1537,33 +1553,36 @@
                           checked={@research_launch_level == level_name}
                           class="sr-only"
                         />
-                        <span class="block text-sm font-semibold text-gray-100">{title}</span>
-                        <span class="mt-1 block font-mono text-[9px] uppercase tracking-wider text-gray-500">
-                          {contract}
+                        <span class="block text-sm font-semibold text-[var(--sf-text-primary)]">{title}</span>
+                        <span class="mt-1 block font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                          {research_level_contract(level_name)}
                         </span>
                       </label>
                     </div>
                   </fieldset>
 
                   <div class="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div class="border border-[#29313a] bg-[#10151b] px-3 py-2.5">
-                      <p class="font-mono text-[9px] uppercase tracking-wider text-gray-600">
+                    <div class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-3 py-2.5">
+                      <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                         Requested rounds
                       </p>
-                      <p class="mt-1 text-xs text-gray-300">
+                      <p class="mt-1 text-xs text-[var(--sf-text-primary)]">
                         {level.rounds} sequential evidence rounds
                       </p>
                     </div>
-                    <div class="border border-[#29313a] bg-[#10151b] px-3 py-2.5">
-                      <p class="font-mono text-[9px] uppercase tracking-wider text-gray-600">
+                    <div class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-3 py-2.5">
+                      <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                         Per-search-step query fanout
                       </p>
-                      <p class="mt-1 text-xs text-gray-300">
+                      <p class="mt-1 text-xs text-[var(--sf-text-primary)]">
                         Up to {level.subagents} bounded asynchronous queries
                       </p>
                     </div>
                   </div>
 
+                  </section>
+                  <section id="research-stage-sources" class="research-stage">
+                    <div class="research-stage-heading"><span class="sf-metadata">03</span><h3>Sources &amp; attachments</h3></div>
                   <div class="mt-5 grid gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]">
                     <.input
                       field={@research_form[:max_sources]}
@@ -1573,14 +1592,14 @@
                       max="40"
                       label="Maximum sources"
                       value={@research_launch_sources}
-                      class="block min-h-11 w-full border border-[#303844] bg-[#090d12] px-3 py-2 text-sm text-gray-100 outline-none focus:border-violet-500/60"
+                      class="block min-h-11 w-full border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 text-sm text-[var(--sf-text-primary)] outline-none focus:border-[var(--sf-live-mark)]"
                     />
                     <div>
                       <div class="flex items-center justify-between gap-3">
-                        <p class="font-mono text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                        <p class="font-mono text-xs font-semibold uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           Ranked providers
                         </p>
-                        <span class="font-mono text-[9px] text-gray-600">
+                        <span class="font-mono text-xs text-[var(--sf-text-secondary)]">
                           {length(@research_launch_providers)} selected
                         </span>
                       </div>
@@ -1588,11 +1607,11 @@
                         <label
                           :for={provider <- @settings.search_provider_order || ["duckduckgo"]}
                           class={[
-                            "inline-flex min-h-9 items-center gap-2 border border-[#303844] bg-[#10151b] px-2.5 font-mono text-[9px]",
+                            "inline-flex min-h-11 items-center gap-2 border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-2.5 font-mono text-xs",
                             research_provider_selectable?(@settings, provider) &&
-                              "cursor-pointer text-gray-400",
+                              "cursor-pointer text-[var(--sf-text-secondary)]",
                             !research_provider_selectable?(@settings, provider) &&
-                              "cursor-not-allowed text-gray-700 opacity-60"
+                              "cursor-not-allowed text-[var(--sf-text-secondary)] opacity-60"
                           ]}
                           title={
                             if research_provider_selectable?(@settings, provider),
@@ -1612,7 +1631,7 @@
                             value="true"
                             checked={provider in @research_launch_providers}
                             disabled={!research_provider_selectable?(@settings, provider)}
-                            class="h-3.5 w-3.5 accent-violet-400"
+                            class="h-3.5 w-3.5 accent-[var(--sf-live-mark)]"
                           />
                           {String.replace(provider, "_", " ")}
                         </label>
@@ -1620,13 +1639,13 @@
                     </div>
                   </div>
 
-                  <div class="mt-5 border border-[#29313a] bg-[#0a0f14] p-3">
+                  <div class="mt-5 border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] p-3">
                     <div class="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p class="font-mono text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                        <p class="font-mono text-xs font-semibold uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           Prior research
                         </p>
-                        <p class="mt-1 text-[11px] leading-5 text-gray-600">
+                        <p class="mt-1 text-sm leading-5 text-[var(--sf-text-secondary)]">
                           Attach up to 12 ready results from this session by public result number.
                         </p>
                       </div>
@@ -1636,9 +1655,9 @@
                         phx-click="toggle_research_attachment_picker"
                         aria-expanded={@research_attachment_picker_open?}
                         aria-controls="deep-research-attachment-picker"
-                        class="inline-flex min-h-10 items-center gap-2 border border-[#303844] px-3 font-mono text-[9px] uppercase tracking-wider text-gray-300 hover:border-violet-400/40"
+                        class="inline-flex min-h-11 items-center gap-2 border border-[var(--sf-hairline)] px-3 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)] hover:border-[var(--sf-live-mark)]"
                       >
-                        <.icon name="hero-paper-clip" class="h-3.5 w-3.5 text-violet-300" />
+                        <.icon name="hero-paper-clip" class="h-3.5 w-3.5 text-[var(--sf-live-text)]" />
                         Attach ready results
                       </button>
                     </div>
@@ -1650,7 +1669,7 @@
                         :for={
                           public_id <- @research_attachments |> MapSet.to_list() |> Enum.sort()
                         }
-                        class="max-w-full truncate border border-violet-500/20 bg-violet-500/[0.05] px-2 py-1 font-mono text-[9px] text-violet-200"
+                        class="max-w-full truncate border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 py-1 font-mono text-xs text-[var(--sf-live-text)]"
                         title={"Ready research result ##{public_id}"}
                       >
                         /deep_research {public_id}
@@ -1658,7 +1677,7 @@
                       <button
                         type="button"
                         phx-click="clear_research_attachments"
-                        class="px-2 py-1 font-mono text-[9px] text-gray-500 hover:text-white"
+                        class="px-2 py-1 font-mono text-xs text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                       >
                         Clear
                       </button>
@@ -1666,11 +1685,11 @@
                     <div
                       :if={@research_attachment_picker_open?}
                       id="deep-research-attachment-picker"
-                      class="mt-3 max-h-52 overflow-y-auto border-t border-[#29313a] pt-2"
+                      class="mt-3 max-h-52 overflow-y-auto border-t border-[var(--sf-hairline)] pt-2"
                     >
                       <p
                         :if={@research_results == []}
-                        class="py-5 text-center text-xs text-gray-600"
+                        class="py-5 text-center text-xs text-[var(--sf-text-secondary)]"
                       >
                         No ready research results in this session.
                       </p>
@@ -1687,80 +1706,102 @@
                           )
                         }
                         class={[
-                          "flex min-h-9 w-full items-center gap-2 px-2 text-left font-mono text-[10px] transition-colors",
+                          "flex min-h-11 w-full items-center gap-2 px-2 text-left font-mono text-xs transition-colors",
                           MapSet.member?(
                             @research_attachments,
                             research_result_public_id(result)
                           ) &&
-                            "bg-violet-500/[0.08] text-violet-200",
+                            "bg-[var(--sf-instrument-raised)] text-[var(--sf-live-text)]",
                           !MapSet.member?(
                             @research_attachments,
                             research_result_public_id(result)
                           ) &&
-                            "text-gray-500 hover:bg-[#151b22] hover:text-gray-200"
+                            "text-[var(--sf-text-secondary)] hover:bg-[var(--sf-instrument-raised)] hover:text-[var(--sf-text-primary)]"
                         ]}
                       >
                         <.icon name="hero-document-text" class="h-3.5 w-3.5 shrink-0" />
-                        <span class="shrink-0 text-violet-300">
+                        <span class="shrink-0 text-[var(--sf-live-text)]">
                           #{research_result_public_id(result)}
                         </span>
                         <span class="truncate">{research_result_label(result)}</span>
-                        <span class="ml-auto shrink-0 text-[9px] uppercase tracking-wider text-gray-600">
+                        <span class="ml-auto shrink-0 text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           {Map.get(result, :level)} · {Map.get(result, :source_count, 0)} sources
                         </span>
                       </button>
                     </div>
                   </div>
 
+                  </section>
+                  <section id="research-stage-contract" class="research-stage">
+                    <div class="research-stage-heading"><span class="sf-metadata">04</span><h3>Run contract</h3></div>
+                    <div id="research-run-contract" class="research-run-contract">
+                      {level.rounds} rounds · {level.subagents} query fanout · max {@research_launch_sources} sources
+                    </div>
                   <button
                     id="deep-research-submit"
                     type="submit"
                     phx-disable-with="Checking availability…"
-                    class="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 bg-violet-400 px-5 font-mono text-[11px] font-semibold uppercase tracking-wider text-[#0b0d12] transition-colors hover:bg-violet-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70"
+                    class="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[var(--sf-live-mark)] px-5 font-mono text-sm font-semibold uppercase tracking-wider text-[var(--sf-canvas-deep)] transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
                   >
                     <.icon name="hero-arrow-up-right" class="h-4 w-4" /> Queue deep research
                   </button>
+                  </section>
                 </.form>
 
+
+                <section id="research-progress-dag" :if={@selected_research_run && @research_dag_projection} class="research-progress" aria-label="Research progress">
+                  <DagComponents.dag_projection projection={@research_dag_projection} />
+                </section>
+                <section id="research-progress-fallback" :if={is_nil(@research_dag_projection)} data-run-status={if(@selected_research_run, do: @selected_research_run.status, else: "none")} class="research-progress-fallback" aria-label="Research progress">
+                  <%= if @selected_research_run do %>
+                    <p class="sf-metadata">Status · {@selected_research_run.status}</p>
+                    <p class="mt-1 text-sm">Progress · {min(max(@selected_research_run.progress || 0, 0), 100)}%</p>
+                    <ul :if={@selected_research_steps != []} class="mt-3 space-y-1 text-xs">
+                      <li :for={step <- Enum.take(@selected_research_steps, 32)}>{step.key} · {step.status}</li>
+                    </ul>
+                  <% else %>
+                    <p class="text-sm">No research run selected</p>
+                  <% end %>
+                </section>
                 <aside class="min-w-0 space-y-4">
                   <section
                     id="deep-research-semantics"
-                    class="border border-[#29313a] bg-[#0d1218] p-4 sm:p-5"
+                    class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-4 sm:p-5"
                   >
                     <div class="flex items-center justify-between gap-3">
-                      <h3 class="text-sm font-semibold text-white">Exact execution semantics</h3>
-                      <span class="border border-amber-400/25 bg-amber-400/[0.06] px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-amber-200">
+                      <h3 class="text-sm font-semibold text-[var(--sf-text-primary)]">Exact execution semantics</h3>
+                      <span class="border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">
                         active
                       </span>
                     </div>
-                    <p class="mt-3 text-[11px] leading-5 text-gray-400">
+                    <p class="mt-3 text-sm leading-5 text-[var(--sf-text-secondary)]">
                       Each named level creates an immutable finite research graph. Every step
                       records one logical lead; ranked and grounded search steps supervise bounded
                       asynchronous query tasks. Durable provider intents prevent ambiguous
                       paid-call replay.
                     </p>
-                    <dl class="mt-4 grid grid-cols-2 gap-px border border-[#29313a] bg-[#29313a]">
-                      <div class="bg-[#10151b] p-3">
-                        <dt class="font-mono text-[9px] uppercase tracking-wider text-gray-600">
+                    <dl class="mt-4 grid grid-cols-2 gap-px border border-[var(--sf-hairline)] bg-[var(--sf-hairline)]">
+                      <div class="bg-[var(--sf-instrument-raised)] p-3">
+                        <dt class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           Rounds
                         </dt>
-                        <dd class="mt-1 text-lg font-semibold text-gray-100">{level.rounds}</dd>
+                        <dd class="mt-1 text-lg font-semibold text-[var(--sf-text-primary)]">{level.rounds}</dd>
                       </div>
-                      <div class="bg-[#10151b] p-3">
-                        <dt class="font-mono text-[9px] uppercase tracking-wider text-gray-600">
+                      <div class="bg-[var(--sf-instrument-raised)] p-3">
+                        <dt class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           Search-step query fanout
                         </dt>
-                        <dd class="mt-1 text-lg font-semibold text-gray-100">
+                        <dd class="mt-1 text-lg font-semibold text-[var(--sf-text-primary)]">
                           {level.subagents}
                         </dd>
                       </div>
                     </dl>
-                    <div class="mt-4 border border-[#29313a] bg-[#0a0f14] p-3 text-[10px] leading-5 text-gray-500">
-                      The composer, <code class="text-gray-300">/research</code>, and this page
+                    <div class="mt-4 border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] p-3 text-xs leading-5 text-[var(--sf-text-secondary)]">
+                      The composer, <code class="text-[var(--sf-text-primary)]">/research</code>, and this page
                       all queue the exact finite DAG. Existing persisted legacy runs keep their
                       fixed-stage execution history without being reinterpreted.
                     </div>
-                    <div class="mt-4 border-t border-[#29313a] pt-3 text-[10px] leading-5 text-amber-200/70">
+                    <div class="mt-4 border-t border-[var(--sf-hairline)] pt-3 text-xs leading-5 text-[var(--sf-live-text)]/70">
                       Stage cards are observational. Pause, resume, cancel, and retry remain run-scoped
                       and generation-fenced in Mission Control. Immutable DAG runs cannot be steered.
                     </div>
@@ -1768,13 +1809,13 @@
 
                   <section
                     id="deep-research-run-list"
-                    class="border border-[#29313a] bg-[#0d1218] p-4 sm:p-5"
+                    class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-4 sm:p-5"
                   >
                     <div class="flex items-center justify-between gap-3">
-                      <h3 class="text-sm font-semibold text-white">Recent investigations</h3>
-                      <span class="font-mono text-[10px] text-gray-600">{length(@research_runs)}</span>
+                      <h3 class="text-sm font-semibold text-[var(--sf-text-primary)]">Recent investigations</h3>
+                      <span class="font-mono text-xs text-[var(--sf-text-secondary)]">{length(@research_runs)}</span>
                     </div>
-                    <div :if={@research_runs == []} class="py-8 text-center text-xs text-gray-600">
+                    <div :if={@research_runs == []} class="py-8 text-center text-xs text-[var(--sf-text-secondary)]">
                       No research runs in this session.
                     </div>
                     <button
@@ -1783,57 +1824,61 @@
                       type="button"
                       phx-click="open_research_run"
                       phx-value-id={run.id}
-                      class="mt-2 w-full border border-[#29313a] bg-[#10151b] p-3 text-left transition-colors hover:border-violet-400/30"
+                      aria-pressed={to_string(@selected_research_run && @selected_research_run.id == run.id)}
+                      class="mt-2 w-full border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-3 text-left transition-colors hover:border-[var(--sf-live-mark)]"
                     >
                       <div class="flex items-center justify-between gap-3">
-                        <span class="font-mono text-[9px] uppercase tracking-wider text-violet-300">{run.status}</span>
-                        <span class="font-mono text-[9px] tabular-nums text-gray-600">{run.progress ||
+                        <span class="font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">{run.status}</span>
+                        <span class="font-mono text-xs tabular-nums text-[var(--sf-text-secondary)]">{run.progress ||
                           0}%</span>
                       </div>
-                      <p class="mt-2 line-clamp-2 text-xs leading-5 text-gray-300">
-                        {run.objective}
-                      </p>
+                      <p class="mt-2 text-xs leading-5 text-[var(--sf-text-secondary)]">Persisted research run</p>
                     </button>
                   </section>
 
                   <section
                     id="deep-research-ready-results"
-                    class="border border-[#29313a] bg-[#0d1218] p-4 sm:p-5"
+                    class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-4 sm:p-5"
                   >
                     <div class="flex items-center justify-between gap-3">
                       <div>
-                        <h3 class="text-sm font-semibold text-white">Ready reports</h3>
-                        <p class="mt-1 text-[10px] leading-5 text-gray-600">
-                          Checksum-verified Markdown and self-contained HTML.
+                        <h3 class="text-sm font-semibold text-[var(--sf-text-primary)]">Ready reports</h3>
+                        <p class="mt-1 text-xs leading-5 text-[var(--sf-text-secondary)]">
+                          Recorded Markdown and self-contained HTML artifacts.
                         </p>
                       </div>
-                      <span class="font-mono text-[10px] text-gray-600">
+                      <span class="font-mono text-xs text-[var(--sf-text-secondary)]">
                         {length(@research_results)}
                       </span>
                     </div>
 
                     <div
                       :if={@research_results == []}
-                      class="py-8 text-center text-xs text-gray-600"
+                      class="py-8 text-center text-xs text-[var(--sf-text-secondary)]"
                     >
                       Completed reports will appear here with an integer result number.
                     </div>
 
                     <article
                       :for={result <- Enum.take(@research_results, 12)}
-                      id={"deep-research-result-#{research_result_public_id(result)}"}
-                      class="mt-3 border border-[#29313a] bg-[#10151b] p-3"
+                      id={"research-evidence-#{research_result_public_id(result)}"}
+                      data-evidence-level={Map.get(result, :level)}
+                      data-evidence-source-count={Map.get(result, :source_count, 0)}
+                      data-artifacts-recorded={to_string(is_binary(Map.get(result, :result_path)) and is_binary(Map.get(result, :html_path)))}
+                      data-digests-recorded={to_string(is_binary(Map.get(result, :markdown_sha256)) and is_binary(Map.get(result, :html_sha256)))}
+                      class="research-evidence mt-3 border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-3"
                     >
+                      <div id={"deep-research-result-#{research_result_public_id(result)}"} class="contents">
                       <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
-                          <p class="font-mono text-[9px] uppercase tracking-wider text-violet-300">
+                          <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">
                             Result #{research_result_public_id(result)} · {Map.get(result, :level)}
                           </p>
-                          <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-300">
-                            {research_result_label(result)}
+                          <p class="mt-1 text-xs leading-5 text-[var(--sf-text-primary)]">
+                            Persisted ready report · artifacts and digests recorded
                           </p>
                         </div>
-                        <span class="shrink-0 font-mono text-[9px] text-gray-600">
+                        <span class="shrink-0 font-mono text-xs text-[var(--sf-text-secondary)]">
                           {Map.get(result, :source_count, 0)} src
                         </span>
                       </div>
@@ -1843,7 +1888,7 @@
                           href={~p"/research/#{research_result_public_id(result)}/report"}
                           target="_blank"
                           rel="noopener noreferrer"
-                          class="inline-flex min-h-9 items-center justify-center gap-1 border border-violet-400/30 bg-violet-500/[0.06] px-2 font-mono text-[9px] uppercase tracking-wider text-violet-200 hover:border-violet-300/60"
+                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)] hover:border-[var(--sf-live-mark)]"
                         >
                           <.icon name="hero-arrow-top-right-on-square" class="h-3 w-3" /> Open
                         </.link>
@@ -1852,7 +1897,7 @@
                           href={
                             ~p"/research/#{research_result_public_id(result)}/report/download"
                           }
-                          class="inline-flex min-h-9 items-center justify-center gap-1 border border-[#303844] px-2 font-mono text-[9px] uppercase tracking-wider text-gray-400 hover:text-white"
+                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                         >
                           <.icon name="hero-arrow-down-tray" class="h-3 w-3" /> HTML
                         </.link>
@@ -1861,10 +1906,11 @@
                           href={
                             ~p"/research/#{research_result_public_id(result)}/result/download"
                           }
-                          class="inline-flex min-h-9 items-center justify-center gap-1 border border-[#303844] px-2 font-mono text-[9px] uppercase tracking-wider text-gray-400 hover:text-white"
+                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                         >
                           <.icon name="hero-document-arrow-down" class="h-3 w-3" /> MD
                         </.link>
+                      </div>
                       </div>
                     </article>
                   </section>
@@ -1872,6 +1918,18 @@
               </div>
             </div>
           </div>
+            </:primary_field>
+            <:signal_panel>
+              <section id="research-signal-panel" aria-label="Research readiness">
+                <p class="sf-metadata">Research signal</p>
+                <p class="mt-2 text-sm">{length(@research_runs)} recent investigations · {length(@research_results)} ready reports</p>
+                <p class="mt-2 text-xs text-[var(--sf-text-secondary)]">Depth, source bounds, and artifact readiness are persisted facts.</p>
+              </section>
+            </:signal_panel>
+            <:command_dock>
+              <.shared_command_dock workspace_assigns={assigns} />
+            </:command_dock>
+          </.workbench_chassis>
         <% end %>
 
         <!-- TAB: CHAT WITH SCROLL ASSISTANT MINIMAP -->
@@ -2475,7 +2533,7 @@
       </div>
 
       <%!-- Shared command dock --%>
-      <%= if @active_view not in ["kanban", "calendar", "swarm"] do %>
+      <%= if @active_view not in ["kanban", "calendar", "swarm", "research"] do %>
         <.shared_command_dock workspace_assigns={assigns} />
       <% end %>
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>

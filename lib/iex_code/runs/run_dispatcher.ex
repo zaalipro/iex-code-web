@@ -1723,7 +1723,10 @@ defmodule IexCode.Runs.RunDispatcher do
       kind: "deep_research",
       mode: "research",
       execution_engine: "dag_v1",
-      metadata: Map.put(metadata, "research", research),
+      metadata:
+        metadata
+        |> Map.put("projection", "dag_v1")
+        |> Map.put("research", research),
       max_attempts: 1
     })
     |> put_default_budget(:token_budget, budget_requirements.tokens)

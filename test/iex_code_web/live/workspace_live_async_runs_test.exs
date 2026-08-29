@@ -1293,6 +1293,7 @@ defmodule IexCodeWeb.WorkspaceLiveAsyncRunsTest do
     assert run.kind == "deep_research"
     assert run.mode == "research"
     assert run.execution_engine == "dag_v1"
+    assert run.metadata["projection"] == "dag_v1"
     assert run.priority == "high"
     assert run.max_attempts == 1
     assert run.token_budget == 100_000

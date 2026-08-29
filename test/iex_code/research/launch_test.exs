@@ -172,6 +172,7 @@ defmodule IexCode.Research.LaunchTest do
     assert duplicate.id == first.id
     assert first.request_key == request_key
     assert first.metadata["source"] == "canonical_launch"
+    assert first.metadata["projection"] == "dag_v1"
 
     assert first.metadata["research"]["provider_snapshot_ref"] =~
              "settings://research-routing/v2/"

@@ -45,6 +45,7 @@ defmodule IexCode.Research.EnqueueTest do
     assert run.cost_budget_cents > 0
     assert run.time_budget_ms == 20 * 60_000
     assert run.metadata["source"] == "test"
+    assert run.metadata["projection"] == "dag_v1"
 
     assert run.metadata["research"]["level_policy"] == %{
              "level" => "medium",
@@ -69,6 +70,35 @@ defmodule IexCode.Research.EnqueueTest do
     assert is_integer(result.id)
     assert result.level == "medium"
     assert result.status == "queued"
+  end
+
+  test "canonical producer overwrites projection while preserving metadata and idempotency",
+       context do
+    request_key = Ecto.UUID.generate()
+
+    attrs = %{
+      project_id: context.project.id,
+      session_id: context.session.id,
+      objective: "Trusted Research projection",
+      request_key: request_key,
+      metadata: %{
+        "source" => "direct_dispatcher",
+        "projection" => "legacy_v1",
+        "audit" => %{"origin" => "trusted"}
+      }
+    }
+
+    research =
+      strict_research(context, %{level: "low", ranked_providers: ["duckduckgo"], max_sources: 5})
+
+    assert {:ok, first} = RunDispatcher.enqueue_research(attrs, research)
+    assert {:ok, duplicate} = RunDispatcher.enqueue_research(attrs, research)
+    assert duplicate.id == first.id
+    assert first.metadata["projection"] == "dag_v1"
+    assert first.metadata["source"] == "direct_dispatcher"
+    assert first.metadata["audit"] == %{"origin" => "trusted"}
+    assert first.metadata["research"]["level"] == "low"
+    assert Results.get_by_run(first).id == Results.get_by_run(duplicate).id
   end
 
   test "invalid level and unavailable providers fail before inserting anything", context do

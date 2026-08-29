@@ -2567,3 +2567,86 @@
     scroll-behavior: auto;
   }
 }
+
+/* Research Radar: staged launch, authorized progress, and bounded evidence. */
+#instrument-workbench-research {
+  min-width: 0;
+}
+
+#instrument-workbench-research .sf-workbench-primary-field {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.research-stage {
+  min-width: 0;
+  border-top: 1px solid var(--sf-hairline);
+  padding-block: 1.25rem;
+}
+
+.research-stage:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.research-stage-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.research-stage-heading h3 {
+  color: var(--sf-text-primary);
+  font-size: 0.875rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.research-run-contract,
+.research-progress-fallback {
+  border: 1px solid var(--sf-hairline);
+  background-color: var(--sf-instrument-raised);
+  color: var(--sf-text-secondary);
+  padding: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.research-progress,
+.research-progress-fallback {
+  min-width: 0;
+}
+
+.research-evidence {
+  border-left: 3px solid var(--sf-live-mark);
+}
+
+#instrument-workbench-research :where(.research-stage label, .research-stage button, .research-evidence a) {
+  min-height: 2.75rem;
+}
+
+@media (min-width: 80rem) {
+  #deep-research-page > div > .grid > :where(.research-progress, .research-progress-fallback) {
+    grid-column: 1;
+  }
+
+  #deep-research-page > div > .grid > aside {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
+@media (max-width: 40rem) {
+  #deep-research-page {
+    padding: 1rem;
+  }
+
+  .research-stage {
+    padding-block: 1rem;
+  }
+
+  .research-evidence [class*="grid-cols-3"] {
+    grid-template-columns: 1fr;
+  }
+}

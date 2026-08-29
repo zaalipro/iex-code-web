@@ -23,6 +23,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   alias IexCode.Tools.Git.{DiffParser, HunkOps}
   alias IexCode.Tools.{TerminalServer, TerminalSession}
   alias IexCodeWeb.CommandPalette
+  alias IexCodeWeb.DagComponents
   alias IexCodeWeb.InstrumentSummary
   alias Phoenix.PubSub
   import IexCodeWeb.InstrumentComponents
@@ -114,7 +115,16 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     operations = Sessions.list_operations(session.id, limit: @operation_retained_limit)
     durable_runs = Runs.list_runs(session_id: session.id, limit: 100)
-    selected_run = List.first(durable_runs)
+    research_runs = research_runs(durable_runs)
+
+    selected_research_run =
+      if socket.assigns.live_action == :research, do: List.first(research_runs), else: nil
+
+    selected_research_steps = research_steps(selected_research_run)
+
+    selected_run =
+      if socket.assigns.live_action == :research, do: nil, else: List.first(durable_runs)
+
     run_events = if selected_run, do: Runs.list_latest_events(selected_run, limit: 500), else: []
     run_steps = if selected_run, do: Runs.list_step_summaries(selected_run), else: []
     run_approvals = if selected_run, do: Runs.list_approvals(selected_run), else: []
@@ -125,7 +135,11 @@ defmodule IexCodeWeb.WorkspaceLive do
     run_agent_receipts = run_agent_control_receipts(selected_run)
     workspace_locks = Runs.list_workspace_locks(project_id: project.id, active: true)
     settings = Settings.get_settings()
-    ready_research_results = ResearchResults.list_ready(session_id: session.id)
+
+    ready_research_results =
+      ResearchResults.list_ready(session_id: session.id)
+      |> scoped_research_results(research_runs)
+
     latest_message = List.first(Sessions.list_messages(session.id, limit: 1, content_limit: 160))
     files = []
     sessions = Sessions.list_sessions_for_project(project.id)
@@ -210,7 +224,13 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:run_setup_research_level, settings.research_level || "medium")
       |> assign(:run_setup_research_sources, settings.research_max_sources || 12)
       |> assign(:run_setup_providers, enabled_search_providers(settings))
-      |> assign(:research_runs, research_runs(durable_runs))
+      |> assign(:research_runs, research_runs)
+      |> assign(:selected_research_run, selected_research_run)
+      |> assign(:selected_research_steps, selected_research_steps)
+      |> assign(
+        :research_dag_projection,
+        research_dag_projection(selected_research_run, selected_research_steps)
+      )
       |> assign(:research_launch_level, settings.research_level || "medium")
       |> assign(:research_launch_sources, settings.research_max_sources || 12)
       |> assign(:research_launch_providers, enabled_research_launch_providers(settings))
@@ -624,7 +644,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                   :workspace_locks,
                   Runs.list_workspace_locks(project_id: project.id, active: true)
                 )
-                |> assign_run_projection(new_session.id)
+                |> assign_session_run_projection(new_session.id)
                 |> refresh_research_results()
                 |> clear_research_attachments()
 
@@ -3331,7 +3351,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
             {:noreply,
              socket
-             |> select_run_projection(run)
+             |> select_research_projection(run)
              |> assign(:active_tab, "research")
              |> clear_research_attachments()
              |> assign(:research_form, to_form(params, as: :research))
@@ -3359,19 +3379,21 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("open_research_run", %{"id" => run_id}, socket) do
-    case Runs.get_run(run_id) do
+    case safe_get_run(run_id) do
       %Runs.Run{session_id: session_id, kind: "deep_research"} = run
       when session_id == socket.assigns.session.id ->
         {:noreply,
          socket
-         |> select_run_projection(run)
-         |> assign(:active_tab, "swarm")
-         |> push_patch(to: ~p"/sessions/#{socket.assigns.session.id}")}
+         |> select_research_projection(run)
+         |> push_patch(to: research_path(socket.assigns.workspace_route))}
 
       _other ->
         {:noreply, put_flash(socket, :error, "Research run not found in this session")}
     end
   end
+
+  def handle_event("open_research_run", _params, socket),
+    do: {:noreply, put_flash(socket, :error, "Research run not found in this session")}
 
   @impl true
   def handle_event("open_research_settings", _params, socket) do
@@ -4542,7 +4564,16 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({:run_created, run}, socket) do
     if run.session_id == socket.assigns.session.id do
-      {:noreply, socket |> select_run_projection(run) |> refresh_run_summaries()}
+      socket =
+        if socket.assigns.active_view == "research" and run.kind == "deep_research" do
+          select_research_projection(socket, run)
+        else
+          if socket.assigns.active_view == "research",
+            do: socket,
+            else: select_run_projection(socket, run)
+        end
+
+      {:noreply, refresh_run_summaries(socket)}
     else
       {:noreply, socket}
     end
@@ -4553,18 +4584,26 @@ defmodule IexCodeWeb.WorkspaceLive do
     if run.session_id == socket.assigns.session.id do
       socket = sync_run_linked_task(socket, run)
 
-      if socket.assigns.selected_run && socket.assigns.selected_run.id == run.id do
-        {:noreply,
-         socket
-         |> select_run_projection(run)
-         |> refresh_research_results()
-         |> refresh_run_summaries()}
-      else
+      if socket.assigns.active_view == "research" do
         {:noreply,
          socket
          |> refresh_run_rows_preserving_selection()
-         |> refresh_research_results()
+         |> refresh_research_workbench()
          |> refresh_run_summaries()}
+      else
+        if socket.assigns.selected_run && socket.assigns.selected_run.id == run.id do
+          {:noreply,
+           socket
+           |> select_run_projection(run)
+           |> refresh_research_results()
+           |> refresh_run_summaries()}
+        else
+          {:noreply,
+           socket
+           |> refresh_run_rows_preserving_selection()
+           |> refresh_research_results()
+           |> refresh_run_summaries()}
+        end
       end
     else
       {:noreply, socket}
@@ -4573,21 +4612,25 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:run_event, event}, socket) do
-    if socket.assigns.selected_run && event.run_id == socket.assigns.selected_run.id do
-      if socket.assigns.selected_run.execution_engine == "dag_v1" do
-        {:noreply, refresh_selected_run(socket) |> refresh_run_summaries()}
-      else
-        updated_run = Runs.get_run(event.run_id) || socket.assigns.selected_run
-        events = Runs.list_latest_events(updated_run, limit: 500)
-
-        {:noreply,
-         socket
-         |> assign(:selected_run, updated_run)
-         |> assign(:run_event_rows, events)
-         |> refresh_run_summaries()}
-      end
-    else
+    if socket.assigns.active_view == "research" do
       {:noreply, refresh_run_summaries(socket)}
+    else
+      if socket.assigns.selected_run && event.run_id == socket.assigns.selected_run.id do
+        if socket.assigns.selected_run.execution_engine == "dag_v1" do
+          {:noreply, refresh_selected_run(socket) |> refresh_run_summaries()}
+        else
+          updated_run = Runs.get_run(event.run_id) || socket.assigns.selected_run
+          events = Runs.list_latest_events(updated_run, limit: 500)
+
+          {:noreply,
+           socket
+           |> assign(:selected_run, updated_run)
+           |> assign(:run_event_rows, events)
+           |> refresh_run_summaries()}
+        end
+      else
+        {:noreply, refresh_run_summaries(socket)}
+      end
     end
   end
 
@@ -4605,6 +4648,9 @@ defmodule IexCodeWeb.WorkspaceLive do
              :run_control_updated
            ] do
     cond do
+      socket.assigns.active_view == "research" ->
+        {:noreply, refresh_run_summaries(socket)}
+
       socket.assigns.selected_run && entity.run_id == socket.assigns.selected_run.id ->
         {:noreply, refresh_selected_run(socket) |> refresh_run_summaries()}
 
@@ -4941,6 +4987,8 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     socket
     |> refresh_run_summary_facts(runs, ready)
+    |> assign_research_projection(research_runs(runs))
+    |> assign(:research_results, scoped_research_results(ready, research_runs(runs)))
     |> rebuild_instrument_summaries()
   end
 
@@ -5218,11 +5266,15 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @spec workspace_path(:root | {:session, String.t()}, String.t()) :: String.t()
   defp workspace_path(:root, "deck"), do: ~p"/"
-  defp workspace_path(:root, "research"), do: ~p"/research"
+  defp workspace_path(:root, "research"), do: research_path(:root)
   defp workspace_path(:root, view), do: ~p"/?view=#{view}"
   defp workspace_path({:session, id}, "deck"), do: ~p"/sessions/#{id}"
-  defp workspace_path({:session, id}, "research"), do: ~p"/sessions/#{id}/research"
+  defp workspace_path({:session, id}, "research"), do: research_path({:session, id})
   defp workspace_path({:session, id}, view), do: ~p"/sessions/#{id}?view=#{view}"
+
+  @spec research_path(:root | {:session, String.t()}) :: String.t()
+  defp research_path(:root), do: "/research"
+  defp research_path({:session, id}), do: "/sessions/#{id}/research"
 
   defp settings_path(:root, anchor), do: ~p"/settings" <> "##{anchor}"
 
@@ -5469,6 +5521,14 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp fetch_session(_), do: nil
+
+  defp safe_get_run(id) when is_binary(id) do
+    Runs.get_run(id)
+  rescue
+    _ in [Ecto.Query.CastError] -> nil
+  end
+
+  defp safe_get_run(_id), do: nil
 
   defp fetch_project(id) when is_binary(id) do
     Projects.get_project!(id)
@@ -6486,6 +6546,15 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:run_dispatcher_stats, safe_dispatcher_stats())
   end
 
+  defp assign_session_run_projection(%{assigns: %{active_view: "research"}} = socket, _session_id) do
+    socket
+    |> clear_selected_run_projection()
+    |> refresh_run_rows_preserving_selection()
+  end
+
+  defp assign_session_run_projection(socket, session_id),
+    do: assign_run_projection(socket, session_id)
+
   defp select_run_projection(socket, run) do
     approvals = Runs.list_approvals(run)
     session_runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
@@ -6584,6 +6653,68 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp research_runs(runs), do: Enum.filter(runs, &(&1.kind == "deep_research"))
+
+  defp scoped_research_results(results, runs) do
+    run_ids = runs |> Enum.map(& &1.id) |> MapSet.new()
+    Enum.filter(results, &MapSet.member?(run_ids, &1.run_id))
+  end
+
+  defp research_steps(nil), do: []
+  defp research_steps(run), do: Runs.list_step_summaries(run)
+
+  defp research_projection_marked?(%Runs.Run{metadata: metadata}) when is_map(metadata),
+    do: Map.get(metadata, "projection") == "dag_v1"
+
+  defp research_projection_marked?(_run), do: false
+
+  defp research_dag_projection(%Runs.Run{} = run, steps) do
+    if research_projection_marked?(run), do: strict_dag_projection(run, steps), else: nil
+  end
+
+  defp research_dag_projection(_run, _steps), do: nil
+
+  defp research_workbench_status(nil, []), do: "No research run selected"
+  defp research_workbench_status(nil, _results), do: "Ready evidence available"
+
+  defp research_workbench_status(%Runs.Run{status: status}, _results),
+    do: "Research #{String.capitalize(to_string(status))}"
+
+  defp select_research_projection(socket, %Runs.Run{} = run) do
+    steps = research_steps(run)
+
+    socket
+    |> assign(:selected_research_run, run)
+    |> assign(:selected_research_steps, steps)
+    |> assign(:research_dag_projection, research_dag_projection(run, steps))
+  end
+
+  defp assign_research_projection(socket, runs) do
+    selected_id =
+      socket.assigns[:selected_research_run] && socket.assigns.selected_research_run.id
+
+    selected = Enum.find(runs, &(&1.id == selected_id)) || List.first(runs)
+    steps = research_steps(selected)
+
+    socket
+    |> assign(:research_runs, runs)
+    |> assign(:selected_research_run, selected)
+    |> assign(:selected_research_steps, steps)
+    |> assign(:research_dag_projection, research_dag_projection(selected, steps))
+  end
+
+  defp refresh_research_workbench(socket) do
+    runs =
+      Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
+      |> research_runs()
+
+    ready =
+      ResearchResults.list_ready(session_id: socket.assigns.session.id)
+      |> scoped_research_results(runs)
+
+    socket
+    |> assign_research_projection(runs)
+    |> assign(:research_results, ready)
+  end
 
   defp enabled_form_providers(providers) when is_map(providers) do
     providers
@@ -6846,11 +6977,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp interactive_intent_tab(_intent, current), do: current
 
   defp refresh_research_results(socket) do
-    assign(
-      socket,
-      :research_results,
-      ResearchResults.list_ready(session_id: socket.assigns.session.id)
-    )
+    refresh_research_workbench(socket)
   end
 
   defp toggle_research_result(attachments, public_id) do
@@ -6962,6 +7089,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp research_level_semantics("high"), do: %{rounds: 3, subagents: 4}
   defp research_level_semantics("ultra"), do: %{rounds: 4, subagents: 10}
   defp research_level_semantics(_medium), do: %{rounds: 2, subagents: 3}
+
+  defp research_level_contract(level) do
+    semantics = research_level_semantics(level)
+    "#{semantics.rounds} rounds · #{semantics.subagents}-way query fanout"
+  end
 
   defp durable_goal_objective(title, ""), do: title
 

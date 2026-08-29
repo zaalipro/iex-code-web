@@ -1,5 +1,6 @@
 defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
   use IexCode.E2E.Case, async: false
+  import Ecto.Query, only: [from: 2]
 
   alias IexCode.Runs
   alias IexCode.Research.{Registry, Results}
@@ -139,6 +140,7 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     assert [run] = Runs.list_runs(session_id: session.id)
     assert run.kind == "deep_research"
     assert run.execution_engine == "dag_v1"
+    assert run.metadata["projection"] == "dag_v1"
     assert run.metadata["research"]["level"] == "ultra"
     assert run.metadata["research"]["level_policy"]["multistep_rounds"] == 4
     assert run.metadata["research"]["level_policy"]["async_subagents"] == 10
@@ -225,6 +227,20 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
 
     assert [run] = Runs.list_runs(session_id: session.id)
     assert run.request_key == request_id
+    assert run.metadata["projection"] == "dag_v1"
+    assert Results.get_by_run(run)
+
+    assert IexCode.Repo.aggregate(
+             from(result in IexCode.Research.ResearchResult, where: result.run_id == ^run.id),
+             :count
+           ) == 1
+
+    conflicting_payload = put_in(payload, ["research", "objective"], "Conflicting launch")
+    render_submit(view, "submit_deep_research", conflicting_payload)
+
+    assert has_element?(view, "#flash-error", "request_key_conflict")
+    assert [same_run] = Runs.list_runs(session_id: session.id)
+    assert same_run.id == run.id
   end
 
   test "slash command opens the ready-result picker and enforces session scope", %{
