@@ -10,7 +10,7 @@ class Media {
   change(matches) { this.matches = matches; for (const listener of this.listeners) listener({matches}) }
 }
 
-function setup(matches) {
+function setup(matches, {sheetOwner = true} = {}) {
   const media = new Media(matches)
   const listeners = new Set()
   const target = {
@@ -21,7 +21,9 @@ function setup(matches) {
     setAttribute(name, value) { this.attrs.set(name, String(value)) },
     removeAttribute(name) { this.attrs.delete(name) }
   }
-  const sheet = {dataset: {sheetBackgroundId: "workspace-shell", responsiveSheetActive: matches ? "true" : undefined}}
+  const sheet = sheetOwner
+    ? {dataset: {sheetBackgroundId: "workspace-shell", responsiveSheetActive: matches ? "true" : undefined}}
+    : null
   const document = {
     body: {},
     activeElement: null,
@@ -67,22 +69,22 @@ function setup(matches) {
   }
 }
 
-test("ModalFocus hands ownership 639 to 640 and keeps detail inert until desktop takes over", () => {
-  const h = setup(true)
-  assert.equal(h.target.inert, false)
-  assert.equal(h.listeners.size, 0)
-  h.media.change(false)
+test("standalone ModalFocus retains full ownership at 639px without a ResponsiveSheet", () => {
+  const h = setup(true, {sheetOwner: false})
   assert.equal(h.target.inert, true)
   assert.equal(h.listeners.size, 1)
   h.restore()
 })
 
-test("ModalFocus hands ownership 640 to 639 without leaving a desktop listener", () => {
+test("nested ModalFocus hands ownership after the outer ResponsiveSheet settles", () => {
   const h = setup(false)
   assert.equal(h.target.inert, true)
   assert.equal(h.listeners.size, 1)
-  h.media.change(true)
+  h.hook.coordinator.beforeMobileActivate()
   assert.equal(h.target.inert, false)
   assert.equal(h.listeners.size, 0)
+  h.hook.coordinator.afterMobileDeactivate()
+  assert.equal(h.target.inert, true)
+  assert.equal(h.listeners.size, 1)
   h.restore()
 })

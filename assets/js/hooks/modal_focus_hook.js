@@ -16,13 +16,13 @@ export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
         this.el.closest?.('[phx-hook="ResponsiveSheet"]'),
         window
       )
-      this.media = window.matchMedia("(max-width: 639px)")
-      this.mobileSheetDelegated = this.mobileSheetDelegated || this.media.matches === true
+      this.sheet = this.el.closest?.('[phx-hook="ResponsiveSheet"]') || null
       this.setupDesktop = () => {
         if (this.desktopOwned) return
         this.desktopOwned = true
         const activeElement = document.activeElement
-        this.previouslyFocused = activeElement instanceof HTMLElement && activeElement !== document.body
+        this.previouslyFocused = activeElement instanceof HTMLElement && activeElement !== document.body &&
+            !this.sheet?.contains?.(activeElement)
           ? activeElement
           : getLastInteractionTarget()?.isConnected ? getLastInteractionTarget() : null
         this.previouslyFocusedId = this.previouslyFocused?.id || null
@@ -90,30 +90,13 @@ export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
         activateDesktop: () => this.setupDesktop(),
         deactivateDesktop: () => this.teardownDesktop()
       })
-      this.sheet = this.el.closest?.('[phx-hook="ResponsiveSheet"]') || null
       if (this.sheet) this.sheet.__responsiveModalFocusCoordinator = this.coordinator
-      this.syncOwnership = () => {
-        const mobile = responsiveSheetOwnsFocus(
-          this.el.closest?.('[phx-hook="ResponsiveSheet"]'),
-          window
-        ) || this.media.matches === true
-        if (mobile) {
-          this.coordinator.beforeMobileActivate()
-          this.mobileSheetDelegated = true
-        } else {
-          this.mobileSheetDelegated = false
-          this.coordinator.afterMobileDeactivate()
-        }
-      }
-      this.handleBreakpointChange = () => this.syncOwnership()
-      this.media.addEventListener?.("change", this.handleBreakpointChange)
       this.coordinator.mount(this.mobileSheetDelegated)
     },
     updated() {
-      this.syncOwnership?.()
+      if (!this.sheet && !this.desktopOwned) this.coordinator?.afterMobileDeactivate()
     },
     destroyed() {
-      this.media?.removeEventListener?.("change", this.handleBreakpointChange)
       this.coordinator?.destroy()
       if (this.sheet?.__responsiveModalFocusCoordinator === this.coordinator) {
         delete this.sheet.__responsiveModalFocusCoordinator
