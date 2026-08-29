@@ -296,6 +296,12 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     |> render_submit()
 
     assert has_element?(view, "#prompt-research-attachment-#{result.id}")
+    assert has_element?(view, "#prompt-research-attachments[data-command-context]")
+
+    assert has_element?(
+             view,
+             "#prompt-form[data-command-has-context='true'] #prompt-research-attachments"
+           )
 
     view
     |> form("#prompt-form", %{"prompt" => "Use the attached audit to propose the next patch"})

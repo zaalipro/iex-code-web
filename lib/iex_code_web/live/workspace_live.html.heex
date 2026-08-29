@@ -2271,23 +2271,32 @@
             data-sheet-close-event="close_task_drawer"
             data-sheet-return-id={"task-card-#{@selected_task.id}"}
             data-sheet-background-id="kanban-board"
-            class="absolute inset-y-0 right-0 z-40 flex h-full w-full max-w-none flex-col overflow-y-auto border-l border-[#21262d] bg-[#11151c] shadow-2xl shadow-black/60 transition-smooth animate-in slide-in-from-right xl:relative xl:z-auto xl:w-96 xl:max-w-96 xl:shrink-0 xl:shadow-none"
+            class={["sf-task-detail-drawer absolute inset-y-0 right-0 z-40 flex h-full w-full max-w-none flex-col overflow-y-auto border-l border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] shadow-[0_24px_72px_-38px_var(--sf-shadow)] transition-smooth animate-in slide-in-from-right xl:relative xl:z-auto xl:w-96 xl:max-w-96 xl:shrink-0 xl:shadow-none"]}
           >
-            <!-- Drawer Header -->
-            <div class="p-4 border-b border-[#21262d] flex items-center justify-between">
+            <%!-- Drawer Header --%>
+            <div class={["sf-task-detail-header flex items-center justify-between border-b border-[var(--sf-hairline)] p-4"]}>
               <div class="flex items-center gap-2">
                 <span class={[
-                  "px-2 py-0.5 rounded-full text-[10px] font-mono uppercase font-bold flex items-center gap-1.5",
+                  "sf-pill flex items-center gap-1.5 px-2 py-0.5 font-mono text-[10px] font-bold uppercase",
                   @selected_task.status == "running" &&
-                    "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30",
+                    "border-[var(--sf-success-mark)] text-[var(--sf-success-text)]",
                   @selected_task.status != "running" &&
-                    "bg-gray-500/10 text-gray-400 border border-gray-500/30"
+                    "text-[var(--sf-text-secondary)]"
                 ]}>
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span class={[
+                    "h-1.5 w-1.5 rounded-full",
+                    @selected_task.status == "running" && "bg-[var(--sf-success-mark)]",
+                    @selected_task.status != "running" && "bg-[var(--sf-text-secondary)]"
+                  ]}></span>
                   {@selected_task.status}
                 </span>
-                <h2 id="task-detail-title" class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}>Task details</h2>
-                <span class="font-mono text-xs text-gray-500">#{String.slice(
+                <h2
+                  id="task-detail-title"
+                  class={["text-sm font-semibold text-[var(--sf-text-primary)]"]}
+                >
+                  Task details
+                </h2>
+                <span class={["font-mono text-xs text-[var(--sf-text-secondary)]"]}>#{String.slice(
                   @selected_task.id,
                   0..5
                 )}</span>
@@ -2610,51 +2619,26 @@
         class="sf-command-composer max-h-[calc(100dvh-3.5rem)] shrink-0 overflow-y-auto overscroll-contain p-2 pt-0 sm:p-3 sm:pt-0 xl:p-5 xl:pt-0"
       >
         <div class="max-w-4xl mx-auto">
-          <!-- Announcement Pill -->
-          <div class="flex items-center gap-2 mb-2 px-2">
-            <span class="text-[#ff8a68] text-xs">◆</span>
-            <span class="hidden text-xs font-mono text-gray-400 sm:inline">
-              <%= if @dispatch_mode == "background" do %>
-                Durable mode · queued work continues after you disconnect
-              <% else %>
-                Interactive mode · keep this session open for live conversation
-              <% end %>
-            </span>
-            <button
-              id="toggle-run-setup"
-              type="button"
-              phx-click="toggle_run_setup"
-              data-run-setup-toggle
-              aria-expanded={@run_setup_open?}
-              aria-controls="run-setup-tray"
-              aria-label={if @run_setup_open?, do: "Close run setup", else: "Open run setup"}
-              class="sf-control ml-auto inline-flex min-h-11 items-center gap-1.5 px-3 font-mono text-xs transition-colors"
-            >
-              <.icon name="hero-adjustments-horizontal" class="h-3 w-3 text-[#ff8a68]" />
-              Run setup
-            </button>
-          </div>
-
           <%!-- Setup tray and prompt form stay siblings inside one shared vertical shell. --%>
           <div class={["sf-command-dock-shell"]}>
             <section
               :if={@run_setup_open?}
               id="run-setup-tray"
               aria-label="Run setup"
-              class="sf-sheet-scroll sf-run-setup-tray"
+              class={["sf-sheet-scroll sf-run-setup-tray"]}
             >
               <.form
                 for={@run_setup_form}
                 id="run-setup-panel"
                 phx-change="update_run_setup"
-                class="mb-3 max-h-[min(60dvh,42rem)] overflow-y-auto overscroll-contain border-b border-[#29313a] pb-3 pr-1"
+                class={["sf-run-setup-form mb-3 max-h-[min(60dvh,42rem)] overflow-y-auto overscroll-contain border-b pb-3 pr-1"]}
               >
                 <div class="mb-3 flex items-start justify-between gap-4">
                   <div>
-                    <p class="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[#ff8a68]">
+                    <p class={["font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--sf-live-text)]"]}>
                       Durable execution manifest
                     </p>
-                    <p class="mt-1 text-[11px] leading-5 text-gray-500">
+                    <p class={["mt-1 text-[11px] leading-5 text-[var(--sf-text-secondary)]"]}>
                       Persist mode, evidence providers, attempt policy, enforced token/time limits, and reported-cost budget.
                     </p>
                   </div>
@@ -2662,7 +2646,7 @@
                     type="button"
                     phx-click="toggle_run_setup"
                     aria-label="Close run setup"
-                    class="p-1 text-gray-500 transition-colors hover:text-white"
+                    class={["sf-control sf-run-setup-close inline-flex min-h-11 min-w-11 items-center justify-center p-2 text-[var(--sf-text-secondary)] transition-colors"]}
                   >
                     <.icon name="hero-x-mark" class="h-4 w-4" />
                   </button>
@@ -2681,7 +2665,7 @@
                       "Typed DAG (non-mutating)": "dag"
                     ]}
                     value={@run_setup_form[:mode].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:priority]}
@@ -2690,7 +2674,7 @@
                     label="Queue priority"
                     options={[Low: "low", Normal: "normal", High: "high", Critical: "critical"]}
                     value={@run_setup_form[:priority].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     :if={@run_setup_mode != "research"}
@@ -2701,15 +2685,15 @@
                     max="10"
                     label="Manual retry ceiling"
                     value={@run_setup_form[:max_attempts].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <div
                     :if={@run_setup_mode == "research"}
                     id="run-setup-research-attempt-policy"
-                    class="border border-amber-400/25 bg-amber-400/[0.05] px-3 py-2"
+                    class={["sf-run-setup-policy sf-control px-3 py-2"]}
                   >
-                    <p class="text-xs font-semibold text-amber-100">One paid run attempt</p>
-                    <p class="mt-1 text-[10px] leading-4 text-amber-200/70">
+                    <p class={["text-xs font-semibold text-[var(--sf-live-text)]"]}>One paid run attempt</p>
+                    <p class={["mt-1 text-[10px] leading-4 text-[var(--sf-text-secondary)]"]}>
                       Whole-run replay is disabled. Review failures before launching a new research run.
                     </p>
                   </div>
@@ -2722,7 +2706,7 @@
                     label="Time budget (min)"
                     value={@run_setup_form[:time_budget_minutes].value}
                     placeholder="Unset"
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:token_budget]}
@@ -2732,7 +2716,7 @@
                     label="Token budget"
                     value={@run_setup_form[:token_budget].value}
                     placeholder="Unset"
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:cost_budget_cents]}
@@ -2742,7 +2726,7 @@
                     label="Reported cost budget (¢)"
                     value={@run_setup_form[:cost_budget_cents].value}
                     placeholder="Unset"
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:agent_max_turns]}
@@ -2753,7 +2737,7 @@
                     label="Agent / coder turn limit"
                     aria-description="Applies to the single-agent loop or each durable swarm coding and diagnostic repair pass."
                     value={@run_setup_form[:agent_max_turns].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:swarm_agent_count]}
@@ -2763,7 +2747,7 @@
                     max="32"
                     label="Swarm agents"
                     value={@run_setup_form[:swarm_agent_count].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:swarm_max_retries]}
@@ -2773,7 +2757,7 @@
                     max="10"
                     label="Swarm correction retries"
                     value={@run_setup_form[:swarm_max_retries].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-[#ff7e5f]/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:research_level]}
@@ -2782,7 +2766,7 @@
                     label="Research effort"
                     options={[Low: "low", Medium: "medium", High: "high", Ultra: "ultra"]}
                     value={@run_setup_form[:research_level].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-violet-500/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                   <.input
                     field={@run_setup_form[:research_max_sources]}
@@ -2792,7 +2776,7 @@
                     max="40"
                     label="Maximum sources"
                     value={@run_setup_form[:research_max_sources].value}
-                    class="w-full border border-[#30363d] bg-[#0b0f14] px-2.5 py-2 text-xs text-white outline-none focus:border-violet-500/60"
+                    class={["sf-run-setup-input sf-control w-full rounded-xl px-2.5 py-2 text-xs outline-none transition-colors"]}
                   />
                 </div>
 
@@ -2800,7 +2784,7 @@
                   :if={@run_setup_policy_error}
                   id="run-setup-policy-error"
                   role="alert"
-                  class="mt-3 border border-rose-400/30 bg-rose-400/[0.06] px-3 py-2 text-xs leading-5 text-rose-200"
+                  class={["mt-3 border border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] px-3 py-2 text-xs leading-5 text-[var(--sf-live-text)]"]}
                 >
                   {@run_setup_policy_error}. The submitted value is preserved; fix it before queueing work.
                 </p>
@@ -2808,19 +2792,19 @@
                 <div
                   :if={@run_setup_mode == "dag"}
                   id="run-setup-dag-manifest"
-                  class="mt-3 border border-cyan-500/20 bg-cyan-500/[0.03] p-3"
+                  class={["sf-run-setup-dag mt-3 border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-3"]}
                 >
                   <div class="mb-2 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                      <p class="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-300">
+                      <p class={["font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sf-topology-text)]"]}>
                         Immutable typed manifest
                       </p>
-                      <p class="mt-1 max-w-2xl text-[11px] leading-5 text-gray-500">
+                      <p class={["mt-1 max-w-2xl text-[11px] leading-5 text-[var(--sf-text-secondary)]"]}>
                         Editable sample for common Phoenix repositories. Missing files fail visibly;
                         only bounded, registered project-read and research node kinds execute.
                       </p>
                     </div>
-                    <span class="font-mono text-[9px] uppercase tracking-wider text-gray-600">
+                    <span class={["font-mono text-[9px] uppercase tracking-wider text-[var(--sf-text-secondary)]"]}>
                       256 KB raw limit · 128 nodes
                     </span>
                   </div>
@@ -2832,13 +2816,13 @@
                     label="DAG manifest JSON"
                     value={@run_setup_dag_manifest_json}
                     spellcheck="false"
-                    class="block min-h-72 w-full resize-y border border-[#303844] bg-[#090d12] px-3 py-2.5 font-mono text-xs leading-5 text-gray-200 outline-none transition-colors placeholder:text-gray-700 focus:border-cyan-500/60 focus-visible:ring-2 focus-visible:ring-cyan-400/30"
+                    class={["sf-run-setup-manifest block min-h-72 w-full resize-y rounded-xl border border-[var(--sf-hairline)] bg-[var(--sf-code-surface)] px-3 py-2.5 font-mono text-xs leading-5 text-[var(--sf-code-text)] outline-none transition-colors placeholder:text-[var(--sf-text-secondary)] focus:border-[var(--sf-live-mark)] focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"]}
                   />
                   <p
                     :if={@run_setup_dag_error}
                     id="run-setup-dag-manifest-error"
                     role="alert"
-                    class="mt-2 text-xs text-rose-300"
+                    class={["mt-2 text-xs text-[var(--sf-live-text)]"]}
                   >
                     Manifest JSON exceeds the safe editor boundary. Shorten it before queueing.
                   </p>
@@ -2849,17 +2833,17 @@
                   disabled={@run_setup_mode != "research"}
                   aria-disabled={if(@run_setup_mode != "research", do: "true", else: "false")}
                   class={[
-                    "mt-2 border border-[#252c35] bg-[#0b0f14] px-3 py-2",
+                    "sf-run-setup-providers sf-control mt-2 px-3 py-2",
                     @run_setup_mode != "research" && "cursor-not-allowed opacity-40"
                   ]}
                 >
-                  <legend class="px-1 font-mono text-[9px] font-semibold uppercase tracking-wider text-gray-500">
+                  <legend class={["px-1 font-mono text-[9px] font-semibold uppercase tracking-wider text-[var(--sf-text-secondary)]"]}>
                     Federated providers · ordered fan-out
                   </legend>
                   <div class="flex flex-wrap gap-x-4 gap-y-1">
                     <label
                       :for={provider <- @settings.search_provider_order || ["duckduckgo"]}
-                      class="inline-flex min-h-8 cursor-pointer items-center gap-1.5 font-mono text-[11px] text-gray-400"
+                      class={["inline-flex min-h-8 cursor-pointer items-center gap-1.5 font-mono text-[11px] text-[var(--sf-text-secondary)]"]}
                     >
                       <input
                         type="hidden"
@@ -2872,7 +2856,7 @@
                         name={"run_setup[providers][#{provider}]"}
                         value="true"
                         checked={provider in @run_setup_providers}
-                        class="h-4 w-4 border-[#3b4551] bg-[#11161d] accent-violet-400"
+                        class={["h-4 w-4 border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] accent-[var(--sf-live-mark)]"]}
                       />
                       {provider |> String.replace("_", " ") |> String.capitalize()}
                     </label>
@@ -2885,6 +2869,7 @@
                 for={@prompt_form}
                 id="prompt-form"
                 phx-submit="submit_prompt"
+                data-command-has-context={to_string(MapSet.size(@research_attachments) > 0)}
                 class="sf-command-dock-form"
               >
                 <input
@@ -2893,28 +2878,6 @@
                   name="request_id"
                   value={@prompt_form[:request_id].value}
                 />
-                <div
-                  :if={MapSet.size(@research_attachments) > 0}
-                  id="prompt-research-attachments"
-                  class="flex flex-wrap items-center gap-1.5 px-2"
-                  aria-label="Attached deep research results"
-                >
-                  <span class="mr-1 font-mono text-[9px] uppercase tracking-wider text-gray-500">
-                    Context
-                  </span>
-                  <button
-                    :for={public_id <- @research_attachments |> MapSet.to_list() |> Enum.sort()}
-                    id={"prompt-research-attachment-#{public_id}"}
-                    type="button"
-                    phx-click="toggle_research_attachment"
-                    phx-value-id={public_id}
-                    title={"Remove ready research result ##{public_id}"}
-                    class="inline-flex min-h-7 items-center gap-1.5 border border-violet-500/25 bg-violet-500/[0.06] px-2 font-mono text-[9px] text-violet-200 transition-colors hover:border-rose-400/40 hover:text-rose-200"
-                  >
-                    <.icon name="hero-document-text" class="h-3 w-3" /> /deep_research {public_id}
-                    <.icon name="hero-x-mark" class="h-3 w-3" />
-                  </button>
-                </div>
                 <label for="prompt-textarea" class="sr-only">Agent prompt or swarm instruction</label>
                 <textarea
                   id="prompt-textarea"
@@ -2924,139 +2887,196 @@
                   aria-required="true"
                   phx-hook="KeyboardSubmit"
                   placeholder="What's my next task or swarm instruction? (e.g. /swarm fix authentication)"
-                  class="w-full bg-transparent border-0 text-white placeholder-gray-500 font-sans text-sm focus:outline-none focus:ring-0 resize-none px-2 py-1"
+                  class={["sf-command-textarea w-full resize-none border-0 bg-transparent px-2 py-1 font-sans text-sm"]}
                 ></textarea>
 
-                <!-- Bottom Action Toolbar -->
-                <div class="sf-command-dock-toolbar flex min-w-0 items-center justify-between gap-2 pt-2 border-t border-[#21262d] px-1">
-                  <!-- Left Tool / Model Badges -->
-                  <div data-command-tools class={["flex min-w-0 items-center gap-1.5 sm:gap-2"]}>
-                    <!-- Model Pill Dropdown -->
+                <%!-- Bottom Action Toolbar --%>
+                <div class={["sf-command-dock-toolbar flex min-w-0 items-center justify-between gap-2 border-t px-1 pt-2"]}>
+                  <%!-- Left Tool / Model Badges --%>
+                  <div
+                    data-command-context
+                    class={["sf-command-context flex min-w-0 flex-wrap items-center gap-1.5"]}
+                  >
                     <div
-                      class="relative"
-                      phx-click-away={@open_dropdown == "model" && "close_dropdowns"}
+                      :if={MapSet.size(@research_attachments) > 0}
+                      id="prompt-research-attachments"
+                      data-command-context
+                      class={["sf-command-attachments flex flex-wrap items-center gap-1.5 px-2"]}
+                      aria-label="Attached deep research results"
                     >
+                      <span class={["mr-1 font-mono text-[9px] uppercase tracking-wider text-[var(--sf-text-secondary)]"]}>
+                        Context
+                      </span>
                       <button
+                        :for={public_id <- @research_attachments |> MapSet.to_list() |> Enum.sort()}
+                        id={"prompt-research-attachment-#{public_id}"}
                         type="button"
-                        phx-click="toggle_dropdown"
-                        phx-value-name="model"
-                        aria-haspopup="listbox"
-                        aria-expanded={@open_dropdown == "model"}
-                        aria-controls={
-                          if(@open_dropdown == "model", do: "model-picker-listbox", else: nil)
-                        }
-                        aria-label="Select AI model"
-                        class="flex min-w-0 max-w-28 sm:max-w-none items-center bg-[#161b22] hover:bg-[#1c2128] border border-[#30363d] rounded-xl px-2.5 py-1 text-xs font-mono text-gray-200 transition-smooth"
+                        phx-click="toggle_research_attachment"
+                        phx-value-id={public_id}
+                        title={"Remove ready research result ##{public_id}"}
+                        class={["sf-command-attachment sf-control inline-flex min-h-7 items-center gap-1.5 px-2 font-mono text-[9px] transition-colors"]}
                       >
-                        <.icon name="hero-sparkles" class="w-3.5 h-3.5 text-amber-400 mr-1.5" />
-                        <span class="truncate">{@session.model_name}</span>
-                        <.icon name="hero-chevron-up-down" class="w-3 h-3 text-gray-400 ml-1.5" />
+                        <.icon name="hero-document-text" class="h-3 w-3" /> /deep_research {public_id}
+                        <.icon name="hero-x-mark" class="h-3 w-3" />
                       </button>
-
-                      <%= if @open_dropdown == "model" do %>
-                        <div
-                          id="model-picker-listbox"
-                          role="listbox"
-                          aria-label="AI model"
-                          class="absolute left-0 bottom-full mb-2 w-64 bg-[#11151c]/95 border border-[#21262d] rounded-2xl p-1.5 shadow-2xl backdrop-blur-xl z-50 animate-in fade-in zoom-in-95"
-                        >
-                          <div class="px-3 py-1.5 text-[10px] font-mono text-gray-400 uppercase tracking-wider border-b border-[#21262d] mb-1">
-                            Select AI Model
-                          </div>
-                          <%= for {model_id, label, provider_label, provider_id} <- [
-                            {"ox-alpha", "OX Alpha", "LLMotions · OpenAI-compatible", "openai"},
-                            {"gemini-3.7-flash-high", "Gemini 3.7 Flash High", "OpenAI-compatible", "openai"},
-                            {"deepseek-v4-pro", "DeepSeek V4 Pro", "OpenAI-compatible", "openai"},
-                            {"gpt-5.4-turbo", "GPT 5.4 Turbo", "OpenAI", "openai"},
-                            {"claude-3.7-sonnet", "Claude 3.7 Sonnet", "Anthropic", "anthropic"}
-                          ] do %>
-                            <button
-                              type="button"
-                              role="option"
-                              aria-selected={@session.model_name == model_id}
-                              phx-click="change_model"
-                              phx-value-model={model_id}
-                              phx-value-provider={provider_id}
-                              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs hover:bg-[#1c2128] text-gray-300 transition-smooth"
-                            >
-                              <div class="text-left">
-                                <div class="font-medium text-white">{label}</div>
-                                <div class="text-[10px] text-gray-500 font-mono">
-                                  {provider_label}
-                                </div>
-                              </div>
-                              <%= if @session.model_name == model_id do %>
-                                <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
-                              <% end %>
-                            </button>
-                          <% end %>
-                        </div>
-                      <% end %>
                     </div>
-
-                    <!-- Interactive Tool Pills -->
-                    <div class="tooltip-trigger">
-                      <button
-                        type="button"
-                        phx-click="toggle_tool"
-                        phx-value-tool="ast_search"
-                        aria-label="Toggle AST search tool"
-                        aria-pressed={MapSet.member?(@active_tools, "ast_search")}
-                        class={[
-                          "p-1.5 rounded-lg border transition-smooth",
-                          MapSet.member?(@active_tools, "ast_search") &&
-                            "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-xs",
-                          !MapSet.member?(@active_tools, "ast_search") &&
-                            "bg-[#161b22] border-[#21262d] text-gray-400 hover:text-white"
-                        ]}
+                    <div data-command-tools class={["flex min-w-0 items-center gap-1.5 sm:gap-2"]}>
+                      <%!-- Dispatch announcement and setup are tools in the compact row. --%>
+                      <div
+                        data-command-announcement
+                        class={["flex shrink-0 items-center gap-1.5 text-[var(--sf-text-secondary)]"]}
                       >
-                        <.icon name="hero-magnifying-glass" class="w-3.5 h-3.5" />
+                        <span class={["text-xs text-[var(--sf-live-mark)]"]}>◆</span>
+                        <span class={["hidden font-mono text-[10px] xl:inline"]}>
+                          <%= if @dispatch_mode == "background" do %>
+                            Durable mode · queued work continues after you disconnect
+                          <% else %>
+                            Interactive mode · keep this session open for live conversation
+                          <% end %>
+                        </span>
+                      </div>
+                      <button
+                        id="toggle-run-setup"
+                        type="button"
+                        phx-click="toggle_run_setup"
+                        data-run-setup-toggle
+                        data-command-setup
+                        aria-expanded={@run_setup_open?}
+                        aria-controls="run-setup-tray"
+                        aria-label={if @run_setup_open?, do: "Close run setup", else: "Open run setup"}
+                        class={["sf-control inline-flex min-h-11 shrink-0 items-center gap-1.5 px-3 font-mono text-xs transition-colors"]}
+                      >
+                        <.icon name="hero-adjustments-horizontal" class="h-3 w-3 text-[var(--sf-live-mark)]" />
+                        <span class={["sr-only sm:not-sr-only"]}>Run setup</span>
                       </button>
-                      <div class="luxury-tooltip">
-                        <div class="text-xs font-semibold text-white tracking-tight mb-1">
-                          AST Search Engine
-                        </div>
-                        <div class="flex items-center justify-between text-[11px] font-mono text-gray-400 pt-1 border-t border-white/10">
-                          <span class="text-gray-300">Semantic AST Query</span>
-                          <span class="text-cyan-400 font-semibold">{if MapSet.member?(
-                                                                          @active_tools,
-                                                                          "ast_search"
-                                                                        ),
-                                                                        do: "Active",
-                                                                        else: "Disabled"}</span>
+
+                      <%!-- Model Pill Dropdown --%>
+                      <div
+                        class="relative"
+                        phx-click-away={@open_dropdown == "model" && "close_dropdowns"}
+                      >
+                        <button
+                          type="button"
+                          phx-click="toggle_dropdown"
+                          phx-value-name="model"
+                          aria-haspopup="listbox"
+                          aria-expanded={@open_dropdown == "model"}
+                          aria-controls={
+                            if(@open_dropdown == "model", do: "model-picker-listbox", else: nil)
+                          }
+                          aria-label="Select AI model"
+                          class={["sf-command-model sf-control flex min-w-0 max-w-28 items-center rounded-xl px-2.5 py-1 font-mono text-xs transition-smooth sm:max-w-none"]}
+                        >
+                          <.icon name="hero-sparkles" class="mr-1.5 h-3.5 w-3.5 text-[var(--sf-live-mark)]" />
+                          <span class="truncate">{@session.model_name}</span>
+                          <.icon name="hero-chevron-up-down" class="ml-1.5 h-3 w-3 text-[var(--sf-text-secondary)]" />
+                        </button>
+
+                        <%= if @open_dropdown == "model" do %>
+                          <div
+                            id="model-picker-listbox"
+                            role="listbox"
+                            aria-label="AI model"
+                            class={["sf-command-model-list absolute bottom-full left-0 z-50 mb-2 w-64 rounded-2xl border p-1.5 shadow-[0_24px_72px_-38px_var(--sf-shadow)] backdrop-blur-xl animate-in fade-in zoom-in-95"]}
+                          >
+                            <div class={["sf-command-model-list-heading mb-1 border-b px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"]}>
+                              Select AI Model
+                            </div>
+                            <%= for {model_id, label, provider_label, provider_id} <- [
+                              {"ox-alpha", "OX Alpha", "LLMotions · OpenAI-compatible", "openai"},
+                              {"gemini-3.7-flash-high", "Gemini 3.7 Flash High", "OpenAI-compatible", "openai"},
+                              {"deepseek-v4-pro", "DeepSeek V4 Pro", "OpenAI-compatible", "openai"},
+                              {"gpt-5.4-turbo", "GPT 5.4 Turbo", "OpenAI", "openai"},
+                              {"claude-3.7-sonnet", "Claude 3.7 Sonnet", "Anthropic", "anthropic"}
+                            ] do %>
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={@session.model_name == model_id}
+                                phx-click="change_model"
+                                phx-value-model={model_id}
+                                phx-value-provider={provider_id}
+                                class={["sf-command-option flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs transition-smooth"]}
+                              >
+                                <div class="text-left">
+                                  <div class={["font-medium text-[var(--sf-text-primary)]"]}>{label}</div>
+                                  <div class={["font-mono text-[10px] text-[var(--sf-text-secondary)]"]}>
+                                    {provider_label}
+                                  </div>
+                                </div>
+                                <%= if @session.model_name == model_id do %>
+                                  <.icon name="hero-check" class="h-3.5 w-3.5 text-[var(--sf-success-mark)]" />
+                                <% end %>
+                              </button>
+                            <% end %>
+                          </div>
+                        <% end %>
+                      </div>
+
+                      <%!-- Interactive Tool Pills --%>
+                      <div class="tooltip-trigger">
+                        <button
+                          type="button"
+                          phx-click="toggle_tool"
+                          phx-value-tool="ast_search"
+                          aria-label="Toggle AST search tool"
+                          aria-pressed={MapSet.member?(@active_tools, "ast_search")}
+                          class={[
+                            "sf-control sf-command-tool p-1.5 rounded-lg transition-smooth",
+                            MapSet.member?(@active_tools, "ast_search") &&
+                              "sf-command-tool-active",
+                            !MapSet.member?(@active_tools, "ast_search") &&
+                              "sf-command-tool-idle"
+                          ]}
+                        >
+                          <.icon name="hero-magnifying-glass" class="w-3.5 h-3.5" />
+                        </button>
+                        <div class={["sf-command-tooltip luxury-tooltip"]}>
+                          <div class={["sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"]}>
+                            AST Search Engine
+                          </div>
+                          <div class={["sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"]}>
+                            <span class={["text-[var(--sf-text-secondary)]"]}>Semantic AST Query</span>
+                            <span class={["text-[var(--sf-topology-text)] font-semibold"]}>{if MapSet.member?(
+                                                                            @active_tools,
+                                                                            "ast_search"
+                                                                          ),
+                                                                          do: "Active",
+                                                                          else: "Disabled"}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div class="tooltip-trigger">
-                      <button
-                        type="button"
-                        phx-click="toggle_tool"
-                        phx-value-tool="web_search"
-                        aria-label="Toggle live web search tool"
-                        aria-pressed={MapSet.member?(@active_tools, "web_search")}
-                        class={[
-                          "p-1.5 rounded-lg border transition-smooth",
-                          MapSet.member?(@active_tools, "web_search") &&
-                            "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs",
-                          !MapSet.member?(@active_tools, "web_search") &&
-                            "bg-[#161b22] border-[#21262d] text-gray-400 hover:text-white"
-                        ]}
-                      >
-                        <.icon name="hero-globe-alt" class="w-3.5 h-3.5" />
-                      </button>
-                      <div class="luxury-tooltip">
-                        <div class="text-xs font-semibold text-white tracking-tight mb-1">
-                          Live Web Search
-                        </div>
-                        <div class="flex items-center justify-between text-[11px] font-mono text-gray-400 pt-1 border-t border-white/10">
-                          <span class="text-gray-300">Federated providers & safe fetch</span>
-                          <span class="text-emerald-400 font-semibold">{if MapSet.member?(
-                                                                             @active_tools,
-                                                                             "web_search"
-                                                                           ),
-                                                                           do: "Active",
-                                                                           else: "Disabled"}</span>
+                      <div class="tooltip-trigger">
+                        <button
+                          type="button"
+                          phx-click="toggle_tool"
+                          phx-value-tool="web_search"
+                          aria-label="Toggle live web search tool"
+                          aria-pressed={MapSet.member?(@active_tools, "web_search")}
+                          class={[
+                            "sf-control sf-command-tool p-1.5 rounded-lg transition-smooth",
+                            MapSet.member?(@active_tools, "web_search") &&
+                              "sf-command-tool-active",
+                            !MapSet.member?(@active_tools, "web_search") &&
+                              "sf-command-tool-idle"
+                          ]}
+                        >
+                          <.icon name="hero-globe-alt" class="w-3.5 h-3.5" />
+                        </button>
+                        <div class={["sf-command-tooltip luxury-tooltip"]}>
+                          <div class={["sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"]}>
+                            Live Web Search
+                          </div>
+                          <div class={["sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"]}>
+                            <span class={["text-[var(--sf-text-secondary)]"]}>Federated providers & safe fetch</span>
+                            <span class={["text-[var(--sf-success-text)] font-semibold"]}>{if MapSet.member?(
+                                                                               @active_tools,
+                                                                               "web_search"
+                                                                             ),
+                                                                             do: "Active",
+                                                                             else: "Disabled"}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -3079,9 +3099,9 @@
                         aria-label="Use background dispatch mode"
                         title="Persist and run asynchronously"
                         class={[
-                          "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
-                          @dispatch_mode == "background" && "bg-[#ff7e5f] text-white",
-                          @dispatch_mode != "background" && "text-gray-500 hover:text-gray-200"
+                          "sf-control sf-command-dispatch-button flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
+                          @dispatch_mode == "background" && "sf-command-dispatch-active",
+                          @dispatch_mode != "background" && "sf-command-dispatch-idle"
                         ]}
                       >
                         <.icon name="hero-queue-list" class="h-3 w-3" />
@@ -3096,9 +3116,9 @@
                         aria-label="Use interactive dispatch mode"
                         title="Send to the live session"
                         class={[
-                          "flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
-                          @dispatch_mode == "interactive" && "bg-[#30363d] text-white",
-                          @dispatch_mode != "interactive" && "text-gray-500 hover:text-gray-200"
+                          "sf-control sf-command-dispatch-button flex items-center gap-1 px-2 py-1 font-mono text-[10px] transition-colors",
+                          @dispatch_mode == "interactive" && "sf-command-dispatch-active",
+                          @dispatch_mode != "interactive" && "sf-command-dispatch-idle"
                         ]}
                       >
                         <.icon name="hero-bolt" class="h-3 w-3" />
@@ -3106,7 +3126,7 @@
                       </button>
                     </div>
 
-                  <!-- Right Send Button -->
+                  <%!-- Right Send Button --%>
                   <div data-command-send class={["tooltip-trigger shrink-0"]}>
                     <button
                       type="submit"
@@ -3115,15 +3135,15 @@
                     >
                       {if @dispatch_mode == "background", do: "Queue run", else: "Send"}
                     </button>
-                    <div class="luxury-tooltip luxury-tooltip-left">
-                      <div class="text-xs font-semibold text-white tracking-tight mb-1">
+                    <div class={["sf-command-tooltip luxury-tooltip luxury-tooltip-left"]}>
+                      <div class={["sf-command-tooltip-title mb-1 text-xs font-semibold tracking-tight"]}>
                         {if @dispatch_mode == "background",
                           do: "Start durable background run",
                           else: "Send live prompt"}
                       </div>
-                      <div class="flex items-center justify-between text-[11px] font-mono text-gray-400 pt-1 border-t border-white/10">
-                        <span class="text-gray-300">Trigger Pipeline</span>
-                        <span class="text-orange-400 font-semibold">↵ Enter</span>
+                      <div class={["sf-command-tooltip-meta flex items-center justify-between border-t pt-1 font-mono text-[11px]"]}>
+                        <span class={["text-[var(--sf-text-secondary)]"]}>Trigger Pipeline</span>
+                        <span class={["text-[var(--sf-live-text)] font-semibold"]}>↵ Enter</span>
                       </div>
                     </div>
                   </div>

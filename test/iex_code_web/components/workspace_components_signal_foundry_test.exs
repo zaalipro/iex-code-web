@@ -17,7 +17,7 @@ defmodule IexCodeWeb.WorkspaceComponentsSignalFoundryTest do
 
     assert has_element?(view, "#workspace-shell[phx-hook='InstrumentDeck']")
     assert has_element?(view, "#prompt-composer[data-command-dock-state='compact']")
-    assert has_element?(view, "#prompt-form")
+    assert has_element?(view, "#prompt-form[data-command-has-context='false']")
 
     assert has_element?(
              view,
@@ -58,6 +58,8 @@ defmodule IexCodeWeb.WorkspaceComponentsSignalFoundryTest do
     assert document |> LazyHTML.query("#toggle-run-setup") |> LazyHTML.to_tree() |> length() == 1
     assert has_element?(view, "#prompt-form.sf-command-dock-form")
     assert has_element?(view, "#prompt-form [data-command-tools]")
+    assert has_element?(view, "#prompt-form [data-command-context] [data-command-tools]")
+    assert has_element?(view, "#prompt-form [data-command-context] #toggle-run-setup")
     assert has_element?(view, "#prompt-form [data-command-dispatch]")
     assert has_element?(view, "#prompt-form [data-command-send]")
     refute has_element?(view, ".sf-command-dock.sf-command-dock-shell")
@@ -79,12 +81,77 @@ defmodule IexCodeWeb.WorkspaceComponentsSignalFoundryTest do
     refute css =~ "--sf-app-bg"
     refute css =~ ".rainbow-box-wrapper"
     assert css =~ ".sf-command-dock-shell {\n  display: flex;\n  flex-direction: column;"
-    assert css =~ ~S|grid-template-areas: "input tools dispatch send";|
-    assert css =~ ~S|"tools tools tools"
+    assert css =~ ~S|grid-template-areas: "input context dispatch send";|
+    assert css =~ ~S|"context context context"
       "input dispatch send";|
     assert css =~ ".sf-command-send"
     refute css =~ ".sf-command-dock-send"
     assert css =~ "padding-bottom: max(1rem, env(safe-area-inset-bottom))"
+  end
+
+  test "attachments and setup context have explicit dock grid seams" do
+    css = File.read!("assets/css/app.css")
+    template = File.read!("lib/iex_code_web/live/workspace_live.html.heex")
+
+    assert css =~ "[data-command-context] { grid-area: context; }"
+    assert css =~ ~S|.sf-command-dock-form[data-command-has-context="true"]|
+    assert css =~ ~S|"context context context context"
+    "input input dispatch send";|
+    assert css =~ ~S|"context context context"
+      "input dispatch send";|
+    refute css =~ ~S|.sf-command-dock-form:has(|
+    assert template =~ ~S|data-command-context|
+    assert template =~ ~S|data-command-tools|
+    assert template =~ ~S|id="toggle-run-setup"|
+    assert template =~ ~S|id="run-setup-tray"|
+    assert template =~ ~S|id="prompt-form"|
+
+    dock = template |> String.split("<%!-- Shared command dock --%>", parts: 2) |> List.last()
+    dock = dock |> String.split("<!-- Autonomous Goal Creation Modal -->", parts: 2) |> hd()
+    refute dock =~ "<!--"
+  end
+
+  test "shared dock markup is fully tokenized for both themes" do
+    template = File.read!("lib/iex_code_web/live/workspace_live.html.heex")
+    dock = template |> String.split("<%!-- Shared command dock --%>", parts: 2) |> List.last()
+    dock = dock |> String.split("<!-- Autonomous Goal Creation Modal -->", parts: 2) |> hd()
+
+    for forbidden <- [
+          "text-white",
+          "bg-[#",
+          "border-[#",
+          "text-cyan-",
+          "text-emerald-",
+          "text-violet-",
+          "text-amber-",
+          "bg-cyan-",
+          "bg-emerald-",
+          "bg-violet-",
+          "bg-amber-",
+          "border-cyan-",
+          "border-emerald-",
+          "border-violet-",
+          "border-amber-"
+        ] do
+      refute dock =~ forbidden, "shared dock retains forbidden literal #{forbidden}"
+    end
+
+    assert dock =~ "var(--sf-text-primary)"
+    assert dock =~ "var(--sf-text-secondary)"
+    assert dock =~ "var(--sf-live-mark)"
+    assert dock =~ "var(--sf-hairline)"
+  end
+
+  test "task drawer uses shared material chrome" do
+    template = File.read!("lib/iex_code_web/live/workspace_live.html.heex")
+    drawer = template |> String.split(~S|id="task-detail-drawer"|, parts: 2) |> List.last()
+    drawer = drawer |> String.split("</aside>", parts: 2) |> hd()
+
+    assert drawer =~ "bg-[var(--sf-instrument-raised)]"
+    assert drawer =~ "border-[var(--sf-hairline)]"
+    assert drawer =~ "shadow-[0_24px_72px_-38px_var(--sf-shadow)]"
+    assert drawer =~ "text-[var(--sf-text-primary)]"
+    assert drawer =~ "sf-control"
   end
 
   test "task detail activates the local mobile sheet without inerting its ancestor", %{

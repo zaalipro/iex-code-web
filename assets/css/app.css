@@ -1631,24 +1631,116 @@
 .sf-command-dock-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
-  grid-template-areas: "input tools dispatch send";
+  grid-template-areas: "input context dispatch send";
   align-items: center;
   gap: 0.5rem;
 }
 
 #prompt-textarea { grid-area: input; color: var(--sf-text-primary); }
+[data-command-context] { grid-area: context; }
+.sf-command-dock-form[data-command-has-context="true"] {
+  grid-template-areas:
+    "context context context context"
+    "input input dispatch send";
+}
 .sf-command-dock-toolbar { display: contents; }
 [data-command-tools] { grid-area: tools; }
 [data-command-dispatch] { grid-area: dispatch; }
 [data-command-send] { grid-area: send; }
 
-.sf-command-send {
+.sf-command-model-list {
+  border-color: var(--sf-hairline);
+  background: var(--sf-instrument-raised);
+}
+
+.sf-run-setup-form,
+.sf-command-textarea,
+.sf-command-textarea::placeholder {
+  color: var(--sf-text-primary);
+}
+
+.sf-command-textarea::placeholder,
+.sf-run-setup-form label > span {
+  color: var(--sf-text-secondary);
+}
+
+.sf-run-setup-form {
+  border-color: var(--sf-hairline);
+}
+
+.sf-run-setup-input,
+.sf-run-setup-manifest,
+.sf-run-setup-providers {
+  border-color: var(--sf-hairline);
+  background: var(--sf-raised-control);
+  color: var(--sf-text-primary);
+}
+
+.sf-run-setup-input:focus,
+.sf-run-setup-manifest:focus {
+  border-color: var(--sf-live-mark);
+}
+
+.sf-command-model-list-heading,
+.sf-command-tooltip-meta {
+  border-color: var(--sf-hairline);
+  color: var(--sf-text-secondary);
+}
+
+.sf-command-option:hover,
+.sf-command-tool-idle:hover,
+.sf-command-dispatch-idle:hover {
+  background: var(--sf-raised-control);
+  color: var(--sf-text-primary);
+}
+
+.sf-command-option,
+.sf-command-tooltip-title {
+  color: var(--sf-text-primary);
+}
+
+.sf-control.sf-command-tool-active,
+.sf-control.sf-command-dispatch-active {
+  border-color: var(--sf-live-mark);
+  background: var(--sf-live-mark);
+  color: var(--sf-canvas-deep);
+}
+
+.sf-control.sf-command-tool-idle,
+.sf-control.sf-command-dispatch-idle {
+  border-color: var(--sf-hairline);
+  background: var(--sf-raised-control);
+  color: var(--sf-text-secondary);
+}
+
+.sf-command-tooltip {
+  border-color: var(--sf-hairline);
+  background: var(--sf-instrument-raised);
+  box-shadow: 0 16px 36px -4px var(--sf-shadow), 0 0 0 1px var(--sf-hairline);
+}
+
+.sf-command-dock-toolbar {
+  border-color: var(--sf-hairline);
+}
+
+.sf-command-attachment:hover,
+.sf-run-setup-close:hover {
+  border-color: var(--sf-live-mark);
+  color: var(--sf-live-text);
+}
+
+.sf-task-detail-drawer,
+.sf-task-detail-header {
+  color: var(--sf-text-primary);
+}
+
+.sf-control.sf-command-send {
   white-space: nowrap;
   border-color: var(--sf-live-mark);
   background: transparent;
 }
 
-.sf-command-send::before {
+.sf-control.sf-command-send::before {
   content: "";
   display: inline-block;
   width: 0.42rem;
@@ -1687,9 +1779,14 @@
   .sf-command-dock-form {
     grid-template-columns: minmax(0, 1fr) auto auto;
     grid-template-areas:
-      "tools tools tools"
+      "context context context"
       "input dispatch send";
     gap: 0.7rem 0.45rem;
+  }
+  .sf-command-dock-form[data-command-has-context="true"] {
+    grid-template-areas:
+      "context context context"
+      "input dispatch send";
   }
   [data-command-tools] { width: 100%; overflow-x: auto; }
   [data-command-dispatch], [data-command-send], #prompt-textarea { align-self: center; }
