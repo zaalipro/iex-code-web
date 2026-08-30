@@ -157,4 +157,38 @@ defmodule IexCode.WorkspaceIdentityTest do
     assert {:error, :identity_changed} = Task.await(task, 500)
     assert File.lstat!(file).type == :other
   end
+
+  test "bounded content return reads from the held no-follow descriptor", %{tmp_dir: root} do
+    owner = self()
+    file = Path.join(root, "content.txt")
+    outside = Path.join(root, "outside.txt")
+    File.write!(file, "inside payload")
+    File.write!(outside, "outside sentinel")
+
+    assert {:ok, %{content: "inside payload", content_digest: digest}} =
+             WorkspaceIdentity.capture(root, "content.txt", return_content: true)
+
+    assert digest == :crypto.hash(:sha256, "inside payload") |> Base.encode16(case: :lower)
+
+    observer = fn
+      :before_open ->
+        File.rm!(file)
+        File.ln_s!(outside, file)
+
+      {:bytes_read, count} ->
+        send(owner, {:outward_bytes_read, count})
+
+      _ ->
+        :ok
+    end
+
+    assert {:error, :identity_changed} =
+             WorkspaceIdentity.capture(root, "content.txt",
+               return_content: true,
+               observer: observer
+             )
+
+    assert File.read!(outside) == "outside sentinel"
+    refute_received {:outward_bytes_read, _count}
+  end
 end

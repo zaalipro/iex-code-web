@@ -1,4 +1,5 @@
 import hashlib
+import base64
 import json
 import os
 import stat
@@ -78,11 +79,13 @@ def rewalk_matches(root, components, held_parents, held_final):
 
 def main():
     root, relative_path, cap_text = sys.argv[1:4]
+    return_content = len(sys.argv) > 4 and sys.argv[4] == "content"
     cap = int(cap_text)
     parents = []
     final_fd = None
     bytes_read = 0
     digest = ""
+    content = b""
     status = "changed"
 
     try:
@@ -104,12 +107,15 @@ def main():
             raise OSError("not regular")
 
         hasher = hashlib.sha256()
+        chunks = []
         remaining = cap + 1
         while remaining > 0:
             chunk = os.read(final_fd, remaining)
             if not chunk:
                 break
             hasher.update(chunk)
+            if return_content:
+                chunks.append(chunk)
             bytes_read += len(chunk)
             remaining -= len(chunk)
 
@@ -121,6 +127,8 @@ def main():
         )
         status = "too_large" if bytes_read > cap else ("ok" if stable else "changed")
         digest = hasher.hexdigest() if status == "ok" else ""
+        if status == "ok" and return_content:
+            content = b"".join(chunks)
     except Exception:
         status = "changed"
     finally:
@@ -137,6 +145,7 @@ def main():
                 "digest": digest,
                 "bytes_read": bytes_read,
                 "closed": True,
+                "content": base64.b64encode(content).decode() if status == "ok" and return_content else None,
             }
         )
     except BrokenPipeError:

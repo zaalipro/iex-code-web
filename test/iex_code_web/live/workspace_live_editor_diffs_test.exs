@@ -224,6 +224,35 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert has_element?(view, "#workspace-shell[data-active-view='deck']")
       refute has_element?(view, "#instrument-workbench-files")
     end
+
+    test "reports bounded factual errors for oversized and non-UTF-8 regular files", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      baseline = "baseline editor body\n"
+      workspace_write_file(path, "lib/baseline.ex", baseline)
+      File.write!(Path.join(path, "oversized.txt"), String.duplicate("a", 2 * 1_024 * 1_024 + 1))
+      File.write!(Path.join(path, "binary.dat"), <<0xFF, 0xFE, 0xFD>>)
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=files")
+
+      render_click(view, "select_file", %{"path" => "lib/baseline.ex"})
+
+      render_click(view, "select_file", %{"path" => "oversized.txt"})
+      assert has_element?(view, "#flash-error", "file exceeds the 2 MiB editor limit")
+      refute has_element?(view, "#flash-error", "Invalid file path")
+      assert has_element?(view, "#files-selected-signal", "lib/baseline.ex")
+      assert editor_text(view) =~ baseline
+      refute has_element?(view, "[phx-click='close_file_buffer'][phx-value-path='oversized.txt']")
+
+      render_click(view, "select_file", %{"path" => "binary.dat"})
+      assert has_element?(view, "#flash-error", "unsupported text encoding")
+      refute has_element?(view, "#flash-error", "Invalid file path")
+      assert has_element?(view, "#files-selected-signal", "lib/baseline.ex")
+      assert editor_text(view) =~ baseline
+      refute has_element?(view, "[phx-click='close_file_buffer'][phx-value-path='binary.dat']")
+    end
   end
 
   # ============================================================================

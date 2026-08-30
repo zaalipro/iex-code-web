@@ -98,9 +98,10 @@ defmodule IexCode.WorkspaceIdentity do
 
   defp capture_content(root, path, %{type: :regular} = stat, canonical, max_bytes, opts) do
     full = Path.join(root, path)
+    return_content? = Keyword.get(opts, :return_content, false) == true
     observe(opts, :before_open)
 
-    case open_no_follow_reader(root, path, max_bytes) do
+    case open_no_follow_reader(root, path, max_bytes, return_content?) do
       {:ok, port} ->
         try do
           with {:ok, opened} <- receive_reader_message(port, opts),
@@ -114,12 +115,19 @@ defmodule IexCode.WorkspaceIdentity do
             observe(opts, :after_close)
 
             with true <- result["closed"] == true,
-                 {:ok, content_digest} <- decode_reader_result(result, max_bytes),
+                 {:ok, {content_digest, content}} <-
+                   decode_reader_result(result, max_bytes, return_content?),
                  {:ok, final_path_stat} <- File.lstat(full),
                  true <- same_stat?(stat, final_path_stat) do
-              {:ok,
-               stat_identity(final_path_stat, path, canonical)
-               |> Map.put(:content_digest, content_digest)}
+              identity =
+                final_path_stat
+                |> stat_identity(path, canonical)
+                |> Map.put(:content_digest, content_digest)
+
+              identity =
+                if return_content?, do: Map.put(identity, :content, content), else: identity
+
+              {:ok, identity}
             else
               {:error, :identity_too_large} -> {:error, :identity_too_large}
               _ -> {:error, :identity_changed}
@@ -156,7 +164,7 @@ defmodule IexCode.WorkspaceIdentity do
   # standard-library helper provides that exact open boundary and returns only
   # a capped payload through a packet-framed port. Missing Python, unsupported
   # flags, malformed output, and timeouts all deny authority.
-  defp open_no_follow_reader(root, path, max_bytes) do
+  defp open_no_follow_reader(root, path, max_bytes, return_content?) do
     reader = Path.join(to_string(:code.priv_dir(:iex_code)), "workspace_identity_reader.py")
 
     with python when is_binary(python) <- System.find_executable("python3"),
@@ -166,7 +174,14 @@ defmodule IexCode.WorkspaceIdentity do
           :binary,
           :use_stdio,
           {:packet, 4},
-          args: ["-I", reader, root, path, Integer.to_string(max_bytes)]
+          args: [
+            "-I",
+            reader,
+            root,
+            path,
+            Integer.to_string(max_bytes),
+            if(return_content?, do: "content", else: "digest")
+          ]
         ])
 
       Process.unlink(port)
@@ -218,17 +233,36 @@ defmodule IexCode.WorkspaceIdentity do
   end
 
   defp decode_reader_result(
-         %{"status" => "ok", "digest" => digest, "bytes_read" => count},
-         max
+         %{"status" => "ok", "digest" => digest, "bytes_read" => count} = result,
+         max,
+         return_content?
        )
-       when is_binary(digest) and byte_size(digest) == 64 and is_integer(count) and count <= max,
-       do: {:ok, digest}
+       when is_binary(digest) and byte_size(digest) == 64 and is_integer(count) and count <= max do
+    if return_content? do
+      with encoded when is_binary(encoded) <- result["content"],
+           {:ok, content} <- Base.decode64(encoded),
+           true <- byte_size(content) == count,
+           true <- digest == content_digest(content) do
+        {:ok, {digest, content}}
+      else
+        _ -> {:error, :identity_changed}
+      end
+    else
+      {:ok, {digest, nil}}
+    end
+  end
 
-  defp decode_reader_result(%{"status" => "too_large", "bytes_read" => count}, max)
+  defp decode_reader_result(%{"status" => "too_large", "bytes_read" => count}, max, _return?)
        when is_integer(count) and count == max + 1,
        do: {:error, :identity_too_large}
 
-  defp decode_reader_result(_result, _max), do: {:error, :identity_changed}
+  defp decode_reader_result(_result, _max, _return?), do: {:error, :identity_changed}
+
+  defp content_digest(content) do
+    :sha256
+    |> :crypto.hash(content)
+    |> Base.encode16(case: :lower)
+  end
 
   defp same_stat?(a, b) do
     Enum.all?(

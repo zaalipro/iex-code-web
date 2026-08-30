@@ -6241,8 +6241,9 @@ defmodule IexCodeWeb.WorkspaceLive do
                |> assign(:dirty_content, content)
                |> assign(:is_dirty?, false)}
 
-            {:error, _reason} ->
-              {:error, put_flash(socket, :error, "Invalid file path")}
+            {:error, reason} ->
+              {:error,
+               put_flash(socket, :error, "Could not read file: #{editor_read_error(reason)}")}
           end
       end
     else
@@ -6270,54 +6271,32 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp read_editor_file(socket, path) do
     root = socket.assigns.project.root_path
 
-    case WorkspaceIdentity.capture(root, path, max_bytes: @editor_file_max_bytes) do
+    case WorkspaceIdentity.capture(root, path,
+           max_bytes: @editor_file_max_bytes,
+           return_content: true
+         ) do
       {:ok, %{missing?: true}} ->
         {:ok, "Could not read file: :enoent"}
 
-      {:ok, %{type: :regular} = before} ->
-        with {:ok, content} <- bounded_editor_read(Path.join(root, path)),
-             true <- String.valid?(content),
-             {:ok, %{type: :regular} = after_read} <-
-               WorkspaceIdentity.capture(root, path, max_bytes: @editor_file_max_bytes),
-             true <- editor_file_identity(before) == editor_file_identity(after_read),
-             true <- before.content_digest == editor_content_digest(content) do
-          {:ok, content}
-        else
-          _ -> {:error, :identity_changed}
-        end
+      {:ok, %{type: :regular, content: content}} when is_binary(content) ->
+        if String.valid?(content), do: {:ok, content}, else: {:error, :invalid_encoding}
 
-      _ ->
+      {:ok, _identity} ->
         {:error, :invalid_file_type}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp bounded_editor_read(full_path) do
-    task =
-      Task.async(fn ->
-        try do
-          with {:ok, io} <- File.open(full_path, [:read, :binary]),
-               result <- IO.binread(io, @editor_file_max_bytes + 1),
-               :ok <- File.close(io) do
-            case result do
-              content when is_binary(content) and byte_size(content) <= @editor_file_max_bytes ->
-                {:ok, content}
-
-              _ ->
-                {:error, :file_too_large}
-            end
-          end
-        rescue
-          _ -> {:error, :read_failed}
-        catch
-          _, _ -> {:error, :read_failed}
-        end
-      end)
-
-    case Task.yield(task, 1_000) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      _ -> {:error, :read_timeout}
-    end
-  end
+  defp editor_read_error(:file_too_large), do: "file exceeds the 2 MiB editor limit"
+  defp editor_read_error(:identity_too_large), do: "file exceeds the 2 MiB editor limit"
+  defp editor_read_error(:invalid_encoding), do: "unsupported text encoding"
+  defp editor_read_error(:read_timeout), do: "read timed out"
+  defp editor_read_error(:identity_changed), do: "file changed while reading"
+  defp editor_read_error(:invalid_file_type), do: "file is not a regular file"
+  defp editor_read_error(:read_failed), do: "read failed"
+  defp editor_read_error(reason), do: inspect(reason)
 
   defp editor_file_identity(identity) do
     Map.take(identity, [
@@ -6333,12 +6312,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       :content_digest,
       :ancestors
     ])
-  end
-
-  defp editor_content_digest(content) do
-    :sha256
-    |> :crypto.hash(content)
-    |> Base.encode16(case: :lower)
   end
 
   defp close_buffer_identity(socket, path) do
