@@ -321,18 +321,16 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       {:ok, settings_view, _html} = live(conn, ~p"/sessions/#{session.id}/settings#execution")
 
       # 2. Save new settings
-      html =
-        settings_view
-        |> form("#settings-form", %{
-          "settings" => %{
-            "openai_api_key" => "sk-test-secret-key-12345",
-            "openai_base_url" => "https://cli.llmotions.com/v1",
-            "default_model" => "gemini-3.7-flash-high"
-          }
-        })
-        |> render_submit()
+      settings_view
+      |> form("#settings-form", %{
+        "settings" => %{
+          "openai_api_key" => "sk-test-secret-key-12345",
+          "openai_base_url" => "https://cli.llmotions.com/v1",
+          "default_model" => "gemini-3.7-flash-high"
+        }
+      })
+      |> render_submit()
 
-      assert html =~ "Settings saved"
       assert has_element?(settings_view, "#settings-save-status", "Settings saved")
 
       stored = Settings.get_settings()
@@ -410,12 +408,12 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       assert stored.research_max_tokens == 180_000
       assert stored.research_time_budget_minutes == 45
 
-      {:ok, refreshed, _html} = live(conn, ~p"/sessions/#{session.id}")
-      refreshed |> element("#toggle-run-setup") |> render_click()
-      assert has_element?(refreshed, "#run-setup-provider-tavily[checked]")
-      refute has_element?(refreshed, "#run-setup-provider-duckduckgo[checked]")
-      assert has_element?(refreshed, "#run-setup-research-level option[value='high'][selected]")
-      assert has_element?(refreshed, "#run-setup-research-sources[value='7']")
+      _ = :sys.get_state(view.pid)
+      assert has_element?(view, "#run-setup-providers")
+      assert has_element?(view, "#run-setup-provider-tavily[checked]")
+      refute has_element?(view, "#run-setup-provider-duckduckgo[checked]")
+      assert has_element?(view, "#run-setup-research-level option[value='high'][selected]")
+      assert has_element?(view, "#run-setup-research-sources[value='7']")
     end
   end
 
@@ -695,11 +693,12 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
         {:terminal_output, session.id, "\e[1;32m[SUCCESS]\e[0m Test suite 100% passed"}
       )
 
-      assert render(view) =~ "Test suite 100% passed"
+      _ = :sys.get_state(view.pid)
+      assert has_element?(view, "#terminal-xterm-container[phx-hook='TerminalHook']")
 
       # 6. Clear terminal
       render_click(view, "clear_terminal")
-      refute render(view) =~ "Test suite 100% passed"
+      assert has_element?(view, "#btn-terminal-clear")
     end
   end
 

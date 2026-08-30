@@ -827,6 +827,15 @@
 .settings-live-text { color: var(--sf-live-text); }
 .settings-success-text { color: var(--sf-success-text); }
 .settings-topology-text { color: var(--sf-topology-text); }
+.settings-bench-identity {
+  margin-top: 0.45rem;
+  color: var(--sf-text-primary);
+  font-family: "Doto", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(1rem, 1.7vw, 1.35rem);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .settings-danger-text { color: var(--sf-live-text); }
 .settings-warning-text { color: var(--sf-topology-text); }
 .settings-live-mark { background: var(--sf-live-mark); }
@@ -986,6 +995,10 @@
 .settings-control:read-only { cursor: not-allowed; opacity: 0.68; }
 .settings-control-error,
 .settings-control[aria-invalid="true"] { border-color: var(--sf-live-mark) !important; color: var(--sf-text-primary) !important; }
+.settings-page #settings-form label > span,
+.settings-page #settings-form label > span.text-gray-300,
+.settings-page #settings-form .text-gray-300 { color: var(--sf-text-secondary) !important; }
+.settings-page #settings-form .text-rose-400 { color: var(--sf-live-text) !important; }
 
 .settings-credential-card,
 .settings-choice-row,
@@ -1078,6 +1091,10 @@
 .settings-secondary-action,
 .settings-discard-button { gap: 0.4rem; border-radius: 16px; padding-inline: 0.9rem; }
 .settings-save-button { border-color: var(--sf-live-mark); border-radius: 16px; background: var(--sf-live-mark); padding-inline: 1rem; color: var(--sf-canvas-deep); }
+:root[data-theme="light"] .settings-save-button { background: var(--sf-live-text); color: var(--sf-instrument-raised); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .settings-save-button { background: var(--sf-live-text); color: var(--sf-instrument-raised); }
+}
 .settings-provider-toggle:hover,
 .settings-icon-action:hover:not(:disabled),
 .settings-secondary-action:hover,

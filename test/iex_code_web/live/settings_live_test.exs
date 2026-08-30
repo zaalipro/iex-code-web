@@ -115,6 +115,7 @@ defmodule IexCodeWeb.SettingsLiveTest do
     document = view |> render() |> LazyHTML.from_fragment()
 
     assert has_element?(view, "#settings-page.settings-page.sf-ambient-field")
+    assert has_element?(view, "#settings-bench-identity", "Calibration Bench")
     assert has_element?(view, "#settings-calibration-bench.sf-chassis")
 
     assert has_element?(
@@ -134,8 +135,21 @@ defmodule IexCodeWeb.SettingsLiveTest do
 
     assert Enum.count(LazyHTML.query(document, "#settings-form #settings-save-bar")) == 1
 
-    for section <-
-          ~w(models execution goals swarm research providers editor usage resources runtime) do
+    sections = ~w(models execution goals swarm research providers editor usage resources runtime)
+
+    assert document
+           |> LazyHTML.query("#settings-form > section")
+           |> Enum.flat_map(&LazyHTML.attribute(&1, "id")) == sections
+
+    assert document
+           |> LazyHTML.query("#settings-section-nav > a")
+           |> Enum.flat_map(&LazyHTML.attribute(&1, "href")) == Enum.map(sections, &"##{&1}")
+
+    assert document
+           |> LazyHTML.query("#settings-mobile-section-nav > a")
+           |> Enum.flat_map(&LazyHTML.attribute(&1, "href")) == Enum.map(sections, &"##{&1}")
+
+    for section <- sections do
       assert Enum.count(
                LazyHTML.query(document, "section##{section}[aria-labelledby='#{section}-title']")
              ) == 1
@@ -168,7 +182,11 @@ defmodule IexCodeWeb.SettingsLiveTest do
 
       refute has_element?(view, "#settings-form ##{id}")
       refute has_element?(view, "##{id}[name]")
+      refute has_element?(view, "##{id}[value]")
+      refute has_element?(view, "##{id}[form]")
       refute has_element?(view, "##{id}[phx-value-theme]")
+      refute has_element?(view, "##{id}[phx-submit]")
+      refute has_element?(view, "##{id}[phx-change]")
     end
 
     assert has_element?(
@@ -190,6 +208,85 @@ defmodule IexCodeWeb.SettingsLiveTest do
     for id <- ~w(settings-theme-dark settings-theme-light settings-theme-system) do
       assert has_element?(view, "##{id}[type='button']")
     end
+  end
+
+  test "canonical form exposes the complete stable field and bounds inventory", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/settings")
+
+    for selector <- [
+          "#settings-default-model-provider",
+          "#settings-default-model[maxlength='240']",
+          "#settings-openai-api-key[type='password'][autocomplete='new-password'][value='']",
+          "#settings-openai-base-url[type='url']",
+          "#settings-anthropic-api-key[type='password'][autocomplete='new-password'][value='']",
+          "#settings-anthropic-base-url[type='url']",
+          "#settings-temperature[type='number'][min='0'][max='2'][step='0.05']",
+          "#settings-max-tokens[type='number'][min='1'][max='128000']",
+          "#settings-default-dispatch-mode",
+          "#settings-default-run-mode",
+          "#settings-default-run-priority",
+          "#settings-default-run-max-attempts[type='number'][min='1'][max='10']",
+          "#settings-default-run-time-budget[type='number'][min='1'][max='10080']",
+          "#settings-default-run-token-budget[type='number'][min='1']",
+          "#settings-default-run-cost-budget[type='number'][min='1']",
+          "#settings-agent-max-turns[type='number'][min='1'][max='20']",
+          "#settings-tool-ast-search[type='checkbox']",
+          "#settings-tool-web-search[type='checkbox']",
+          "#settings-goal-auto-start[type='checkbox']",
+          "#settings-swarm-agent-count[type='number'][min='4'][max='32']",
+          "#settings-swarm-max-retries[type='number'][min='0'][max='10']",
+          "#settings-research-level",
+          "#settings-research-max-sources[type='number'][min='1'][max='40']",
+          "#settings-research-parallelism[type='number'][min='1'][max='16']",
+          "#settings-research-time-budget[type='number'][min='1'][max='1440']",
+          "#settings-research-max-tokens[type='number'][min='0'][max='10000000']",
+          "#settings-research-max-cost[type='number'][min='0'][max='10000000']",
+          "#settings-research-depth",
+          "#settings-research-conflict-audit[type='checkbox']",
+          "#settings-auto-save[type='checkbox']",
+          "#settings-resource-pressure[type='number'][min='50'][max='90']",
+          "#settings-resource-critical[type='number'][min='60'][max='95']",
+          "#settings-terminal-idle-timeout[type='number'][min='1'][max='1440']",
+          "#settings-session-idle-timeout[type='number'][min='1'][max='1440']",
+          "#settings-output-artifact-limit[type='number'][min='16'][max='1024']",
+          "#settings-output-spool-quota[type='number'][min='256'][max='10240']",
+          "#settings-output-retention[type='number'][min='1'][max='90']",
+          "#settings-provider-order[type='hidden']",
+          "#settings-provider-filter[type='search'][name='provider_filter']"
+        ] do
+      assert has_element?(view, selector), "missing stable Settings control #{selector}"
+    end
+
+    for {id, values} <- [
+          {"settings-default-model-provider", ~w(openai anthropic)},
+          {"settings-default-dispatch-mode", ~w(background interactive)},
+          {"settings-default-run-mode", ~w(single swarm dag research)},
+          {"settings-default-run-priority", ~w(low normal high critical)},
+          {"settings-research-level", ~w(low medium high ultra)},
+          {"settings-research-depth", ~w(quick standard deep)}
+        ],
+        value <- values do
+      assert has_element?(view, "##{id} option[value='#{value}']")
+    end
+
+    assert has_element?(view, "#settings-search-provider-tavily")
+    view |> element("#settings-provider-advanced-google") |> render_click()
+    view |> element("#settings-provider-advanced-serpapi") |> render_click()
+    assert has_element?(view, "#settings-provider-engine-google")
+    assert has_element?(view, "#settings-provider-engine-serpapi")
+  end
+
+  test "settings tokens keep form labels and save action readable in both themes" do
+    css = File.read!(Path.expand("../../../assets/css/app.css", __DIR__))
+
+    assert css =~ ".settings-page #settings-form label > span"
+    assert css =~ ".settings-page #settings-form .text-rose-400"
+    assert css =~ ":root[data-theme=\"light\"] .settings-save-button"
+    assert css =~ "background: var(--sf-live-text); color: var(--sf-instrument-raised)"
+
+    assert contrast_ratio("#101214", "#F6532E") >= 4.5
+    assert contrast_ratio("#FBF8F2", "#A8321F") >= 4.5
+    assert contrast_ratio("#655F58", "#FBF8F2") >= 4.5
   end
 
   test "resource policy is editable with guarded advanced controls and read-only deployment facts",
@@ -486,6 +583,37 @@ defmodule IexCodeWeb.SettingsLiveTest do
     assert saved.default_run_max_attempts == 5
     assert saved.agent_max_turns == 12
     assert saved.swarm_agent_count == 6
+  end
+
+  test "canonical form persists the complete model and editor settings group", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/settings#models")
+
+    view
+    |> form("#settings-form", %{
+      "settings" => %{
+        "default_model_provider" => "anthropic",
+        "default_model" => "claude-3-7-sonnet",
+        "anthropic_api_key" => "sk-ant-test-liveview",
+        "anthropic_base_url" => "https://api.anthropic.com",
+        "openai_api_key" => "sk-proj-test-liveview",
+        "openai_base_url" => "https://api.openai.com/v1",
+        "swarm_agent_count" => "8",
+        "temperature" => "0.5",
+        "max_tokens" => "8192",
+        "auto_save" => "true"
+      }
+    })
+    |> render_submit()
+
+    assert has_element?(view, "#settings-save-status", "Settings saved")
+    saved = Settings.get_settings()
+    assert saved.default_model_provider == "anthropic"
+    assert saved.default_model == "claude-3-7-sonnet"
+    assert saved.anthropic_api_key == "sk-ant-test-liveview"
+    assert saved.swarm_agent_count == 8
+    assert saved.temperature == 0.5
+    assert saved.max_tokens == 8192
+    assert saved.auto_save == true
   end
 
   test "dirty and invalid drafts arm the navigation guard until save or discard", %{conn: conn} do
@@ -861,4 +989,26 @@ defmodule IexCodeWeb.SettingsLiveTest do
 
   defp restore_env(key, nil), do: Application.delete_env(:iex_code, key)
   defp restore_env(key, value), do: Application.put_env(:iex_code, key, value)
+
+  defp contrast_ratio(foreground, background) do
+    {lighter, darker} =
+      [relative_luminance(foreground), relative_luminance(background)]
+      |> Enum.sort(:desc)
+      |> List.to_tuple()
+
+    (lighter + 0.05) / (darker + 0.05)
+  end
+
+  defp relative_luminance("#" <> rgb) do
+    [r, g, b] =
+      rgb
+      |> String.codepoints()
+      |> Enum.chunk_every(2)
+      |> Enum.map(fn pair -> pair |> Enum.join() |> String.to_integer(16) |> Kernel./(255) end)
+      |> Enum.map(fn value ->
+        if value <= 0.04045, do: value / 12.92, else: :math.pow((value + 0.055) / 1.055, 2.4)
+      end)
+
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+  end
 end

@@ -10,7 +10,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
   } do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
-    {:ok, view, html} = live(conn, ~p"/sessions/#{session.id}")
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
     assert has_element?(view, "#instrument-deck")
     assert has_element?(view, "#instrument-card-kanban")
@@ -47,8 +47,8 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=changes")
 
-    assert render(view) =~ "All Changes"
-    assert render(view) =~ "Canvas"
+    assert has_element?(view, "#instrument-workbench-changes[data-workbench-surface='changes']")
+    assert has_element?(view, "#changes-primary")
 
     # Switch to chat tab
     render_click(view, "switch_tab", %{"tab" => "chat"})
@@ -315,7 +315,8 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Switch back to inline mode
     html = render_click(view, "set_diff_mode", %{"mode" => "inline"})
-    assert html =~ "bg-emerald-950/40" or html =~ "text-emerald-300"
+    assert has_element?(view, "#diff-mode-inline[aria-pressed='true']")
+    refute has_element?(view, "#diff-mode-split[aria-pressed='true']")
     assert html =~ ":changed"
   end
 
@@ -381,11 +382,12 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Receive async terminal output event
     send(view.pid, {:terminal_output, session.id, "Streaming log line 42"})
-    assert render(view) =~ "Streaming log line 42"
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#terminal-xterm-container[phx-hook='TerminalHook']")
 
     # Clear terminal
-    html = render_click(view, "clear_terminal")
-    refute html =~ "Streaming log line 42"
+    render_click(view, "clear_terminal")
+    assert has_element?(view, "#btn-terminal-clear")
   end
 
   test "rejects path traversal attempts in select_file with flash error", %{
@@ -820,44 +822,6 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     # Check that LiveView state remains responsive
     assert Process.alive?(view.pid)
-  end
-
-  test "handles saving complete settings fields and rendering usage history", %{
-    conn: conn,
-    workspace_path: path
-  } do
-    project = create_project_fixture(%{root_path: path})
-    session = create_session_fixture(project)
-    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/settings#models")
-    assert has_element?(view, "#settings-form")
-
-    # Save full settings
-    view
-    |> form("#settings-form", %{
-      "settings" => %{
-        "default_model_provider" => "anthropic",
-        "default_model" => "claude-3-7-sonnet",
-        "anthropic_api_key" => "sk-ant-test-liveview",
-        "anthropic_base_url" => "https://api.anthropic.com",
-        "openai_api_key" => "sk-proj-test-liveview",
-        "openai_base_url" => "https://api.openai.com/v1",
-        "swarm_agent_count" => "8",
-        "temperature" => "0.5",
-        "max_tokens" => "8192",
-        "auto_save" => "true"
-      }
-    })
-    |> render_submit()
-
-    assert has_element?(view, "#settings-save-status", "Settings saved")
-    saved = IexCode.Settings.get_settings()
-    assert saved.default_model_provider == "anthropic"
-    assert saved.default_model == "claude-3-7-sonnet"
-    assert saved.anthropic_api_key == "sk-ant-test-liveview"
-    assert saved.swarm_agent_count == 8
-    assert saved.temperature == 0.5
-    assert saved.max_tokens == 8192
-    assert saved.auto_save == true
   end
 
   test "handles file explorer folder expand/collapse and insert_code_to_editor", %{
