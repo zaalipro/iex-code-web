@@ -189,9 +189,17 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     assert Enum.sum(Enum.map(previews, &byte_size(&1.content))) <= 1_000_000
     assert Enum.all?(previews, &(String.length(&1.content) <= 12_000))
 
-    newest = List.last(messages)
-    render_click(view, "expand_message", %{"id" => newest.id})
-    assert live_assigns(view).expanded_message.content == newest.content
+    retained_message = List.last(previews)
+    durable_message = Enum.find(messages, &(&1.id == retained_message.id))
+    render_click(view, "expand_message", %{"id" => retained_message.id})
+    assert live_assigns(view).expanded_message.content == durable_message.content
+    assert has_element?(view, "#expanded-message-modal.sf-chassis")
+    assert has_element?(view, "#expanded-message-body.sf-chat-prose")
+
+    foreign_session = create_session_fixture(project)
+    foreign_message = create_message_fixture(foreign_session, %{content: "Foreign body"})
+    render_click(view, "expand_message", %{"id" => foreign_message.id})
+    assert is_nil(live_assigns(view).expanded_message)
 
     render_click(view, "close_expand_message")
     assert is_nil(live_assigns(view).expanded_message)
@@ -209,11 +217,21 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=chat")
 
     assert has_element?(view, "#instrument-workbench-chat")
-    assert has_element?(view, "#conversation-loop-field")
-    assert has_element?(view, "#chat-viewport")
+    assert has_element?(view, "#conversation-loop-field.flex.min-h-0.flex-1")
+    assert has_element?(view, "#chat-viewport.flex-1.min-h-0.overflow-y-auto")
     assert has_element?(view, ".sf-chat-prose")
     refute has_element?(view, ".sf-chat-prose.sf-display")
     assert has_element?(view, "#prompt-composer[data-command-dock-state='expanded']")
+
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    for selector <- [
+          "#instrument-workbench-chat",
+          "#chat-viewport",
+          "#prompt-composer[data-command-dock-state='expanded']"
+        ] do
+      assert document |> LazyHTML.query(selector) |> Enum.count() == 1
+    end
   end
 
   test "newer page availability uses the exact conversation copy", %{
@@ -223,8 +241,36 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
 
-    for index <- 1..501 do
+    for index <- 1..601 do
       create_message_fixture(session, %{role: "assistant", content: "Message #{index}"})
+    end
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=chat")
+
+    for _page <- 1..5 do
+      render_click(view, "load_older_messages")
+    end
+
+    assert has_element?(view, "#chat-viewport #load-newer-messages", "Newer messages available")
+
+    assert has_element?(
+             view,
+             "#instrument-workbench-chat [data-workbench-command-dock] #prompt-composer"
+           )
+
+    render_click(view, "load_newer_messages")
+    refute has_element?(view, "#load-newer-messages")
+  end
+
+  test "conversation paging does not claim newer messages at the retained boundary", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    for index <- 1..500 do
+      create_message_fixture(session, %{role: "assistant", content: "Boundary #{index}"})
     end
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=chat")
@@ -233,7 +279,7 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
       render_click(view, "load_older_messages")
     end
 
-    assert has_element?(view, "#load-newer-messages", "Newer messages available")
+    refute has_element?(view, "#load-newer-messages")
   end
 
   test "calendar only shows tasks scheduled on the cell's full date", %{

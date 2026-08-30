@@ -1934,11 +1934,11 @@
             return_instrument_id="instrument-card-chat"
           >
             <:primary_field>
-              <div id="conversation-loop-field" class="conversation-loop-field">
+              <div id="conversation-loop-field" class="conversation-loop-field flex min-h-0 flex-1">
                 <aside id="chat-minimap" aria-label="Conversation timeline" class="chat-minimap">
                   <div id="chat-timeline-track" class="scroll-timeline-track">
-                    <%= for {msg, idx} <- Enum.with_index(@messages) do %>
-                      <% msg_id = msg.id || "msg-#{idx}"
+                    <%= for {msg, idx} <- Enum.with_index(retained_chat_messages(@messages)) do %>
+                      <% msg_id = msg.id
                       is_user = msg.role == "user"
                       preview_title =
                         if is_user,
@@ -1978,7 +1978,7 @@
                   aria-haspopup="dialog"
                   aria-controls="chat-jump-sheet"
                   aria-expanded={if(@chat_jump_sheet_open?, do: "true", else: "false")}
-                  disabled={@messages == []}
+                  disabled={!chat_has_retained_message?(@messages)}
                   class="sf-control chat-jump-trigger min-h-11 w-full justify-center gap-2"
                 >
                   <.icon name="hero-list-bullet" class="h-4 w-4" />
@@ -2000,7 +2000,7 @@
                     <.icon name="hero-arrow-up" class="h-3.5 w-3.5" /> Load older messages
                   </button>
                   <div
-                    :if={@messages == []}
+                    :if={!chat_has_retained_message?(@messages)}
                     id="chat-empty-state"
                     class="sf-chat-prose m-auto flex max-w-md flex-col items-center px-6 py-12 text-center"
                   >
@@ -2011,8 +2011,8 @@
                     <p class="mt-2 leading-6 text-[var(--sf-text-secondary)]">No fabricated history is added to a new session. Send a prompt below when you are ready to begin.</p>
                   </div>
 
-                  <%= for {msg, idx} <- Enum.with_index(@messages) do %>
-                    <% msg_id = msg.id || "msg-#{idx}"
+                  <%= for {msg, idx} <- Enum.with_index(retained_chat_messages(@messages)) do %>
+                    <% msg_id = msg.id
                     is_user = msg.role == "user" %>
                     <article
                       id={"chat-msg-#{msg_id}"}
@@ -2065,7 +2065,7 @@
                   </button>
                 </div>
 
-                <%= if @chat_jump_sheet_open? and @messages != [] do %>
+                <%= if @chat_jump_sheet_open? and chat_has_retained_message?(@messages) do %>
                   <div
                     id="chat-jump-sheet"
                     phx-hook="ResponsiveSheet"
@@ -2090,8 +2090,8 @@
                       ><.icon name="hero-x-mark" class="h-4 w-4" /></button>
                     </div>
                     <div class="sf-sheet-scroll p-4">
-                      <%= for {msg, idx} <- Enum.with_index(@messages) do %>
-                        <% msg_id = msg.id || "msg-#{idx}" %>
+                      <%= for {msg, idx} <- Enum.with_index(retained_chat_messages(@messages)) do %>
+                        <% msg_id = msg.id %>
                         <button
                           id={"chat-jump-message-#{msg_id}"}
                           type="button"
@@ -3002,7 +3002,7 @@
   <!-- Expanded Message Modal -->
   <%= if @expanded_message_id do %>
     <% expanded_msg = @expanded_message %>
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--sf-shadow)] backdrop-blur-md p-6">
       <div
         id="expanded-message-modal"
         phx-hook="ModalFocus"
@@ -3013,14 +3013,14 @@
         aria-modal="true"
         aria-labelledby="expanded-message-modal-title"
         tabindex="-1"
-        class="bg-[#11151c] border border-[#21262d] rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95"
+        class="sf-chassis w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95"
       >
-        <div class="p-4 border-b border-[#21262d] bg-[#161b22] flex items-center justify-between">
+        <div class="flex items-center justify-between border-b border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-4">
           <div class="flex items-center gap-2">
-            <.icon name="hero-chat-bubble-bottom-center-text" class="w-4 h-4 text-blue-400" />
+            <.icon name="hero-chat-bubble-bottom-center-text" class="h-4 w-4 text-[var(--sf-live-text)]" />
             <span
               id="expanded-message-modal-title"
-              class="font-bold text-white text-xs font-mono uppercase"
+              class="font-mono text-xs font-bold uppercase text-[var(--sf-text-primary)]"
             >
               {if expanded_msg,
                 do: expanded_msg.agent_name || expanded_msg.role,
@@ -3031,24 +3031,26 @@
             <%= if expanded_msg do %>
               <button
                 id="copy-expanded-msg-btn"
+                type="button"
                 phx-hook="CodeCopy"
                 data-code={expanded_msg.content}
-                class="px-2.5 py-1 bg-[#21262d] hover:bg-[#30363d] text-gray-200 rounded-lg text-xs font-mono transition-smooth flex items-center gap-1.5"
+                class="sf-control flex min-h-11 items-center gap-1.5 px-2.5 font-mono text-xs"
               >
                 <.icon name="hero-clipboard-document" class="w-3.5 h-3.5" />
                 <span>Copy</span>
               </button>
             <% end %>
             <button
+              type="button"
               phx-click="close_expand_message"
               aria-label="Close message inspector"
-              class="text-gray-400 hover:text-white p-1 rounded-lg"
+              class="sf-control min-h-11 min-w-11 justify-center p-2 text-[var(--sf-text-secondary)]"
             >
               <.icon name="hero-x-mark" class="w-5 h-5" />
             </button>
           </div>
         </div>
-        <div class="p-6 overflow-y-auto font-mono text-xs leading-relaxed text-gray-200 bg-[#0a0d12]">
+        <div id="expanded-message-body" class="sf-chat-prose sf-sheet-scroll flex-1 p-6">
           <%= if expanded_msg do %>
             <.markdown_content content={expanded_msg.content} />
           <% end %>

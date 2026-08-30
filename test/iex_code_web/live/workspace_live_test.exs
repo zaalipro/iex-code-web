@@ -479,10 +479,11 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
 
-    create_message_fixture(session, %{
-      role: "user",
-      content: "Inspect the durable scheduler state"
-    })
+    user_message =
+      create_message_fixture(session, %{
+        role: "user",
+        content: "Inspect the durable scheduler state"
+      })
 
     create_message_fixture(session, %{
       role: "assistant",
@@ -506,10 +507,13 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     assert html =~ "The scheduler state is scoped and ready for review."
     assert html =~ "chat-viewport"
 
-    # Trigger scroll to message
-    html = render_click(view, "scroll_to_msg", %{"id" => "msg-0"})
-    assert is_binary(html)
-    assert Process.alive?(view.pid)
+    # Trigger scroll only for a retained durable message ID.
+    render_click(view, "scroll_to_msg", %{"id" => user_message.id})
+    assert_push_event(view, "scroll_to_msg", %{id: message_id})
+    assert message_id == user_message.id
+
+    render_click(view, "scroll_to_msg", %{"id" => "msg-0"})
+    refute_push_event(view, "scroll_to_msg", %{id: _})
   end
 
   # ============================================================================

@@ -208,11 +208,30 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     assert has_element?(view, "#chat-jump-message-#{message.id}")
     assert live_assigns(view).chat_jump_sheet_open?
 
+    retained_ids = Enum.map(live_assigns(view).messages, & &1.id)
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    assert document
+           |> LazyHTML.query("#chat-jump-sheet button[phx-click='jump_to_message']")
+           |> Enum.count() == length(retained_ids)
+
+    assert Enum.all?(retained_ids, &has_element?(view, "#chat-jump-message-#{&1}"))
+
     render_click(view, "jump_to_message", %{"id" => ""})
     refute_push_event(view, "scroll_to_msg", %{id: _})
     assert live_assigns(view).chat_jump_sheet_open?
 
     render_click(view, "jump_to_message", %{})
+    refute_push_event(view, "scroll_to_msg", %{id: _})
+    assert live_assigns(view).chat_jump_sheet_open?
+
+    render_click(view, "jump_to_message", %{"id" => "msg-0"})
+    refute_push_event(view, "scroll_to_msg", %{id: _})
+    assert live_assigns(view).chat_jump_sheet_open?
+
+    foreign_session = create_session_fixture(live_assigns(view).project)
+    foreign_message = create_message_fixture(foreign_session, %{content: "Foreign jump"})
+    render_click(view, "jump_to_message", %{"id" => foreign_message.id})
     refute_push_event(view, "scroll_to_msg", %{id: _})
     assert live_assigns(view).chat_jump_sheet_open?
 

@@ -108,9 +108,14 @@ defmodule IexCodeWeb.WorkspaceLive do
       SessionServer.ensure_started(session.id)
     end
 
-    raw_messages =
+    raw_message_page =
       session.id
-      |> Sessions.list_messages(limit: @message_page_size, content_limit: @message_preview_chars)
+      |> Sessions.list_messages(
+        limit: @message_page_size + 1,
+        content_limit: @message_preview_chars
+      )
+
+    {raw_messages, messages_more?} = trim_message_page(raw_message_page, :newest)
 
     messages = bound_message_window(raw_messages, :newest)
 
@@ -185,7 +190,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:sessions, sessions)
       |> assign(:all_sessions, sessions)
       |> assign(:messages, messages)
-      |> assign(:messages_more?, length(raw_messages) == @message_page_size)
+      |> assign(:messages_more?, messages_more?)
       |> assign(:messages_newer?, false)
       |> assign(:chat_jump_sheet_open?, false)
       |> assign(:latest_message_summary, latest_message)
@@ -597,12 +602,15 @@ defmodule IexCodeWeb.WorkspaceLive do
                 SessionServer.ensure_started(new_session.id)
               end
 
-              raw_messages =
+              raw_message_page =
                 new_session.id
                 |> Sessions.list_messages(
-                  limit: @message_page_size,
+                  limit: @message_page_size + 1,
                   content_limit: @message_preview_chars
                 )
+
+              {raw_messages, messages_more?} =
+                trim_message_page(raw_message_page, :newest)
 
               messages = bound_message_window(raw_messages, :newest)
 
@@ -662,7 +670,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:tasks, tasks)
                 |> assign(:page_title, "#{new_session.title} · #{project.name}")
                 |> assign(:messages, messages)
-                |> assign(:messages_more?, length(raw_messages) == @message_page_size)
+                |> assign(:messages_more?, messages_more?)
                 |> assign(:messages_newer?, false)
                 |> assign(:chat_jump_sheet_open?, false)
                 |> assign(
@@ -868,7 +876,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("expand_message", %{"id" => id}, socket) do
-    message = Sessions.get_message(socket.assigns.session.id, id)
+    message =
+      if authorized_chat_message_id?(socket.assigns.messages, id),
+        do: Sessions.get_message(socket.assigns.session.id, id),
+        else: nil
 
     {:noreply,
      socket
@@ -883,7 +894,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("open_chat_jump_sheet", _params, socket) do
-    open? = socket.assigns.active_view == "chat" and socket.assigns.messages != []
+    open? =
+      socket.assigns.active_view == "chat" and
+        chat_has_retained_message?(socket.assigns.messages)
+
     {:noreply, assign(socket, :chat_jump_sheet_open?, open?)}
   end
 
@@ -1781,28 +1795,30 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("load_older_messages", _params, socket) do
     first = List.first(socket.assigns.messages)
 
-    older =
+    older_page =
       if first,
         do:
           Sessions.list_messages(socket.assigns.session.id,
-            limit: @message_page_size,
+            limit: @message_page_size + 1,
             before: first,
             content_limit: @message_preview_chars
           ),
         else: []
 
+    {older, older_more?} = trim_message_page(older_page, :older)
+
     combined = older ++ socket.assigns.messages
     messages = combined |> Enum.take(@message_retained_limit) |> bound_message_window(:oldest)
-    reached_retained_limit? = length(combined) >= @message_retained_limit
+    discarded_newer? = length(messages) < length(combined)
 
     {:noreply,
      socket
      |> assign(:messages, messages)
      |> assign(
        :messages_more?,
-       length(older) == @message_page_size
+       older_more?
      )
-     |> assign(:messages_newer?, socket.assigns.messages_newer? or reached_retained_limit?)
+     |> assign(:messages_newer?, socket.assigns.messages_newer? or discarded_newer?)
      |> rebuild_instrument_summaries()}
   end
 
@@ -1810,27 +1826,33 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("load_newer_messages", _params, socket) do
     last = List.last(socket.assigns.messages)
 
-    newer =
+    newer_page =
       if last,
         do:
           Sessions.list_messages(socket.assigns.session.id,
-            limit: @message_page_size,
+            limit: @message_page_size + 1,
             after: last,
             content_limit: @message_preview_chars
           ),
         else: []
 
+    {newer, newer_more?} = trim_message_page(newer_page, :newer)
+
     combined = socket.assigns.messages ++ newer
-    shifted? = length(combined) > @message_retained_limit
+
+    messages =
+      combined |> Enum.take(-@message_retained_limit) |> bound_message_window(:newest)
+
+    discarded_older? = length(messages) < length(combined)
 
     {:noreply,
      socket
      |> assign(
        :messages,
-       combined |> Enum.take(-@message_retained_limit) |> bound_message_window(:newest)
+       messages
      )
-     |> assign(:messages_more?, socket.assigns.messages_more? or shifted?)
-     |> assign(:messages_newer?, length(newer) == @message_page_size)
+     |> assign(:messages_more?, socket.assigns.messages_more? or discarded_older?)
+     |> assign(:messages_newer?, newer_more?)
      |> rebuild_instrument_summaries()}
   end
 
@@ -9052,6 +9074,19 @@ defmodule IexCodeWeb.WorkspaceLive do
     if direction == :oldest, do: Enum.reverse(selected), else: selected
   end
 
+  defp trim_message_page(messages, direction) when is_list(messages) do
+    has_more? = length(messages) > @message_page_size
+
+    page =
+      case direction do
+        :newer -> Enum.take(messages, @message_page_size)
+        :newest -> Enum.take(messages, -@message_page_size)
+        :older -> Enum.take(messages, -@message_page_size)
+      end
+
+    {page, has_more?}
+  end
+
   defp project_message_for_ui(message) do
     content = message.content || ""
 
@@ -9064,10 +9099,24 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp authorized_chat_message_id?(messages, id)
        when is_list(messages) and is_binary(id) and id != "" do
-    Enum.any?(messages, &(&1.id == id))
+    Enum.any?(messages, &(is_map(&1) and Map.get(&1, :id) == id))
   end
 
   defp authorized_chat_message_id?(_messages, _id), do: false
+
+  defp chat_has_retained_message?(messages) when is_list(messages) do
+    retained_chat_messages(messages) != []
+  end
+
+  defp chat_has_retained_message?(_messages), do: false
+
+  defp retained_chat_messages(messages) when is_list(messages) do
+    Enum.filter(messages, fn message ->
+      is_map(message) and is_binary(Map.get(message, :id)) and Map.get(message, :id) != ""
+    end)
+  end
+
+  defp retained_chat_messages(_messages), do: []
 
   attr :workspace_assigns, :map, required: true
 
