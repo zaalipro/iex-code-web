@@ -1045,6 +1045,19 @@ defmodule IexCode.Tools.TerminalServer do
     end
   end
 
+  @doc false
+  def resize(session_id, cols, rows, opts)
+      when is_binary(session_id) and is_integer(cols) and is_integer(rows) and is_list(opts) do
+    if cols <= 0 or rows <= 0 do
+      {:error, :invalid_dimensions}
+    else
+      case whereis(session_id) do
+        nil -> {:error, :not_found}
+        _pid -> TerminalSession.resize(session_id, cols, rows, opts)
+      end
+    end
+  end
+
   @doc """
   Dispatches an OS signal or control sequence (`:sigint`, `:sigterm`, `:sigkill`, `:sigtstp`, `:eof`) to the shell.
   """

@@ -251,10 +251,10 @@ defmodule IexCode.Tools.TerminalSession do
   """
   @spec resize(session_id :: String.t(), cols :: integer(), rows :: integer()) ::
           :ok | {:error, term()}
-  def resize(session_id, cols, rows)
+  def resize(session_id, cols, rows, opts \\ [])
       when is_binary(session_id) and is_integer(cols) and is_integer(rows) do
     try do
-      GenServer.call(via_tuple(session_id), {:resize, cols, rows})
+      GenServer.call(via_tuple(session_id), {:resize, cols, rows, opts})
     catch
       :exit, _ -> {:error, :not_found}
     end
@@ -694,29 +694,54 @@ defmodule IexCode.Tools.TerminalSession do
   end
 
   @impl true
-  def handle_call({:resize, cols, rows}, _from, state) do
+  def handle_call({:resize, cols, rows, opts}, _from, state) do
     new_cols = max(1, cols)
     new_rows = max(1, rows)
 
-    new_adapter =
-      if state.adapter && state.status == :running do
-        case PTYAdapter.resize(state.adapter, new_cols, new_rows) do
-          {:ok, updated_adapter} -> updated_adapter
-          _ -> state.adapter
+    cond do
+      stale_adapter_generation?(state, opts) ->
+        {:reply, {:error, :stale_terminal_generation}, state}
+
+      state.active_occupant != :user ->
+        {:reply, {:error, :agent_occupied}, state}
+
+      true ->
+        case ensure_workspace_lock(state) do
+          {:ok, locked_state, acquired?} ->
+            new_adapter =
+              if locked_state.adapter && locked_state.status == :running do
+                case PTYAdapter.resize(locked_state.adapter, new_cols, new_rows) do
+                  {:ok, updated_adapter} -> updated_adapter
+                  _ -> locked_state.adapter
+                end
+              else
+                locked_state.adapter
+              end
+
+            new_state = %{
+              locked_state
+              | adapter: new_adapter,
+                cols: new_cols,
+                rows: new_rows
+            }
+
+            new_state = if acquired?, do: release_workspace_lock(new_state), else: new_state
+
+            broadcast_event(state.session_id, {
+              :terminal_resized,
+              %{session_id: state.session_id, cols: new_cols, rows: new_rows}
+            })
+
+            {:reply, :ok, new_state}
+
+          {:error, reason, locked_state} ->
+            {:reply, {:error, reason}, locked_state}
         end
-      else
-        state.adapter
-      end
-
-    new_state = %{state | adapter: new_adapter, cols: new_cols, rows: new_rows}
-
-    broadcast_event(state.session_id, {
-      :terminal_resized,
-      %{session_id: state.session_id, cols: new_cols, rows: new_rows}
-    })
-
-    {:reply, :ok, new_state}
+    end
   end
+
+  def handle_call({:resize, cols, rows}, from, state),
+    do: handle_call({:resize, cols, rows, []}, from, state)
 
   @impl true
   def handle_call({:send_signal, signal, opts}, _from, state)

@@ -4296,7 +4296,12 @@ defmodule IexCodeWeb.WorkspaceLive do
              @terminal_max_rows
            ),
          {:ok, socket} <- ensure_terminal_attached(socket),
-         :ok <- TerminalServer.resize(socket.assigns.session.id, cols, rows) do
+         {:ok, state} <- TerminalServer.get_state(socket.assigns.session.id),
+         :user <- Map.get(state, :occupant),
+         :ok <-
+           TerminalServer.resize(socket.assigns.session.id, cols, rows,
+             adapter_generation: Map.get(state, :adapter_generation)
+           ) do
       {:noreply, socket |> assign(:terminal_cols, cols) |> assign(:terminal_rows, rows)}
     else
       _invalid_or_inactive -> {:noreply, socket}
@@ -4367,21 +4372,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       case TerminalServer.get_state(socket.assigns.session.id) do
         {:ok, %{status: status}} when status in [:starting, :ready, :running, :restarting] ->
           {:noreply, request_terminal_confirmation(socket, :restart_terminal_session)}
-
-        _absent_or_stopped ->
-          start_terminal_session(socket)
-      end
-    else
-      {:noreply, socket}
-    end
-  end
-
-  @impl true
-  def handle_event("start_terminal_session", _params, socket) do
-    if socket.assigns.active_view == "terminal" do
-      case TerminalServer.get_state(socket.assigns.session.id) do
-        {:ok, %{status: status}} when status in [:starting, :ready, :running, :restarting] ->
-          {:noreply, socket}
 
         _absent_or_stopped ->
           start_terminal_session(socket)
@@ -6974,20 +6964,37 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp start_terminal_session(socket) do
-    case ensure_terminal_attached(socket) do
-      {:ok, socket} ->
-        {:noreply,
-         socket
-         |> assign(:pending_terminal_confirmation, nil)
-         |> assign(:terminal_active_cmd, nil)
-         |> assign(:terminal_output, "")
-         |> push_event("terminal_reset", %{})
-         |> rebuild_instrument_summaries()
-         |> put_flash(:info, "Terminal started")}
+    socket = refresh_workspace_locks(socket)
 
-      {:error, reason, socket} ->
-        Logger.warning("[WorkspaceLive] Terminal start failed: #{inspect(reason)}")
-        {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
+    allowed? =
+      if terminal_foreign_lock?(socket) do
+        false
+      else
+        case TerminalServer.get_state(socket.assigns.session.id) do
+          {:ok, state} -> Map.get(state, :occupant, :user) == :user
+          {:error, :not_found} -> true
+          _ -> false
+        end
+      end
+
+    if allowed? do
+      case ensure_terminal_attached(socket) do
+        {:ok, socket} ->
+          {:noreply,
+           socket
+           |> assign(:pending_terminal_confirmation, nil)
+           |> assign(:terminal_active_cmd, nil)
+           |> assign(:terminal_output, "")
+           |> push_event("terminal_reset", %{})
+           |> rebuild_instrument_summaries()
+           |> put_flash(:info, "Terminal started")}
+
+        {:error, reason, socket} ->
+          Logger.warning("[WorkspaceLive] Terminal start failed: #{inspect(reason)}")
+          {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
+      end
+    else
+      {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
     end
   end
 

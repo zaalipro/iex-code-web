@@ -3142,7 +3142,7 @@
 }
 .sf-terminal-command-input:focus { border-color: var(--sf-live-mark); outline: 2px solid color-mix(in srgb, var(--sf-live-mark) 35%, transparent); outline-offset: 1px; }
 .sf-terminal-command-input:disabled { cursor: not-allowed; opacity: .55; }
-.sf-terminal-submit { min-height: 2.75rem; border: 1px solid var(--sf-live-mark); border-radius: 999px; padding-inline: 1.15rem; background: var(--sf-live-mark); color: var(--sf-canvas-deep); font-size: .8125rem; font-weight: 700; }
+.sf-terminal-submit { min-height: 2.75rem; border: 1px solid var(--sf-live-text); border-radius: 999px; padding-inline: 1.15rem; background: var(--sf-live-text); color: var(--sf-instrument-raised); font-size: .8125rem; font-weight: 700; }
 .sf-terminal-submit:disabled { cursor: not-allowed; opacity: .55; }
 .sf-terminal-signal-panel { display: grid; gap: .7rem; min-width: 0; padding: 1.1rem; }
 .sf-terminal-signal-primary { color: var(--sf-text-primary); font-size: 1rem; font-weight: 700; }

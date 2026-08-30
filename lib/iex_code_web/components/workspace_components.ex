@@ -1563,7 +1563,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
           <button
             id="btn-terminal-restart"
             type="button"
-            phx-click={if(@running, do: "restart_terminal_session", else: "start_terminal_session")}
+            phx-click="restart_terminal_session"
             disabled={@input_locked}
             class="sf-terminal-control"
             title="Restart PTY Shell Process"

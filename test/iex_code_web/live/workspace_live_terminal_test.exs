@@ -319,6 +319,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
     } do
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
+      PubSub.subscribe(IexCode.PubSub, "session:#{session.id}:terminal")
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
@@ -332,7 +333,14 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       view |> element("#btn-terminal-kill") |> render_click()
       assert has_element?(view, "#terminal-interrupt-confirmation")
       view |> element("#confirm-terminal-confirmation") |> render_click()
-      _ = :sys.get_state(view.pid)
+
+      assert_receive {:terminal_command_completed,
+                      %{session_id: interrupted_session_id, exit_code: exit_code}},
+                     5_000
+
+      assert interrupted_session_id == session.id
+      assert exit_code != 0
+      assert {:ok, %{active_command_id: nil}} = TerminalServer.get_state(session.id)
       assert is_pid(TerminalServer.whereis(session.id))
     end
 
@@ -516,6 +524,40 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       refute has_element?(view, "#terminal-dimensions-badge", "120x45")
     end
 
+    test "current producer agent ownership blocks resize before PubSub projection", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      assert :ok = TerminalSession.set_occupant(session.id, {:agent, "ResizeAgent"})
+
+      render_hook(view, "terminal_resize", %{"cols" => 120, "rows" => 45})
+      assert {:ok, %{cols: 80, rows: 24}} = TerminalServer.get_state(session.id)
+      assert :ok = TerminalSession.set_occupant(session.id, :user)
+    end
+
+    test "current foreign lock blocks forged Start after stopped projection", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      assert :ok = TerminalServer.kill(session.id)
+      send(view.pid, {:terminal_exit, %{session_id: session.id, exit_code: 0}})
+      _ = :sys.get_state(view.pid)
+
+      {:ok, lock} = WorkspaceLocks.acquire(project, [:project], owner_id: "run:late-foreign")
+      on_exit(fn -> WorkspaceLocks.release(lock) end)
+      render_click(view, "restart_terminal_session", %{})
+      refute is_pid(TerminalServer.whereis(session.id))
+      refute has_element?(view, "#terminal-restart-confirmation")
+    end
+
     test "stopped terminal starts without restart confirmation", %{
       conn: conn,
       workspace_path: path
@@ -570,6 +612,69 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       render_click(view, "switch_tab", %{"tab" => "terminal"})
       refute_push_event(view, "terminal_history", %{history: _}, 100)
       assert {:ok, %{viewer_count: 1}} = TerminalServer.get_state(session.id)
+    end
+
+    test "deck tears down the host and terminal activation remounts an active history owner", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      assert has_element?(view, "#terminal-xterm-container[data-terminal-active='true']")
+
+      view |> element("#return-to-instrument-deck-terminal") |> render_click()
+      refute has_element?(view, "#terminal-xterm-container")
+      view |> element("#instrument-card-terminal") |> render_click()
+      assert has_element?(view, "#terminal-xterm-container[data-terminal-active='true']")
+      assert {:ok, %{viewer_count: 1}} = TerminalServer.get_state(session.id)
+    end
+
+    test "session switch replaces terminal history and closes stale confirmation", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session_a = create_session_fixture(project)
+      session_b = create_session_fixture(project)
+      PubSub.subscribe(IexCode.PubSub, "session:#{session_a.id}:terminal")
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session_a.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+
+      assert :ok = TerminalServer.run_command(session_a.id, "echo session-a-history")
+      assert_receive {:terminal_command_completed, %{session_id: completed_session_id}}, 5_000
+      assert completed_session_id == session_a.id
+      _ = :sys.get_state(view.pid)
+      assert "echo session-a-history" in :sys.get_state(view.pid).socket.assigns.terminal_history
+
+      view |> element("#btn-terminal-restart") |> render_click()
+      assert has_element?(view, "#terminal-restart-confirmation")
+
+      render_patch(view, ~p"/sessions/#{session_b.id}?view=terminal")
+      _ = :sys.get_state(view.pid)
+      refute has_element?(view, "#terminal-restart-confirmation")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.active_view == "terminal"
+      refute "echo session-a-history" in assigns.terminal_history
+    end
+
+    test "stale terminal confirmation cannot mutate after leaving the view", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      pid = TerminalServer.whereis(session.id)
+
+      view |> element("#btn-terminal-restart") |> render_click()
+      assert has_element?(view, "#terminal-restart-confirmation")
+      render_click(view, "switch_tab", %{"tab" => "kanban"})
+      render_click(view, "confirm_terminal_action", %{})
+      refute has_element?(view, "#terminal-restart-confirmation")
+      assert TerminalServer.whereis(session.id) == pid
     end
   end
 end

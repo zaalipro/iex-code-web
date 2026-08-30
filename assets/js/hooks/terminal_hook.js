@@ -4,6 +4,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links"
 import { SearchAddon } from "@xterm/addon-search"
 import { CanvasAddon } from "@xterm/addon-canvas"
 import {resolveTheme} from "../theme.mjs"
+import {initialTerminalLifecycle, transitionTerminalLifecycle} from "./terminal_lifecycle.mjs"
 
 /**
  * TerminalHook - High-performance interactive xterm.js LiveView Hook.
@@ -24,8 +25,9 @@ export const TerminalHook = {
     })
     this.handleThemeChanged = (event) => this.applyTheme(event.detail?.theme)
     this.sessionId = this.el.dataset.sessionId || null
-    this.isActive = this.el.dataset.terminalActive === "true"
-    this.historyNeeded = false
+    const lifecycle = initialTerminalLifecycle(this.el.dataset.terminalActive === "true")
+    this.isActive = lifecycle.isActive
+    this.historyNeeded = lifecycle.historyNeeded
     this.initTerminal(theme)
     window.addEventListener("iexcode:theme-changed", this.handleThemeChanged)
   },
@@ -273,33 +275,28 @@ export const TerminalHook = {
       this.fitTerminal()
       if (this.term) this.term.focus()
       this.pushEvent("request_terminal_history", {})
+      this.historyNeeded = false
     }, 50)
   },
 
   updated() {
     const nextSessionId = this.el.dataset.sessionId || null
     const nextActive = this.el.dataset.terminalActive === "true"
-    const sessionChanged = nextSessionId !== this.sessionId
-    const becameActive = nextActive && !this.isActive
+    const transition = transitionTerminalLifecycle({
+      sessionId: this.sessionId,
+      isActive: this.isActive,
+      historyNeeded: this.historyNeeded
+    }, nextSessionId, nextActive)
 
-    if (nextSessionId !== this.sessionId) {
-      this.sessionId = nextSessionId
-      if (this.term) this.term.reset()
-      this.historyNeeded = true
-      if (nextActive) {
-        this.pushEvent("request_terminal_history", {})
-        this.historyNeeded = false
-      }
-    }
-    if (becameActive && !sessionChanged) {
+    if (transition.reset && this.term) this.term.reset()
+    if (transition.focus) {
       this.fitTerminal()
       this.term?.focus()
-      if (this.historyNeeded) {
-        this.pushEvent("request_terminal_history", {})
-        this.historyNeeded = false
-      }
     }
-    this.isActive = nextActive
+    if (transition.requestHistory) this.pushEvent("request_terminal_history", {})
+    this.sessionId = transition.state.sessionId
+    this.isActive = transition.state.isActive
+    this.historyNeeded = transition.state.historyNeeded
     if (this.fitTerminal) this.fitTerminal()
   },
 
