@@ -76,6 +76,11 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert html_searched =~ "app.css"
       refute html_searched =~ "token.ex"
 
+      assert has_element?(
+               view,
+               "#file-filter-input[aria-label='Filter retained project files'][value='app.css']"
+             )
+
       # Clear filter
       render_change(view, "filter_files", %{"filter" => ""})
       html_cleared = render(view)
@@ -193,6 +198,32 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert html =~ "Could not read file: :enoent"
       assert has_element?(view, "#workspace-shell[data-active-view='files']")
     end
+
+    test "rejects directories and FIFO special files without opening or blocking", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      File.mkdir_p!(Path.join(path, "lib/a_directory"))
+      fifo = Path.join(path, "lib/editor_fifo")
+      {_, 0} = System.cmd("mkfifo", [fifo])
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+      render_click(view, "select_file", %{"path" => "lib/a_directory"})
+      assert has_element?(view, "#workspace-shell[data-active-view='deck']")
+      refute has_element?(view, "#instrument-workbench-files")
+
+      task =
+        Task.async(fn ->
+          render_click(view, "select_file", %{"path" => "lib/editor_fifo"})
+        end)
+
+      result = Task.yield(task, 500) || Task.shutdown(task, :brutal_kill)
+      assert match?({:ok, _html}, result)
+      assert has_element?(view, "#workspace-shell[data-active-view='deck']")
+      refute has_element?(view, "#instrument-workbench-files")
+    end
   end
 
   # ============================================================================
@@ -298,6 +329,93 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
 
       assert LazyHTML.query(view |> render() |> LazyHTML.from_fragment(), "#code-editor-textarea")
              |> LazyHTML.text() =~ dirty
+    end
+
+    test "dirty close cancels safely and confirms only from server-owned state", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      dirty = "unsaved close body\n"
+      workspace_write_file(path, "lib/dirty_close.ex", "original\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=files")
+
+      render_click(view, "select_file", %{"path" => "lib/dirty_close.ex"})
+      render_change(view, "file_content_changed", %{"content" => dirty})
+
+      view
+      |> element("[phx-click='close_file_buffer'][phx-value-path='lib/dirty_close.ex']")
+      |> render_click()
+
+      assert has_element?(view, "#file-buffer-revert-confirmation")
+
+      render_click(view, "cancel_file_confirmation")
+      refute has_element?(view, "#file-buffer-revert-confirmation")
+      assert editor_text(view) =~ dirty
+
+      view
+      |> element("[phx-click='close_file_buffer'][phx-value-path='lib/dirty_close.ex']")
+      |> render_click()
+
+      render_click(view, "close_file_buffer", %{})
+
+      refute has_element?(
+               view,
+               "[phx-click='close_file_buffer'][phx-value-path='lib/dirty_close.ex']"
+             )
+
+      assert has_element?(view, "#file-editor-empty")
+
+      render_click(view, "close_file_buffer", %{})
+      assert has_element?(view, "#file-editor-empty")
+    end
+
+    test "dirty close denies outward and inward path rebinds while retaining the sheet", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      outside =
+        Path.join(System.tmp_dir!(), "file-atlas-close-#{System.unique_integer([:positive])}")
+
+      File.write!(outside, "outside\n")
+      on_exit(fn -> File.rm(outside) end)
+
+      workspace_write_file(path, "lib/outward.ex", "original\n")
+      workspace_write_file(path, "lib/inward.ex", "original\n")
+      workspace_write_file(path, "lib/rebound.ex", "original\n")
+      workspace_write_file(path, "lib/inward_target.ex", "target\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=files")
+
+      for {relative, replacement} <- [
+            {"lib/outward.ex", {:symlink, outside}},
+            {"lib/inward.ex", {:symlink, Path.join(path, "lib/inward_target.ex")}},
+            {"lib/rebound.ex", {:regular, "replacement object\n"}}
+          ] do
+        dirty = "keep #{relative}\n"
+        render_click(view, "select_file", %{"path" => relative})
+        render_change(view, "file_content_changed", %{"content" => dirty})
+
+        view
+        |> element("[phx-click='close_file_buffer'][phx-value-path='#{relative}']")
+        |> render_click()
+
+        full = Path.join(path, relative)
+        File.rm!(full)
+
+        case replacement do
+          {:symlink, target} -> File.ln_s!(target, full)
+          {:regular, content} -> File.write!(full, content)
+        end
+
+        render_click(view, "close_file_buffer", %{})
+
+        assert has_element?(view, "#file-buffer-revert-confirmation")
+        assert editor_text(view) =~ dirty
+        render_click(view, "cancel_file_confirmation")
+      end
     end
   end
 
@@ -1589,6 +1707,14 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
     view.pid
     |> :sys.get_state()
     |> then(& &1.socket.assigns)
+  end
+
+  defp editor_text(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("#code-editor-textarea")
+    |> LazyHTML.text()
   end
 
   defp assert_confirmation_ops(view, host_id, target_id, action) do

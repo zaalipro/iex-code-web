@@ -345,24 +345,45 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     end
 
     render_click(view, "refresh_files")
-    assigns = live_assigns(view)
-    assert length(assigns.project_files) == 500
-    assert assigns.files_more?
-    assert assigns.files_can_load_more?
     assert has_element?(view, "#instrument-workbench-files-status", "500+ files indexed")
     assert has_element?(view, "#load-more-files")
+    assert file_tree_count(view) == 500
 
     render_click(view, "load_more_files")
-    assigns = live_assigns(view)
-    assert length(assigns.project_files) == 501
-    refute assigns.files_more?
-    refute assigns.files_can_load_more?
+    assert has_element?(view, "#instrument-workbench-files-status", "501 files indexed")
     refute has_element?(view, "#load-more-files")
+    assert file_tree_count(view) == 501
+
+    for index <- 502..2_001 do
+      File.write!(
+        Path.join(path, "bulk/#{String.pad_leading(to_string(index), 4, "0")}.txt"),
+        "x"
+      )
+    end
+
+    render_click(view, "refresh_files")
+    render_click(view, "load_more_files")
+    render_click(view, "load_more_files")
+    render_click(view, "load_more_files")
+
+    assert has_element?(view, "#instrument-workbench-files-status", "500+ files indexed")
+    refute has_element?(view, "#load-more-files")
+    assert has_element?(view, "#file-tree-list [phx-value-path='bulk/2000.txt']")
+    refute has_element?(view, "#file-tree-list [phx-value-path='bulk/2001.txt']")
   end
 
   defp live_assigns(view) do
     view.pid
     |> :sys.get_state()
     |> then(& &1.socket.assigns)
+  end
+
+  defp file_tree_count(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("#file-tree-list [phx-click='select_file']")
+    |> LazyHTML.to_tree()
+    |> length()
   end
 end

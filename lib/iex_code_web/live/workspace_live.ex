@@ -40,6 +40,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   @operation_retained_limit 200
   @file_page_size 500
   @file_retained_limit 2_000
+  @editor_file_max_bytes 2 * 1_024 * 1_024
   @diff_retained_bytes 2 * 1_024 * 1_024
   @max_prompt_with_research_bytes 90_000
   @max_dag_manifest_json_bytes 256_000
@@ -1622,7 +1623,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("search_files", %{"query" => query}, socket) do
-    {:noreply, assign(socket, :file_filter, query)}
+    {:noreply,
+     socket
+     |> assign(:file_filter, query)
+     |> assign(:file_filter_form, to_form(%{"filter" => query}))}
   end
 
   @impl true
@@ -1720,6 +1724,7 @@ defmodule IexCodeWeb.WorkspaceLive do
           {:noreply,
            socket
            |> refresh_workspace_locks()
+           |> rebuild_instrument_summaries()
            |> put_flash(
              :error,
              "Save blocked: another session owns the workspace lock. Your changes are still in the editor."
@@ -1727,8 +1732,9 @@ defmodule IexCodeWeb.WorkspaceLive do
 
         {:error, reason} ->
           {:noreply,
-           put_flash(
-             socket,
+           socket
+           |> rebuild_instrument_summaries()
+           |> put_flash(
              :error,
              "Failed to save file: #{editor_save_error(reason)}. Your changes are still in the editor."
            )}
@@ -1814,14 +1820,21 @@ defmodule IexCodeWeb.WorkspaceLive do
     with {:ok, canonical} <- canonical_file_identity(socket, path),
          true <- Enum.any?(socket.assigns.open_buffers, &(&1.path == canonical)) do
       if Enum.any?(socket.assigns.open_buffers, &(&1.path == canonical and &1.dirty?)) do
-        {:noreply,
-         assign(socket, :pending_file_confirmation, %{
-           kind: :close,
-           project_id: socket.assigns.project.id,
-           session_id: socket.assigns.session.id,
-           path: canonical,
-           return_id: file_buffer_close_id(canonical)
-         })}
+        case close_buffer_identity(socket, canonical) do
+          {:ok, identity} ->
+            {:noreply,
+             assign(socket, :pending_file_confirmation, %{
+               kind: :close,
+               project_id: socket.assigns.project.id,
+               session_id: socket.assigns.session.id,
+               path: canonical,
+               identity: identity,
+               return_id: file_buffer_close_id(canonical)
+             })}
+
+          _ ->
+            {:noreply, socket}
+        end
       else
         {:noreply, close_clean_file_buffer(socket, canonical)}
       end
@@ -1832,15 +1845,21 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   def handle_event("close_file_buffer", _params, socket) do
     case socket.assigns.pending_file_confirmation do
-      %{kind: :close, project_id: project_id, session_id: session_id, path: path}
+      %{
+        kind: :close,
+        project_id: project_id,
+        session_id: session_id,
+        path: path,
+        identity: identity
+      }
       when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
-        case current_open_file(socket, path) do
-          {:ok, %{dirty?: true}} ->
-            {:noreply,
-             close_clean_file_buffer(assign(socket, :pending_file_confirmation, nil), path)}
-
-          _ ->
-            {:noreply, assign(socket, :pending_file_confirmation, nil)}
+        with {:ok, ^path} <- canonical_file_identity(socket, path),
+             {:ok, ^identity} <- close_buffer_identity(socket, path),
+             {:ok, %{dirty?: true}} <- current_open_file(socket, path) do
+          {:noreply,
+           close_clean_file_buffer(assign(socket, :pending_file_confirmation, nil), path)}
+        else
+          _ -> {:noreply, socket}
         end
 
       _ ->
@@ -6210,23 +6229,21 @@ defmodule IexCodeWeb.WorkspaceLive do
            |> assign(:is_dirty?, buffer.dirty?)}
 
         :error ->
-          {:ok, full_path} = WorkspacePath.resolve(socket.assigns.project.root_path, canonical)
+          case read_editor_file(socket, canonical) do
+            {:ok, content} ->
+              buffer = %{path: canonical, content: content, dirty_content: content, dirty?: false}
 
-          content =
-            case File.read(full_path) do
-              {:ok, text} -> text
-              {:error, reason} -> "Could not read file: #{inspect(reason)}"
-            end
+              {:ok,
+               socket
+               |> assign(:open_buffers, socket.assigns.open_buffers ++ [buffer])
+               |> assign(:selected_file, canonical)
+               |> assign(:file_content, content)
+               |> assign(:dirty_content, content)
+               |> assign(:is_dirty?, false)}
 
-          buffer = %{path: canonical, content: content, dirty_content: content, dirty?: false}
-
-          {:ok,
-           socket
-           |> assign(:open_buffers, socket.assigns.open_buffers ++ [buffer])
-           |> assign(:selected_file, canonical)
-           |> assign(:file_content, content)
-           |> assign(:dirty_content, content)
-           |> assign(:is_dirty?, false)}
+            {:error, _reason} ->
+              {:error, put_flash(socket, :error, "Invalid file path")}
+          end
       end
     else
       _ -> {:error, put_flash(socket, :error, "Invalid file path")}
@@ -6249,6 +6266,89 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   defp canonical_file_identity(_socket, _path), do: {:error, :invalid_path}
+
+  defp read_editor_file(socket, path) do
+    root = socket.assigns.project.root_path
+
+    case WorkspaceIdentity.capture(root, path, max_bytes: @editor_file_max_bytes) do
+      {:ok, %{missing?: true}} ->
+        {:ok, "Could not read file: :enoent"}
+
+      {:ok, %{type: :regular} = before} ->
+        with {:ok, content} <- bounded_editor_read(Path.join(root, path)),
+             true <- String.valid?(content),
+             {:ok, %{type: :regular} = after_read} <-
+               WorkspaceIdentity.capture(root, path, max_bytes: @editor_file_max_bytes),
+             true <- editor_file_identity(before) == editor_file_identity(after_read),
+             true <- before.content_digest == editor_content_digest(content) do
+          {:ok, content}
+        else
+          _ -> {:error, :identity_changed}
+        end
+
+      _ ->
+        {:error, :invalid_file_type}
+    end
+  end
+
+  defp bounded_editor_read(full_path) do
+    task =
+      Task.async(fn ->
+        try do
+          with {:ok, io} <- File.open(full_path, [:read, :binary]),
+               result <- IO.binread(io, @editor_file_max_bytes + 1),
+               :ok <- File.close(io) do
+            case result do
+              content when is_binary(content) and byte_size(content) <= @editor_file_max_bytes ->
+                {:ok, content}
+
+              _ ->
+                {:error, :file_too_large}
+            end
+          end
+        rescue
+          _ -> {:error, :read_failed}
+        catch
+          _, _ -> {:error, :read_failed}
+        end
+      end)
+
+    case Task.yield(task, 1_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> {:error, :read_timeout}
+    end
+  end
+
+  defp editor_file_identity(identity) do
+    Map.take(identity, [
+      :canonical,
+      :type,
+      :mode,
+      :size,
+      :mtime,
+      :ctime,
+      :inode,
+      :major_device,
+      :minor_device,
+      :content_digest,
+      :ancestors
+    ])
+  end
+
+  defp editor_content_digest(content) do
+    :sha256
+    |> :crypto.hash(content)
+    |> Base.encode16(case: :lower)
+  end
+
+  defp close_buffer_identity(socket, path) do
+    case WorkspaceIdentity.capture(socket.assigns.project.root_path, path,
+           max_bytes: @editor_file_max_bytes
+         ) do
+      {:ok, identity} -> {:ok, editor_file_identity(identity)}
+      error -> error
+    end
+  end
 
   defp current_open_file(socket, path) do
     case Enum.find(socket.assigns.open_buffers, &(&1.path == path)) do

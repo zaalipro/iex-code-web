@@ -946,8 +946,9 @@ defmodule IexCodeWeb.WorkspaceComponents do
               type="text"
               name="filter"
               placeholder="Search files (e.g. .ex)..."
+              aria-label="Filter retained project files"
               autocomplete="off"
-              class="sf-file-atlas-filter w-full min-h-11 rounded-xl px-3 py-1.5 pl-8 text-xs font-mono"
+              class="sf-file-atlas-filter w-full min-h-11 rounded-xl px-3 py-1.5 pl-8 text-sm font-mono"
             />
             <.icon
               name="hero-magnifying-glass"
@@ -961,7 +962,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                   Standby · files not loaded
                 <% @has_filter -> %>
                   {length(@tree_items)} retained matches
-                <% @files_omitted -> %>
+                <% @files_omitted or @more_files -> %>
                   500+ files indexed
                 <% true -> %>
                   {length(@files)} {if(length(@files) == 1, do: "file", else: "files")} indexed
@@ -1159,7 +1160,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                     "cursor-not-allowed bg-[color-mix(in_srgb,var(--sf-live-mark)_12%,transparent)] text-[var(--sf-live-text)]/60 border border-[var(--sf-live-mark)]",
                   @is_dirty &&
                     !@editor_locked? &&
-                    "bg-[var(--sf-success-mark)] hover:bg-[var(--sf-success-mark)] text-[var(--sf-text-primary)] shadow-[0_12px_30px_-18px_var(--sf-shadow)]",
+                    "bg-[var(--sf-text-primary)] hover:bg-[var(--sf-text-primary)] text-[var(--sf-canvas-deep)] shadow-[0_12px_30px_-18px_var(--sf-shadow)]",
                   !@is_dirty && !@editor_locked? &&
                     "bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                 ]}
@@ -1179,6 +1180,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 id="copy-file-btn"
                 phx-hook="CodeCopy"
                 data-code={@current_text}
+                aria-label={"Copy #{@selected_file} contents"}
+                title="Copy file contents"
                 type="button"
                 class="sf-control min-h-11 px-2.5 text-xs font-mono flex items-center gap-1.5"
               >
@@ -1208,7 +1211,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 id="retry-file-lock-btn"
                 type="button"
                 phx-click="retry_file_lock"
-                class="shrink-0 rounded-lg border border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)] px-2.5 py-1 font-semibold text-[var(--sf-live-text)] transition hover:border-[var(--sf-live-mark)] hover:bg-rose-400/20"
+                class="sf-control min-h-11 shrink-0 rounded-lg border border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)] px-2.5 py-1 font-semibold text-[var(--sf-live-text)] transition hover:border-[var(--sf-live-mark)] hover:bg-[var(--sf-raised-control)]"
               >
                 Retry access
               </button>

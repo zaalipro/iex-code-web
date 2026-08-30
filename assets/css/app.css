@@ -3054,9 +3054,29 @@
 .sf-file-atlas-signal { border-top: 1px solid var(--sf-hairline); padding-top: .7rem; }
 .sf-file-atlas-signal dt { color: var(--sf-text-secondary); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
 .sf-file-atlas-signal dd { margin-top: .25rem; color: var(--sf-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; overflow-wrap: anywhere; }
-#file-atlas-primary-field[data-files-focus-mode="true"] .sf-file-atlas-tree { width: 19rem; }
+#instrument-workbench-files:has(#file-atlas-primary-field[data-files-focus-mode="true"]) .sf-workbench-signal-panel {
+  min-height: 0;
+  padding: 0.75rem;
+}
+#file-atlas-primary-field[data-files-focus-mode="true"] .sf-file-atlas-tree {
+  width: 12.5rem;
+}
+@media (min-width: 1024px) {
+  #instrument-workbench-files:has(#file-atlas-primary-field[data-files-focus-mode="true"]) .sf-workbench-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.18fr);
+  }
+  #instrument-workbench-files:has(#file-atlas-primary-field[data-files-focus-mode="true"]) .sf-workbench-primary-field {
+    padding: 0.75rem;
+  }
+}
 @media (max-width: 639px) {
-  #file-atlas-primary-field[data-files-focus-mode="true"] .sf-file-atlas-tree { width: 100%; }
+  #file-atlas-primary-field[data-files-focus-mode="true"] .sf-file-atlas-tree {
+    width: 100%;
+    min-height: 8.5rem;
+    height: min(30%, 10rem);
+    max-height: 10rem;
+  }
+  #file-atlas-primary-field[data-files-focus-mode="true"] .sf-file-atlas-editor { min-height: 22rem; }
   .sf-file-atlas-tree { max-height: 42%; }
   .sf-file-atlas-editor { min-height: 20rem; }
 }

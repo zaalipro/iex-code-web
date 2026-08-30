@@ -45,6 +45,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorLockTest do
     assert has_element?(view, "#editor-lock-ribbon")
     assert render(view) =~ "Your changes are still in the editor"
     assert render(view) =~ "Unsaved changes"
+    assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
 
     render_click(view, "toggle_files_focus_mode")
     assert has_element?(view, "#files-focus-mode-toggle[aria-pressed='true']")
