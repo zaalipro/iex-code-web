@@ -187,6 +187,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:messages, messages)
       |> assign(:messages_more?, length(raw_messages) == @message_page_size)
       |> assign(:messages_newer?, false)
+      |> assign(:chat_jump_sheet_open?, false)
       |> assign(:latest_message_summary, latest_message)
       |> assign(:operations, operations)
       |> assign(:selected_run, selected_run)
@@ -663,6 +664,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:messages, messages)
                 |> assign(:messages_more?, length(raw_messages) == @message_page_size)
                 |> assign(:messages_newer?, false)
+                |> assign(:chat_jump_sheet_open?, false)
                 |> assign(
                   :latest_message_summary,
                   List.first(Sessions.list_messages(new_session.id, limit: 1, content_limit: 160))
@@ -877,6 +879,30 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_event("close_expand_message", _params, socket) do
     {:noreply, socket |> assign(:expanded_message_id, nil) |> assign(:expanded_message, nil)}
+  end
+
+  @impl true
+  def handle_event("open_chat_jump_sheet", _params, socket) do
+    open? = socket.assigns.active_view == "chat" and socket.assigns.messages != []
+    {:noreply, assign(socket, :chat_jump_sheet_open?, open?)}
+  end
+
+  @impl true
+  def handle_event("close_chat_jump_sheet", _params, socket) do
+    {:noreply, assign(socket, :chat_jump_sheet_open?, false)}
+  end
+
+  @impl true
+  def handle_event("jump_to_message", %{"id" => id}, socket) do
+    if socket.assigns.active_view == "chat" and
+         authorized_chat_message_id?(socket.assigns.messages, id) do
+      {:noreply,
+       socket
+       |> assign(:chat_jump_sheet_open?, false)
+       |> push_event("scroll_to_msg", %{id: id})}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -1543,7 +1569,12 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("scroll_to_msg", %{"id" => id}, socket) do
-    {:noreply, push_event(socket, "scroll_to_msg", %{id: id})}
+    if socket.assigns.active_view == "chat" and
+         authorized_chat_message_id?(socket.assigns.messages, id) do
+      {:noreply, push_event(socket, "scroll_to_msg", %{id: id})}
+    else
+      {:noreply, socket}
+    end
   end
 
   # ============================================================================
@@ -5283,6 +5314,7 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp reset_project_scoped_state(socket) do
     socket
+    |> assign(:chat_jump_sheet_open?, false)
     |> assign(:selected_task, nil)
     |> assign(:show_task_drawer, false)
     |> assign(:moving_task_id, nil)
@@ -5754,6 +5786,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp activate_workspace_view_change(socket, view, view), do: socket
 
   defp activate_workspace_view_change(socket, previous_view, view) do
+    socket =
+      if view != "chat",
+        do: assign(socket, :chat_jump_sheet_open?, false),
+        else: socket
+
     socket =
       if previous_view == "kanban" and view != "kanban",
         do:
@@ -9024,6 +9061,13 @@ defmodule IexCodeWeb.WorkspaceLive do
       message
     end
   end
+
+  defp authorized_chat_message_id?(messages, id)
+       when is_list(messages) and is_binary(id) and id != "" do
+    Enum.any?(messages, &(&1.id == id))
+  end
+
+  defp authorized_chat_message_id?(_messages, _id), do: false
 
   attr :workspace_assigns, :map, required: true
 

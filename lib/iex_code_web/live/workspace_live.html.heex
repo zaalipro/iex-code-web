@@ -1922,216 +1922,219 @@
           </.workbench_chassis>
         <% end %>
 
-        <!-- TAB: CHAT WITH SCROLL ASSISTANT MINIMAP -->
+        <%!-- Conversation Loop workbench --%>
         <%= if @active_tab == "chat" do %>
-          <div class="flex-1 flex h-full overflow-hidden relative">
-            <!-- Left Rail: Chat Scroll Assistant Minimap & Hover Preview Cards -->
-            <div class="w-12 pl-2.5 py-6 shrink-0 flex flex-col items-start z-30 select-none border-r border-[#21262d]/40">
-              <div class="scroll-assistant-rail">
-                <div class="scroll-timeline-track" id="chat-timeline-track">
+          <.workbench_chassis
+            id="instrument-workbench-chat"
+            surface="chat"
+            index="06"
+            title="Conversation Loop"
+            status={if @instrument_summaries["chat"].primary, do: @instrument_summaries["chat"].primary, else: "No messages yet"}
+            return_to={workspace_path(@workspace_route, "deck")}
+            return_instrument_id="instrument-card-chat"
+          >
+            <:primary_field>
+              <div id="conversation-loop-field" class="conversation-loop-field">
+                <aside id="chat-minimap" aria-label="Conversation timeline" class="chat-minimap">
+                  <div id="chat-timeline-track" class="scroll-timeline-track">
+                    <%= for {msg, idx} <- Enum.with_index(@messages) do %>
+                      <% msg_id = msg.id || "msg-#{idx}"
+                      is_user = msg.role == "user"
+                      preview_title =
+                        if is_user,
+                          do: msg.content |> String.split("\n") |> List.first() |> String.slice(0, 40),
+                          else: msg.agent_name || "Assistant Response"
+                      preview_snippet = msg.content |> String.slice(0, 140) %>
+                      <button
+                        type="button"
+                        id={"scroll-node-#{msg_id}"}
+                        class={["scroll-timeline-node", idx == 0 && "is-active"]}
+                        data-target-msg-id={msg_id}
+                        phx-click="scroll_to_msg"
+                        phx-value-id={msg_id}
+                        aria-label={"Jump to message ##{idx + 1}"}
+                        title={"Jump to message ##{idx + 1}"}
+                      >
+                        <span class={["scroll-notch", is_user && "scroll-notch-landmark"]}></span>
+                        <span class="scroll-preview-card">
+                          <span class="flex items-center justify-between mb-1.5 pb-1 border-b border-[var(--sf-hairline)]">
+                            <span class="sf-code-surface border-0 bg-transparent p-0 text-[10px] font-semibold uppercase tracking-wider">
+                              {if is_user, do: "User Prompt", else: msg.agent_name || "Assistant"}
+                            </span>
+                            <span class="sf-code-surface border-0 bg-transparent p-0 text-[10px]">#{idx + 1}</span>
+                          </span>
+                          <span class="block sf-chat-prose truncate">{preview_title}</span>
+                          <span class="block sf-chat-prose line-clamp-3">{preview_snippet}</span>
+                        </span>
+                      </button>
+                    <% end %>
+                  </div>
+                </aside>
+
+                <button
+                  id="chat-jump-to-message"
+                  type="button"
+                  phx-click="open_chat_jump_sheet"
+                  aria-haspopup="dialog"
+                  aria-controls="chat-jump-sheet"
+                  aria-expanded={if(@chat_jump_sheet_open?, do: "true", else: "false")}
+                  disabled={@messages == []}
+                  class="sf-control chat-jump-trigger min-h-11 w-full justify-center gap-2"
+                >
+                  <.icon name="hero-list-bullet" class="h-4 w-4" />
+                  Jump to message
+                </button>
+
+                <div
+                  id="chat-viewport"
+                  phx-hook=".ChatScrollAssistant"
+                  class="chat-viewport flex min-h-0 flex-1 flex-col overflow-y-auto scroll-smooth"
+                >
+                  <button
+                    :if={@messages_more?}
+                    id="load-older-messages"
+                    type="button"
+                    phx-click="load_older_messages"
+                    class="sf-control mx-auto min-h-11 gap-1.5"
+                  >
+                    <.icon name="hero-arrow-up" class="h-3.5 w-3.5" /> Load older messages
+                  </button>
+                  <div
+                    :if={@messages == []}
+                    id="chat-empty-state"
+                    class="sf-chat-prose m-auto flex max-w-md flex-col items-center px-6 py-12 text-center"
+                  >
+                    <span class="flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] text-[var(--sf-text-secondary)]">
+                      <.icon name="hero-chat-bubble-left-right" class="h-5 w-5" />
+                    </span>
+                    <h3 class="mt-4 text-base font-semibold text-[var(--sf-text-primary)]">Start with a clean conversation</h3>
+                    <p class="mt-2 leading-6 text-[var(--sf-text-secondary)]">No fabricated history is added to a new session. Send a prompt below when you are ready to begin.</p>
+                  </div>
+
                   <%= for {msg, idx} <- Enum.with_index(@messages) do %>
                     <% msg_id = msg.id || "msg-#{idx}"
-                    is_user = msg.role == "user"
-
-                    preview_title =
-                      if is_user,
-                        do:
-                          msg.content |> String.split("\n") |> List.first() |> String.slice(0, 40),
-                        else: msg.agent_name || "Assistant Response"
-
-                    preview_snippet = msg.content |> String.slice(0, 140) %>
-                    <button
-                      type="button"
-                      id={"scroll-node-#{msg_id}"}
-                      class={[
-                        "scroll-timeline-node group",
-                        idx == 0 && "is-active"
-                      ]}
-                      data-target-msg-id={msg_id}
-                      phx-click="scroll_to_msg"
-                      phx-value-id={msg_id}
-                      aria-label={"Jump to message ##{idx + 1}"}
-                      title={"Jump to message ##{idx + 1}"}
+                    is_user = msg.role == "user" %>
+                    <article
+                      id={"chat-msg-#{msg_id}"}
+                      data-chat-msg-id={msg_id}
+                      class={["sf-chat-message sf-chat-prose", is_user && "chat-message-user", !is_user && "chat-message-assistant"]}
                     >
-                      <!-- Timeline Tick / Notch -->
-                      <span class={[
-                        "scroll-notch",
-                        is_user && "scroll-notch-landmark"
-                      ]}></span>
-
-                      <!-- Hover Floating Preview Card -->
-                      <span class="scroll-preview-card">
-                        <span class="flex items-center justify-between mb-1.5 pb-1 border-b border-white/10">
-                          <span class="text-[10px] font-mono font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-                            <span class={[
-                              "w-1.5 h-1.5 rounded-full",
-                              is_user && "bg-blue-400",
-                              !is_user && "bg-purple-400"
-                            ]}></span>
-                            {if is_user, do: "User Prompt", else: msg.agent_name || "Assistant"}
-                          </span>
-                          <span class="text-[9px] font-mono text-gray-500">#{idx + 1}</span>
-                        </span>
-                        <span class="block text-xs font-semibold text-white tracking-tight leading-snug mb-1 truncate">
-                          {preview_title}
-                        </span>
-                        <span class="block text-[11px] font-sans text-gray-400 line-clamp-3 leading-relaxed">
-                          {preview_snippet}
-                        </span>
-                      </span>
-                    </button>
-                  <% end %>
-                </div>
-              </div>
-            </div>
-
-            <!-- Main Chat Messages Viewport -->
-            <div
-              id="chat-viewport"
-              phx-hook=".ChatScrollAssistant"
-              class="flex-1 flex flex-col h-full overflow-y-auto p-6 space-y-6 scroll-smooth"
-            >
-              <button
-                :if={@messages_more?}
-                id="load-older-messages"
-                type="button"
-                phx-click="load_older_messages"
-                class="mx-auto flex items-center gap-1.5 rounded-lg border border-[#30363d] bg-[#11151c] px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-gray-300 transition-smooth hover:border-cyan-500/50 hover:text-cyan-200"
-              >
-                <.icon name="hero-arrow-up" class="h-3.5 w-3.5" /> Load older messages
-              </button>
-              <div
-                :if={@messages == []}
-                id="chat-empty-state"
-                class="m-auto flex max-w-md flex-col items-center px-6 py-12 text-center"
-              >
-                <span class="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#30363d] bg-[#11151c] text-gray-400 shadow-lg shadow-black/20">
-                  <.icon name="hero-chat-bubble-left-right" class="h-5 w-5" />
-                </span>
-                <h3 class="mt-4 text-sm font-semibold text-gray-100">
-                  Start with a clean conversation
-                </h3>
-                <p class="mt-2 text-xs leading-5 text-gray-400">
-                  No fabricated history is added to a new session. Send a prompt below when you
-                  are ready to begin.
-                </p>
-              </div>
-
-              <%= for {msg, idx} <- Enum.with_index(@messages) do %>
-                <% msg_id = msg.id || "msg-#{idx}"
-                is_user = msg.role == "user" %>
-                <div
-                  id={"chat-msg-#{msg_id}"}
-                  data-chat-msg-id={msg_id}
-                  class={[
-                    "w-full max-w-3xl transition-smooth group",
-                    is_user && "ml-auto",
-                    !is_user && "mr-auto"
-                  ]}
-                >
-                  <!-- Message Bubble -->
-                  <div class={[
-                    "p-5 rounded-2xl border text-xs shadow-md transition-smooth",
-                    is_user && "bg-[#161b22] border-[#30363d] text-white",
-                    !is_user && "bg-[#11151c] border-[#21262d] text-gray-200"
-                  ]}>
-                    <!-- Bubble Header -->
-                    <div class="flex items-center justify-between mb-2 text-[11px] font-mono text-gray-400 pb-1.5 border-b border-white/5">
-                      <div class="flex items-center gap-2">
-                        <span class={[
-                          "w-2 h-2 rounded-full",
-                          is_user && "bg-blue-400",
-                          !is_user && "bg-emerald-400"
-                        ]}></span>
-                        <span class="font-bold text-gray-300 uppercase tracking-wider">{msg.agent_name ||
-                          msg.role}</span>
+                      <header class="sf-chat-message-header">
+                        <span class="sf-chat-event-mark" aria-hidden="true"></span>
+                        <span>{msg.agent_name || msg.role}</span>
+                        <span class="sf-code-surface border-0 bg-transparent p-0">#{idx + 1}</span>
+                      </header>
+                      <%= if !is_user and msg.metadata && msg.metadata["reasoning"] do %>
+                        <.thinking_trace
+                          reasoning={msg.metadata["reasoning"]}
+                          duration_ms={msg.metadata["duration_ms"]}
+                        />
+                      <% end %>
+                      <div class="sf-chat-prose">
+                        <.markdown_content content={msg.content} />
                       </div>
-                      <span class="text-gray-500 text-[10px]">#{idx + 1}</span>
+                      <footer class="sf-chat-message-actions">
+                        <button
+                          id={"copy-msg-btn-#{msg_id}"}
+                          type="button"
+                          phx-hook="CodeCopy"
+                          data-code={msg.content}
+                          aria-label={"Copy message ##{idx + 1}"}
+                          class="sf-control min-h-11 min-w-11 justify-center p-2"
+                          title="Copy to clipboard"
+                        ><.icon name="hero-clipboard" class="h-3.5 w-3.5" /></button>
+                        <button
+                          type="button"
+                          phx-click="expand_message"
+                          phx-value-id={msg_id}
+                          aria-label={"Expand message ##{idx + 1}"}
+                          class="sf-control min-h-11 min-w-11 justify-center p-2"
+                          title="Expand message"
+                        ><.icon name="hero-arrows-pointing-out" class="h-3.5 w-3.5" /></button>
+                      </footer>
+                    </article>
+                  <% end %>
+                  <button
+                    :if={@messages_newer?}
+                    id="load-newer-messages"
+                    type="button"
+                    phx-click="load_newer_messages"
+                    class="sf-control mx-auto min-h-11 gap-1.5"
+                  >
+                    Newer messages available <.icon name="hero-arrow-down" class="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <%= if @chat_jump_sheet_open? and @messages != [] do %>
+                  <div
+                    id="chat-jump-sheet"
+                    phx-hook="ResponsiveSheet"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="chat-jump-sheet-title"
+                    tabindex="-1"
+                    data-sheet-dialog="true"
+                    data-sheet-close-event="close_chat_jump_sheet"
+                    data-sheet-return-id="chat-jump-to-message"
+                    data-sheet-background-id="chat-viewport"
+                    class="sf-chat-jump-sheet sf-chassis fixed inset-x-0 bottom-0 z-50 max-h-[min(85dvh,42rem)] rounded-b-none"
+                  >
+                    <div class="flex items-center justify-between border-b border-[var(--sf-hairline)] p-4">
+                      <h2 id="chat-jump-sheet-title" class="text-base font-semibold">Jump to message</h2>
+                      <button
+                        id="chat-jump-sheet-close"
+                        type="button"
+                        phx-click="close_chat_jump_sheet"
+                        class="sf-control min-h-11 min-w-11 justify-center"
+                        aria-label="Close jump to message"
+                      ><.icon name="hero-x-mark" class="h-4 w-4" /></button>
                     </div>
-
-                    <!-- Message Body with Reasoning & Markdown -->
-                    <%= if !is_user and msg.metadata && msg.metadata["reasoning"] do %>
-                      <.thinking_trace
-                        reasoning={msg.metadata["reasoning"]}
-                        duration_ms={msg.metadata["duration_ms"]}
-                      />
-                    <% end %>
-
-                    <.markdown_content content={msg.content} />
-
-                    <!-- Bubble Footer Action Bar -->
-                    <div class="flex items-center gap-3 pt-3 mt-3 border-t border-white/5 text-gray-500">
-                      <button
-                        id={"copy-msg-btn-#{msg_id}"}
-                        phx-hook="CodeCopy"
-                        data-code={msg.content}
-                        aria-label={"Copy message ##{idx + 1}"}
-                        class="hover:text-gray-300 p-1 rounded transition-smooth"
-                        title="Copy to clipboard"
-                      >
-                        <.icon name="hero-clipboard" class="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        phx-click="expand_message"
-                        phx-value-id={msg_id}
-                        aria-label={"Expand message ##{idx + 1}"}
-                        class="hover:text-gray-300 p-1 rounded transition-smooth"
-                        title="Expand message"
-                      >
-                        <.icon name="hero-arrows-pointing-out" class="w-3.5 h-3.5" />
-                      </button>
+                    <div class="sf-sheet-scroll p-4">
+                      <%= for {msg, idx} <- Enum.with_index(@messages) do %>
+                        <% msg_id = msg.id || "msg-#{idx}" %>
+                        <button
+                          id={"chat-jump-message-#{msg_id}"}
+                          type="button"
+                          phx-click="jump_to_message"
+                          phx-value-id={msg_id}
+                          class="sf-control mb-2 min-h-11 w-full justify-start gap-3 text-left"
+                        >
+                          <span class="sf-code-surface border-0 bg-transparent p-0 text-xs">#{idx + 1}</span>
+                          <span class="sf-chat-prose truncate">{String.slice(msg.content || "", 0, 96)}</span>
+                        </button>
+                      <% end %>
                     </div>
                   </div>
-                </div>
-              <% end %>
-              <button
-                :if={@messages_newer?}
-                id="load-newer-messages"
-                type="button"
-                phx-click="load_newer_messages"
-                class="mx-auto flex items-center gap-1.5 rounded-lg border border-[#30363d] bg-[#11151c] px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-gray-300 transition-smooth hover:border-cyan-500/50 hover:text-cyan-200"
-              >
-                Load newer messages <.icon name="hero-arrow-down" class="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
+                <% end %>
+              </div>
+            </:primary_field>
+            <:command_dock><.shared_command_dock workspace_assigns={assigns} /></:command_dock>
+          </.workbench_chassis>
 
           <script :type={Phoenix.LiveView.ColocatedHook} name=".ChatScrollAssistant">
             export default {
               mounted() {
                 const container = this.el;
-                const updateActiveNotch = () => {
+                this.updateActiveNotch = () => {
                   const messages = container.querySelectorAll('[data-chat-msg-id]');
                   let activeId = null;
-                  const containerRect = container.getBoundingClientRect();
-
+                  const top = container.getBoundingClientRect().top + 200;
                   messages.forEach(msg => {
                     const rect = msg.getBoundingClientRect();
-                    if (rect.top <= containerRect.top + 200 && rect.bottom >= containerRect.top) {
-                      activeId = msg.getAttribute('data-chat-msg-id');
-                    }
+                    if (rect.top <= top && rect.bottom >= container.getBoundingClientRect().top) activeId = msg.dataset.chatMsgId;
                   });
-
-                  if (activeId) {
-                    document.querySelectorAll('.scroll-timeline-node').forEach(node => {
-                      if (node.getAttribute('data-target-msg-id') === activeId) {
-                        node.classList.add('is-active');
-                      } else {
-                        node.classList.remove('is-active');
-                      }
-                    });
-                  }
+                  if (activeId) document.querySelectorAll('.scroll-timeline-node').forEach(node => node.classList.toggle('is-active', node.dataset.targetMsgId === activeId));
                 };
-
-                container.addEventListener('scroll', updateActiveNotch, { passive: true });
-                updateActiveNotch();
-
-                this.handleEvent('scroll_to_msg', ({ id }) => {
+                container.addEventListener('scroll', this.updateActiveNotch, { passive: true });
+                this.updateActiveNotch();
+                this.handleScrollToMsg = ({ id }) => {
                   const target = document.getElementById('chat-msg-' + id);
-                  if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  }
-                });
+                  if (target) target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+                };
+                this.handleEvent('scroll_to_msg', this.handleScrollToMsg);
+              },
+              destroyed() {
+                this.el?.removeEventListener('scroll', this.updateActiveNotch);
               }
             }
           </script>
@@ -2523,7 +2526,7 @@
       </div>
 
       <%!-- Shared command dock --%>
-      <%= if @active_view not in ["kanban", "calendar", "swarm", "research", "changes"] do %>
+      <%= if @active_view not in ["kanban", "calendar", "swarm", "research", "changes", "chat"] do %>
         <.shared_command_dock workspace_assigns={assigns} />
       <% end %>
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>

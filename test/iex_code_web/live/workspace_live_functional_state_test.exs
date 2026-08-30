@@ -197,6 +197,45 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     assert is_nil(live_assigns(view).expanded_message)
   end
 
+  test "conversation loop renders the Signal Foundry chat chassis and readable message field", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    create_message_fixture(session, %{role: "user", content: "A readable prompt"})
+    create_message_fixture(session, %{role: "assistant", content: "A readable response"})
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=chat")
+
+    assert has_element?(view, "#instrument-workbench-chat")
+    assert has_element?(view, "#conversation-loop-field")
+    assert has_element?(view, "#chat-viewport")
+    assert has_element?(view, ".sf-chat-prose")
+    refute has_element?(view, ".sf-chat-prose.sf-display")
+    assert has_element?(view, "#prompt-composer[data-command-dock-state='expanded']")
+  end
+
+  test "newer page availability uses the exact conversation copy", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    for index <- 1..501 do
+      create_message_fixture(session, %{role: "assistant", content: "Message #{index}"})
+    end
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=chat")
+
+    for _page <- 1..4 do
+      render_click(view, "load_older_messages")
+    end
+
+    assert has_element?(view, "#load-newer-messages", "Newer messages available")
+  end
+
   test "calendar only shows tasks scheduled on the cell's full date", %{
     conn: conn,
     workspace_path: path

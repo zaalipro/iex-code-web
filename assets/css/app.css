@@ -2918,3 +2918,123 @@
 @media (pointer: coarse) {
   #instrument-workbench-changes :where(button, a, input, textarea, select) { min-width: 44px; min-height: 44px; }
 }
+
+/* Conversation Loop workbench: a flat, readable event field. */
+#instrument-workbench-chat {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#instrument-workbench-chat .sf-workbench-fields,
+#instrument-workbench-chat .sf-workbench-primary-field,
+.conversation-loop-field {
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+#instrument-workbench-chat .sf-workbench-fields { overflow: hidden; }
+#instrument-workbench-chat .sf-workbench-primary-field { padding: 0; overflow: hidden; }
+.conversation-loop-field { display: flex; position: relative; overflow: hidden; }
+.chat-minimap {
+  display: flex;
+  width: 3rem;
+  flex: 0 0 3rem;
+  align-items: flex-start;
+  justify-content: center;
+  border-right: 1px solid var(--sf-hairline);
+  padding: 1.25rem 0.5rem;
+}
+.chat-minimap .scroll-timeline-track { width: 1.5rem; }
+.chat-minimap .scroll-notch { background-color: var(--sf-text-secondary); }
+.chat-minimap .scroll-notch-landmark { background-color: var(--sf-topology-text); }
+.chat-minimap .scroll-timeline-node:hover .scroll-notch,
+.chat-minimap .scroll-timeline-node:focus-visible .scroll-notch,
+.chat-minimap .scroll-timeline-node.is-active .scroll-notch {
+  background-color: var(--sf-live-mark);
+  box-shadow: none;
+}
+.chat-minimap .scroll-preview-card {
+  border-color: var(--sf-hairline);
+  background: var(--sf-instrument-raised);
+  box-shadow: 0 20px 40px -20px var(--sf-shadow);
+}
+.chat-viewport {
+  gap: 1.15rem;
+  padding: clamp(1rem, 2.4vw, 2rem);
+  scrollbar-gutter: stable;
+}
+.sf-chat-message {
+  width: min(100%, 52rem);
+  margin-inline: auto;
+  border-bottom: 1px solid var(--sf-hairline);
+  padding: 0 0 1.15rem;
+  color: var(--sf-text-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+.sf-chat-message-header,
+.sf-chat-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--sf-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sf-chat-message-header { margin-bottom: 0.75rem; }
+.sf-chat-message-actions { margin-top: 0.75rem; }
+.sf-chat-event-mark {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 0.5rem;
+  border-radius: 999px;
+  background: var(--sf-live-mark);
+}
+.sf-chat-prose {
+  color: var(--sf-text-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+.sf-chat-prose .markdown-body,
+.sf-chat-prose .markdown-body > div { font-size: inherit; line-height: inherit; }
+.sf-chat-prose .sf-code-surface,
+.sf-chat-prose pre,
+.sf-chat-prose code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.sf-chat-trace {
+  margin-block: 0 0.9rem;
+  border-block: 1px solid var(--sf-hairline);
+  padding-block: 0.65rem;
+  color: var(--sf-text-secondary);
+  font-size: 0.875rem;
+}
+.sf-chat-trace summary { list-style: none; font-weight: 650; }
+.sf-chat-trace summary::-webkit-details-marker { display: none; }
+.sf-chat-trace .sf-chat-event-mark { background: var(--sf-topology-text); }
+.chat-jump-trigger { display: none; }
+.sf-chat-jump-sheet { padding-bottom: env(safe-area-inset-bottom); }
+.sf-chat-jump-sheet .sf-sheet-scroll { max-height: min(68dvh, 32rem); }
+
+@media (max-width: 639px) {
+  #instrument-workbench-chat { border: 0; border-radius: 0; }
+  #instrument-workbench-chat .sf-workbench-header { padding: 1rem; }
+  #instrument-workbench-chat .sf-workbench-fields { overflow: visible; }
+  .conversation-loop-field { display: block; overflow: visible; }
+  #chat-minimap { display: none; }
+  .chat-jump-trigger { display: inline-flex; margin: 0.75rem 1rem 0; width: calc(100% - 2rem); }
+  .chat-viewport { min-height: 0; max-height: none; padding: 1rem; }
+  .sf-chat-jump-sheet { display: block; max-height: 100dvh; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+}
+
+@media (min-width: 640px) {
+  .sf-chat-jump-sheet { display: none !important; }
+}

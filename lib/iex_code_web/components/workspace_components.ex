@@ -1705,24 +1705,20 @@ defmodule IexCodeWeb.WorkspaceComponents do
   def thinking_trace(assigns) do
     ~H"""
     <%= if @reasoning && String.trim(@reasoning) != "" do %>
-      <details class="mb-3 rounded-2xl bg-[#161b22] border border-[#21262d] p-3 text-xs font-mono group">
-        <summary class="font-semibold text-amber-400 cursor-pointer flex items-center gap-2 select-none">
-          <.icon name="hero-sparkles" class="w-3.5 h-3.5 text-amber-400 shrink-0" />
+      <details class="sf-chat-trace mb-3" data-trace-kind="reasoning">
+        <summary class="flex cursor-pointer items-center gap-2 select-none">
+          <span class="sf-chat-event-mark" aria-hidden="true"></span>
           <span>Thought Process (Reasoning Trace)</span>
-          <div class="ml-auto flex items-center gap-2 text-[10px] font-mono text-gray-500">
+          <div class="ml-auto flex items-center gap-2 sf-code-surface border-0 bg-transparent p-0 text-xs">
             <%= if @duration_ms do %>
               <span>{@duration_ms}ms</span>
             <% end %>
             <%= if @tokens do %>
               <span>· {@tokens} tokens</span>
             <% end %>
-            <.icon
-              name="hero-chevron-down"
-              class="w-3 h-3 text-gray-400 group-open:rotate-180 transition-transform"
-            />
           </div>
         </summary>
-        <div class="mt-2 pt-2 border-t border-[#21262d] text-[11px] text-gray-300 leading-relaxed whitespace-pre-wrap font-mono">
+        <div class="sf-chat-prose mt-2 border-t border-[var(--sf-hairline)] pt-2 whitespace-pre-wrap">
           {@reasoning}
         </div>
       </details>

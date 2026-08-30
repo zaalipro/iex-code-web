@@ -181,4 +181,79 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     assert has_element?(view, "button#target-date-picker-trigger[aria-haspopup='dialog']")
     assert has_element?(view, "button#target-time-slot-trigger[aria-haspopup='dialog']")
   end
+
+  test "chat phone jump trigger exposes dialog semantics", %{view: view} do
+    view |> element("#instrument-card-chat") |> render_click()
+
+    assert has_element?(
+             view,
+             "button#chat-jump-to-message[type='button'][aria-haspopup='dialog'][aria-controls='chat-jump-sheet'][aria-expanded='false']"
+           )
+  end
+
+  test "chat jump sheet owns its lifecycle and only jumps to retained messages", %{
+    view: view,
+    session: session,
+    message: message
+  } do
+    view |> element("#instrument-card-chat") |> render_click()
+    view |> element("#chat-jump-to-message") |> render_click()
+
+    assert has_element?(
+             view,
+             "#chat-jump-sheet[phx-hook='ResponsiveSheet'][role='dialog'][aria-modal='true'][aria-labelledby='chat-jump-sheet-title'][tabindex='-1'][data-sheet-close-event='close_chat_jump_sheet'][data-sheet-return-id='chat-jump-to-message'][data-sheet-background-id='chat-viewport']"
+           )
+
+    assert has_element?(view, "#chat-jump-sheet-title", "Jump to message")
+    assert has_element?(view, "#chat-jump-message-#{message.id}")
+    assert live_assigns(view).chat_jump_sheet_open?
+
+    render_click(view, "jump_to_message", %{"id" => ""})
+    refute_push_event(view, "scroll_to_msg", %{id: _})
+    assert live_assigns(view).chat_jump_sheet_open?
+
+    render_click(view, "jump_to_message", %{})
+    refute_push_event(view, "scroll_to_msg", %{id: _})
+    assert live_assigns(view).chat_jump_sheet_open?
+
+    off_page = create_message_fixture(session, %{content: "Not in the retained DOM"})
+    render_click(view, "jump_to_message", %{"id" => off_page.id})
+    refute_push_event(view, "scroll_to_msg", %{id: _})
+    assert live_assigns(view).chat_jump_sheet_open?
+
+    render_click(view, "jump_to_message", %{"id" => message.id})
+    assert_push_event(view, "scroll_to_msg", %{id: message_id})
+    assert message_id == message.id
+    refute live_assigns(view).chat_jump_sheet_open?
+    refute has_element?(view, "#chat-jump-sheet")
+
+    render_click(view, "scroll_to_msg", %{"id" => off_page.id})
+    refute_push_event(view, "scroll_to_msg", %{id: _})
+    render_click(view, "scroll_to_msg", %{"id" => message.id})
+    assert_push_event(view, "scroll_to_msg", %{id: message_id})
+    assert message_id == message.id
+
+    view |> element("#chat-jump-to-message") |> render_click()
+    view |> element("#chat-jump-sheet-close") |> render_click()
+    refute live_assigns(view).chat_jump_sheet_open?
+  end
+
+  test "empty conversation keeps phone jump disabled and refuses to open", %{
+    conn: conn,
+    view: view
+  } do
+    empty_session = create_session_fixture(live_assigns(view).project)
+    {:ok, empty_view, _html} = live(conn, ~p"/sessions/#{empty_session.id}?view=chat")
+
+    assert has_element?(empty_view, "#chat-jump-to-message[disabled][aria-expanded='false']")
+    render_click(empty_view, "open_chat_jump_sheet")
+    refute live_assigns(empty_view).chat_jump_sheet_open?
+    refute has_element?(empty_view, "#chat-jump-sheet")
+  end
+
+  defp live_assigns(view) do
+    view.pid
+    |> :sys.get_state()
+    |> then(& &1.socket.assigns)
+  end
 end
