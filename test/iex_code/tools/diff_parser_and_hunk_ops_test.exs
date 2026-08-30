@@ -506,6 +506,12 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       assert {:error, :unsupported_git_shape} =
                HunkOps.revert_file(tmp_dir, "lib/renamed.txt", :staged)
 
+      assert {:error, :unsupported_git_shape} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all)
+
+      assert {:error, :unsupported_git_shape} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :staged)
+
       assert git_snapshot(tmp_dir) == before
       assert File.read!(Path.join(tmp_dir, "lib/renamed.txt")) == "rename me\n"
       refute File.exists?(file)
@@ -527,6 +533,22 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       assert staged == "staged\n"
     end
 
+    test "revert_file denies both endpoints of a staged copy for staged and all scopes", %{
+      tmp_dir: tmp_dir
+    } do
+      original = Path.join(tmp_dir, "lib/sample.txt")
+      copied = Path.join(tmp_dir, "lib/copied.txt")
+      File.cp!(original, copied)
+      assert :ok = Git.stage("lib/copied.txt", tmp_dir)
+      before = git_snapshot(tmp_dir)
+
+      for path <- ["lib/sample.txt", "lib/copied.txt"], scope <- [:staged, :all] do
+        assert {:error, :unsupported_git_shape} = HunkOps.revert_file(tmp_dir, path, scope)
+        assert git_snapshot(tmp_dir) == before
+        assert File.read!(original) == File.read!(copied)
+      end
+    end
+
     test "revert_file expected identity rejects a same-path replacement", %{tmp_dir: tmp_dir} do
       file = Path.join(tmp_dir, "lib/sample.txt")
       File.write!(file, "value AAA\n")
@@ -540,6 +562,44 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
                )
 
       assert File.read!(file) == "value BBB\n"
+    end
+
+    test "present partial expected authority fails closed", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "authority\n")
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :unstaged, expected_authority: %{})
+
+      assert File.read!(file) == "authority\n"
+    end
+
+    test "tracked revert rejects final inward and outward symlink replacements", %{tmp_dir: root} do
+      for kind <- [:inward, :outward] do
+        file = Path.join(root, "lib/sample.txt")
+        File.write!(file, "reviewed #{kind}\n")
+        {:ok, identity} = IexCode.WorkspaceIdentity.capture(root, "lib/sample.txt")
+
+        target =
+          if kind == :inward,
+            do: Path.join(root, "lib/guard.txt"),
+            else: Path.join(Path.dirname(root), "guard-#{System.unique_integer([:positive])}.txt")
+
+        File.write!(target, "guard\n")
+        if kind == :outward, do: on_exit(fn -> File.rm(target) end)
+        File.rm!(file)
+        File.ln_s!(target, file)
+
+        assert {:error, :stale_git_snapshot} =
+                 HunkOps.revert_file(root, "lib/sample.txt", :unstaged,
+                   expected_identity: identity
+                 )
+
+        assert File.read_link!(file) == target
+        assert File.read!(target) == "guard\n"
+        File.rm!(file)
+        File.write!(file, "original\n")
+      end
     end
 
     test "expected identity is strict and mode changes are stale", %{tmp_dir: tmp_dir} do
@@ -599,6 +659,50 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
                )
 
       assert File.read!(target) == original
+    end
+
+    test "revert_file rechecks full authority immediately before the effect", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "dirty authority\n")
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :unstaged)
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :unstaged,
+                 expected_identity: identity,
+                 expected_authority: authority,
+                 before_effect: fn -> File.chmod!(file, 0o755) end
+               )
+
+      assert File.read!(file) == "dirty authority\n"
+      assert Bitwise.band(File.lstat!(file).mode, 0o777) == 0o755
+    end
+
+    test "all-layer revert preserves an index replacement made at the effect boundary", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "staged reviewed\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      File.write!(file, "worktree reviewed\n")
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :all)
+
+      before_effect = fn ->
+        File.write!(file, "external index\n")
+        :ok = Git.stage("lib/sample.txt", tmp_dir)
+        File.write!(file, "worktree reviewed\n")
+      end
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all,
+                 expected_identity: identity,
+                 expected_authority: authority,
+                 before_effect: before_effect
+               )
+
+      assert File.read!(file) == "worktree reviewed\n"
+      assert {"external index\n", 0} = System.cmd("git", ["show", ":lib/sample.txt"], cd: tmp_dir)
     end
 
     test "accept_all_hunks stages the entire file", %{tmp_dir: tmp_dir} do

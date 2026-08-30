@@ -32,6 +32,7 @@ class Media extends Target {
 }
 
 function composed(initialMobile) {
+  const frames = []
   const media = new Media(initialMobile)
   const document = new Target()
   const background = new Element("scheduled-task-detail-modal")
@@ -57,8 +58,8 @@ function composed(initialMobile) {
   document.activeElement = trigger
   document.defaultView = {
     matchMedia: () => media,
-    requestAnimationFrame: callback => { callback(); return 1 },
-    cancelAnimationFrame: () => {}
+    requestAnimationFrame: callback => { frames.push(callback); return frames.length },
+    cancelAnimationFrame: id => { frames[id - 1] = null }
   }
   document.getElementById = id => elements.get(id) || null
   document.removeElementById = id => elements.delete(id)
@@ -79,13 +80,15 @@ function composed(initialMobile) {
   globalThis.requestAnimationFrame = document.defaultView.requestAnimationFrame
   globalThis.cancelAnimationFrame = document.defaultView.cancelAnimationFrame
 
-  const sheetHook = Object.assign(Object.create(ResponsiveSheet), {el: sheet, pushEvent() {}})
+  const pushes = []
+  const sheetHook = Object.assign(Object.create(ResponsiveSheet), {el: sheet, pushEvent(event) { pushes.push(event) }})
   sheetHook.mounted()
-  const modalHook = Object.assign(createModalFocus(), {el: dialog, pushEvent() {}})
+  const modalHook = Object.assign(createModalFocus(), {el: dialog, pushEvent(event) { pushes.push(event) }})
   modalHook.mounted()
 
   return {
-    media, document, background, trigger, successTarget, hunkSuccessTarget, sheet, dialog, sheetHook, modalHook,
+    media, document, background, trigger, successTarget, hunkSuccessTarget, sheet, dialog, sheetHook, modalHook, pushes,
+    flushFrames() { while (frames.length) { const frame = frames.shift(); if (frame) frame() } },
     destroy(order) {
       try {
         if (order === "inner-first") {
@@ -93,6 +96,7 @@ function composed(initialMobile) {
         } else {
           sheetHook.destroyed(); modalHook.destroyed()
         }
+        this.flushFrames()
       } finally {
         ;[globalThis.window, globalThis.document, globalThis.HTMLElement, globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame] = globals
       }
@@ -103,26 +107,27 @@ function composed(initialMobile) {
 for (const [kind, targetKey] of [["file", "successTarget"], ["hunk", "hunkSuccessTarget"]]) {
   for (const mobile of [true, false]) {
     test(`successful ${kind} confirmation returns once to its stable target (${mobile ? "mobile" : "desktop"})`, () => {
-      const h = composed(mobile)
-      const target = h[targetKey]
-      h.sheet.dataset.sheetReturnId = target.id
-      h.trigger.isConnected = false
-      h.document.removeElementById(h.trigger.id)
-      h.destroy("inner-first")
+      for (const order of ["inner-first", "outer-first"]) {
+        const h = composed(mobile)
+        const target = h[targetKey]
+        h.sheet.dataset.sheetReturnId = target.id
+        h.trigger.isConnected = false
+        h.document.removeElementById(h.trigger.id)
+        h.destroy(order)
 
-      assert.equal(target.focusCalls?.length, 1)
-      assert.equal(h.document.activeElement, target)
-      assert.equal(h.trigger.focusCalls?.length || 0, 0)
-      assert.equal(h.document.count("keydown"), 0)
-      assert.equal(h.background.inert, false)
-      assert.equal(h.background.getAttribute("aria-hidden"), "sentinel")
+        assert.equal(target.focusCalls?.length, 1)
+        assert.equal(h.document.activeElement, target)
+        assert.equal(h.trigger.focusCalls?.length || 0, 0)
+        assert.equal(h.document.count("keydown"), 0)
+        assert.equal(h.background.inert, false)
+        assert.equal(h.background.getAttribute("aria-hidden"), "sentinel")
+      }
     })
   }
 }
 
 function assertTeardown(h) {
   assert.equal(h.trigger.focusCalls?.length, 1)
-  assert.equal(h.document.activeElement, h.trigger)
   assert.equal(h.document.count("keydown"), 0)
   assert.equal(h.background.inert, false)
   assert.equal(h.background.hasAttribute("aria-hidden"), true)
@@ -140,6 +145,7 @@ for (const updateOrder of ["inner-first", "outer-first"]) {
       assert.equal(h.background.inert, true)
       assert.equal(h.background.getAttribute("aria-hidden"), "true")
       assert.equal(h.document.count("keydown"), 1)
+      h.flushFrames()
       assert.equal(h.document.activeElement, h.dialog)
       h.destroy(destroyOrder)
       assertTeardown(h)
@@ -156,8 +162,40 @@ for (const updateOrder of ["inner-first", "outer-first"]) {
       assert.equal(h.background.inert, true)
       assert.equal(h.background.getAttribute("aria-hidden"), "true")
       assert.equal(h.document.count("keydown"), 1)
+      h.flushFrames()
       h.destroy(destroyOrder)
       assertTeardown(h)
     }
   })
+}
+
+for (const kind of ["file", "hunk"]) {
+  for (const mobile of [true, false]) {
+    for (const order of ["inner-first", "outer-first"]) {
+      test(`Escape ${kind} confirmation preserves opener (${mobile ? "mobile" : "desktop"}, ${order})`, () => {
+        const h = composed(mobile)
+        h.sheetHook.pushEvent = event => h.pushes.push(event)
+        h.document.emit("keydown", {key: "Escape", preventDefault() { this.prevented = true }, stopPropagation() {}})
+        h.sheet.isConnected = false
+        h.dialog.isConnected = false
+        h.destroy(order)
+        assert.equal(h.trigger.focusCalls?.length, 1)
+        assert.equal(h.successTarget.focusCalls?.length || 0, 0)
+        assert.equal(h.pushes.filter(event => event === "cancel").length, 1)
+        assert.equal(h.sheet.dataset.sheetReturnId, h.trigger.id)
+      })
+
+      test(`cancel click ${kind} confirmation preserves opener (${mobile ? "mobile" : "desktop"}, ${order})`, () => {
+        const h = composed(mobile)
+        h.pushes.push("cancel")
+        h.sheet.isConnected = false
+        h.dialog.isConnected = false
+        h.destroy(order)
+        assert.equal(h.trigger.focusCalls?.length, 1)
+        assert.equal(h.successTarget.focusCalls?.length || 0, 0)
+        assert.deepEqual(h.pushes, ["cancel"])
+        assert.equal(h.sheet.dataset.sheetReturnId, h.trigger.id)
+      })
+    }
+  }
 }

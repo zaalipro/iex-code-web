@@ -873,6 +873,16 @@ defmodule IexCode.Tools.Git do
     end
   end
 
+  @doc false
+  def restore_shape_allowed(repo_dir, files, opts \\ []) do
+    restore_shape_allowed?(
+      repo_dir,
+      List.wrap(files),
+      Keyword.get(opts, :staged, true),
+      Keyword.get(opts, :worktree, true)
+    )
+  end
+
   defp do_restore_file(repo_dir, file_list, staged?, worktree?) do
     cond do
       staged? and worktree? ->
@@ -917,10 +927,10 @@ defmodule IexCode.Tools.Git do
         unsupported? =
           status.truncated? or Enum.any?(status.conflicted, &(&1.path in file_list)) or
             Enum.any?(status.staged, fn entry ->
-              entry.path in file_list and
+              (entry.path in file_list or Map.get(entry, :old_path) in file_list) and
                 ((worktree? and entry.status in [:added, :renamed, :copied]) or
                    (not worktree? and entry.status in [:renamed, :copied]))
-            end)
+            end) or rename_or_copy_pair_touches?(repo_dir, file_list)
 
         if unsupported?, do: {:error, :unsupported_git_shape}, else: :ok
 
@@ -933,6 +943,39 @@ defmodule IexCode.Tools.Git do
   end
 
   defp restore_shape_allowed?(_repo_dir, _file_list, _staged?, _worktree?), do: :ok
+
+  defp rename_or_copy_pair_touches?(repo_dir, file_list) do
+    case run_git(repo_dir, [
+           "diff",
+           "--cached",
+           "--name-status",
+           "-z",
+           "-M",
+           "-C",
+           "--find-copies-harder",
+           "HEAD",
+           "--"
+         ]) do
+      {:ok, output} when byte_size(output) <= 2 * 1_024 * 1_024 ->
+        output
+        |> String.split(<<0>>, trim: true)
+        |> name_status_pairs()
+        |> Enum.any?(fn {old_path, new_path} ->
+          old_path in file_list or new_path in file_list
+        end)
+
+      _ ->
+        true
+    end
+  end
+
+  defp name_status_pairs([<<prefix, _::binary>>, old_path, new_path | rest])
+       when prefix in [?R, ?C] do
+    [{old_path, new_path} | name_status_pairs(rest)]
+  end
+
+  defp name_status_pairs([_status, _path | rest]), do: name_status_pairs(rest)
+  defp name_status_pairs(_rest), do: []
 
   @doc """
   Returns a list of local and remote branches for the repository.

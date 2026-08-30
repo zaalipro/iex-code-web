@@ -90,4 +90,71 @@ defmodule IexCode.WorkspaceIdentityTest do
     assert {:error, :identity_too_large} =
              WorkspaceIdentity.capture(root, "grow.txt", max_bytes: 4, observer: observer)
   end
+
+  test "regular capture reads at most cap plus one and closes the opened handle", %{
+    tmp_dir: root
+  } do
+    File.write!(Path.join(root, "bounded.txt"), String.duplicate("x", 64))
+    owner = self()
+
+    observer = fn event -> send(owner, event) end
+
+    assert {:error, :identity_too_large} =
+             WorkspaceIdentity.capture(root, "bounded.txt", max_bytes: 4, observer: observer)
+
+    assert_received {:bytes_read, 5}
+    assert_received :after_close
+  end
+
+  test "post-open final replacement never reads the replacement target", %{tmp_dir: root} do
+    file = Path.join(root, "post-open.txt")
+    held = Path.join(root, "held.txt")
+    outside = Path.join(Path.dirname(root), "outside-#{System.unique_integer([:positive])}")
+    File.write!(file, "old object")
+    File.write!(outside, "outside sentinel")
+    on_exit(fn -> File.rm(outside) end)
+    owner = self()
+
+    observer = fn
+      :after_open ->
+        File.rename!(file, held)
+        File.ln_s!(outside, file)
+
+      {:bytes_read, count} ->
+        send(owner, {:bytes_read, count})
+
+      _ ->
+        :ok
+    end
+
+    assert {:error, :identity_changed} =
+             WorkspaceIdentity.capture(root, "post-open.txt", observer: observer)
+
+    refute_received {:bytes_read, _}
+    assert File.read!(held) == "old object"
+    assert File.read!(outside) == "outside sentinel"
+    assert File.read_link!(file) == outside
+  end
+
+  test "pre-open final FIFO substitution fails closed without blocking", %{tmp_dir: root} do
+    file = Path.join(root, "fifo-swap.txt")
+    File.write!(file, "regular")
+
+    observer = fn
+      :before_open ->
+        File.rm!(file)
+        {_, 0} = System.cmd("mkfifo", [file])
+
+      _ ->
+        :ok
+    end
+
+    task =
+      Task.async(fn ->
+        WorkspaceIdentity.capture(root, "fifo-swap.txt", observer: observer)
+      end)
+
+    assert {:error, :identity_changed} = Task.await(task, 500)
+    assert File.lstat!(file).type == :other
+  end
 end

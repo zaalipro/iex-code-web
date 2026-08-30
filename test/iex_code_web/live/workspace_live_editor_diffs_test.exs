@@ -373,10 +373,12 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
                "#git-hunk-discard-confirmation-hunk-1[data-sheet-close-event='cancel_git_confirmation'][data-sheet-background-id='workspace-shell']"
              )
 
-      assert has_element?(
-               view,
-               "#confirm-git-confirmation[phx-click*='set_attr'][phx-click*='changes-diff-panel'][phx-click*='reject_hunk']"
-             )
+      assert_confirmation_ops(
+        view,
+        "git-hunk-discard-confirmation-hunk-1",
+        "changes-diff-panel",
+        "reject_hunk"
+      )
 
       render_click(view, "revert_hunk", %{})
       refute has_element?(view, "#git-hunk-discard-confirmation-hunk-1")
@@ -472,10 +474,12 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
 
       assert has_element?(view, "#git-file-revert-confirmation-dialog.sf-sheet-scroll")
 
-      assert has_element?(
-               view,
-               "#confirm-git-confirmation[phx-click*='set_attr'][phx-click*='changes-staging-title'][phx-click*='revert_file']"
-             )
+      assert_confirmation_ops(
+        view,
+        "git-file-revert-confirmation",
+        "changes-staging-title",
+        "revert_file"
+      )
 
       render_click(view, "cancel_git_confirmation")
       refute has_element?(view, "#git-file-revert-confirmation")
@@ -693,7 +697,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert "staged_scope.ex" in Enum.map(status.unstaged, & &1.path)
     end
 
-    test "viewer Revert File restores both layers for a partially staged file", %{
+    test "viewer Revert File denies mixed index/worktree layers without partial effects", %{
       conn: conn,
       workspace_path: path
     } do
@@ -710,11 +714,12 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       render_click(view, "select_diff_file", %{"file" => "viewer_all.ex", "scope" => "unstaged"})
       view |> element("#git-file-revert-trigger") |> render_click()
       assert has_element?(view, "#git-file-revert-confirmation", "Revert entire file?")
+      before = git_snapshot(path)
       render_click(view, "revert_file", %{})
 
-      assert File.read!(Path.join(path, "viewer_all.ex")) == "head\n"
-      assert {:ok, status} = Git.status(path)
-      assert status.clean?
+      assert File.read!(Path.join(path, "viewer_all.ex")) == "worktree\n"
+      assert git_snapshot(path) == before
+      refute has_element?(view, "#git-file-revert-confirmation")
     end
 
     test "viewer all-layer revert denies a staged rename without partial mutation", %{
@@ -975,6 +980,51 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       refute has_element?(view, "#flash-info", "Staged all changes")
     end
 
+    test "accept all denies blank or failed fresh reads while membership stays valid", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "valid_member.ex", "head\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "valid_member.ex", "dirty\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      before = git_snapshot(path)
+      owner = self()
+
+      old_reader = Application.get_env(:iex_code, :workspace_diff_reader)
+      old_mutator = Application.get_env(:iex_code, :workspace_stage_mutator)
+
+      on_exit(fn ->
+        if old_reader,
+          do: Application.put_env(:iex_code, :workspace_diff_reader, old_reader),
+          else: Application.delete_env(:iex_code, :workspace_diff_reader)
+
+        if old_mutator,
+          do: Application.put_env(:iex_code, :workspace_stage_mutator, old_mutator),
+          else: Application.delete_env(:iex_code, :workspace_stage_mutator)
+      end)
+
+      Application.put_env(:iex_code, :workspace_stage_mutator, fn _, _ ->
+        send(owner, :stage_called)
+        :ok
+      end)
+
+      for result <- [
+            {:ok, %{content: " \n", truncated?: false}},
+            {:error, :forced_diff_failure}
+          ] do
+        Application.put_env(:iex_code, :workspace_diff_reader, fn _, _, _ -> result end)
+        render_click(view, "accept_all_hunks", %{"file" => "valid_member.ex"})
+        refute_received :stage_called
+        assert git_snapshot(path) == before
+        assert File.read!(Path.join(path, "valid_member.ex")) == "dirty\n"
+      end
+    end
+
     test "oversized file confirmation fails closed without changing index or disk", %{
       conn: conn,
       workspace_path: path
@@ -1073,6 +1123,27 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert status.staged == []
     end
 
+    test "file confirmation rejects forged old_path requests", %{conn: conn, workspace_path: path} do
+      workspace_write_file(path, "old.txt", "old\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "old.txt", "dirty\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "old.txt",
+        "old_path" => "forged.txt",
+        "source" => "ledger",
+        "scope" => "unstaged"
+      })
+
+      refute has_element?(view, "#git-file-revert-confirmation")
+      assert File.read!(Path.join(path, "old.txt")) == "dirty\n"
+    end
+
     test "direct palette source cannot bypass Changes gate", %{conn: conn, workspace_path: path} do
       init_git_repo!(path)
       workspace_write_file(path, "README.md", "head\n")
@@ -1113,6 +1184,53 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       refute has_element?(view, "#git-file-revert-confirmation")
       render_click(view, "revert_file", %{})
       assert File.read!(Path.join(path, "pending_same_view.ex")) == "temporary\n"
+    end
+
+    test "file and hunk confirmations replace cross-family authority", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "tracked.ex", "head\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "tracked.ex", "dirty\n")
+      workspace_write_file(path, "untracked.ex", "temporary\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      before = git_snapshot(path)
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "untracked.ex",
+        "source" => "ledger",
+        "scope" => "untracked"
+      })
+
+      assert has_element?(view, "#git-file-revert-confirmation")
+
+      render_click(view, "request_discard_git_hunk", %{
+        "file" => "tracked.ex",
+        "hunk_id" => "hunk-1"
+      })
+
+      refute has_element?(view, "#git-file-revert-confirmation")
+      assert has_element?(view, "#git-hunk-discard-confirmation-hunk-1")
+      render_click(view, "revert_file", %{})
+      assert git_snapshot(path) == before
+      assert File.read!(Path.join(path, "untracked.ex")) == "temporary\n"
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "untracked.ex",
+        "source" => "ledger",
+        "scope" => "untracked"
+      })
+
+      refute has_element?(view, "#git-hunk-discard-confirmation-hunk-1")
+      assert has_element?(view, "#git-file-revert-confirmation")
+      render_click(view, "reject_hunk", %{})
+      assert git_snapshot(path) == before
+      assert File.read!(Path.join(path, "tracked.ex")) == "dirty\n"
     end
 
     test "an accepted Git mutation refresh clears unrelated pending authority", %{
@@ -1388,6 +1506,23 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
 
   defp node_count(document, selector) do
     document |> LazyHTML.query(selector) |> LazyHTML.to_tree() |> length()
+  end
+
+  defp assert_confirmation_ops(view, host_id, target_id, action) do
+    [encoded] =
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#confirm-git-confirmation")
+      |> LazyHTML.attribute("phx-click")
+
+    assert Jason.decode!(encoded) == [
+             [
+               "set_attr",
+               %{"attr" => ["data-sheet-return-id", target_id], "to" => "##{host_id}"}
+             ],
+             ["push", %{"event" => action}]
+           ]
   end
 
   defp git_snapshot(root) do

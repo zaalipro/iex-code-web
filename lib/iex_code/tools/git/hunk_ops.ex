@@ -32,12 +32,16 @@ defmodule IexCode.Tools.Git.HunkOps do
          {:ok, {file_diff, hunk}} <- find_target_hunk(project_root, file_path, hunk_id, opts) do
       mode = Keyword.get(opts, :mode, :stage)
 
-      case mode do
-        :stage ->
-          stage_hunk(project_root, file_path, file_diff, hunk)
+      with :ok <- verify_expected_authority(project_root, file_path, mode_scope(mode), opts),
+           :ok <- before_effect(opts),
+           :ok <- verify_expected_authority(project_root, file_path, mode_scope(mode), opts) do
+        case mode do
+          :stage ->
+            stage_hunk(project_root, file_path, file_diff, hunk)
 
-        :apply_to_file ->
-          apply_hunk_to_file(project_root, file_path, file_diff, hunk, opts)
+          :apply_to_file ->
+            apply_hunk_to_file(project_root, file_path, file_diff, hunk, opts)
+        end
       end
     end
   end
@@ -57,27 +61,42 @@ defmodule IexCode.Tools.Git.HunkOps do
       patch_str = DiffParser.format_hunk_patch(file_diff, hunk)
       staged? = Keyword.get(opts, :staged, false)
 
-      result =
-        if staged? do
-          Git.apply_patch(project_root, patch_str, reverse: true, cached: true)
-        else
-          Git.apply_patch(project_root, patch_str, reverse: true)
-        end
-
-      case result do
-        {:ok, _output} ->
-          fetch_updated_diff(project_root, file_path)
-
-        {:error, reason} ->
-          if staged? or is_map(Keyword.get(opts, :expected_identity)) do
-            {:error, reason}
+      with :ok <-
+             verify_expected_authority(
+               project_root,
+               file_path,
+               if(staged?, do: :staged, else: :unstaged),
+               opts
+             ),
+           :ok <- before_effect(opts),
+           :ok <-
+             verify_expected_authority(
+               project_root,
+               file_path,
+               if(staged?, do: :staged, else: :unstaged),
+               opts
+             ) do
+        result =
+          if staged? do
+            Git.apply_patch(project_root, patch_str, reverse: true, cached: true)
           else
-            # Fallback to in-memory replacement on the file
-            case fallback_revert_hunk_in_file(project_root, file_path, hunk) do
-              :ok -> fetch_updated_diff(project_root, file_path)
-              {:error, _} -> {:error, reason}
-            end
+            Git.apply_patch(project_root, patch_str, reverse: true)
           end
+
+        case result do
+          {:ok, _output} ->
+            fetch_updated_diff(project_root, file_path)
+
+          {:error, reason} ->
+            if staged? or is_map(Keyword.get(opts, :expected_identity)) do
+              {:error, reason}
+            else
+              case fallback_revert_hunk_in_file(project_root, file_path, hunk) do
+                :ok -> fetch_updated_diff(project_root, file_path)
+                {:error, _} -> {:error, reason}
+              end
+            end
+        end
       end
     end
   end
@@ -120,13 +139,204 @@ defmodule IexCode.Tools.Git.HunkOps do
           {:ok, :reverted} | {:error, term()}
   def revert_file(project_root, file_path, scope, opts)
       when scope in [:staged, :unstaged, :untracked, :all] and is_list(opts) do
-    with :ok <-
-           verify_expected_identity(project_root, file_path, Keyword.put(opts, :scope, scope)) do
+    opts = Keyword.put(opts, :scope, scope)
+
+    with :ok <- verify_expected_identity(project_root, file_path, opts),
+         :ok <- verify_expected_authority(project_root, file_path, scope, opts),
+         :ok <- before_effect(opts),
+         :ok <- verify_expected_authority(project_root, file_path, scope, opts) do
       do_revert_file_scope(project_root, file_path, scope, opts)
     end
   end
 
+  defp mode_scope(:stage), do: :unstaged
+  defp mode_scope(:apply_to_file), do: :unstaged
+
+  @doc false
+  def capture_authority(root, path, scope) do
+    with {:ok, status} <- Git.status(root, path_limit: 500, output_limit_bytes: 1_048_576),
+         false <- status.truncated?,
+         true <- authority_path_member?(status, path, scope),
+         {:ok, identity} <-
+           WorkspaceIdentity.capture(root, path,
+             max_bytes: 2 * 1_024 * 1_024,
+             allow_final_symlink: scope == :untracked
+           ),
+         {:ok, staged_diff} <- exact_effect_diff(root, path, :staged),
+         {:ok, unstaged_diff} <- exact_effect_diff(root, path, :unstaged),
+         {:ok, head_diff} <- exact_head_diff(root, path),
+         {:ok, index} <- Git.run_git(root, ["ls-files", "--stage", "--", path]) do
+      {:ok,
+       %{
+         scope: scope,
+         path: path,
+         branch: Map.get(status, :branch),
+         status_authority: status_authority(status),
+         identity: identity,
+         index_identity: digest(index),
+         staged_diff: digest(staged_diff),
+         unstaged_diff: digest(unstaged_diff),
+         staged_patch: staged_diff,
+         unstaged_patch: unstaged_diff,
+         head_patch: head_diff
+       }}
+    else
+      _ -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp verify_expected_authority(root, path, scope, opts) do
+    case Keyword.fetch(opts, :expected_authority) do
+      :error ->
+        :ok
+
+      {:ok, expected} when is_map(expected) ->
+        with {:ok, current} <- capture_authority(root, path, scope),
+             true <- authority_matches?(expected, current) do
+          :ok
+        else
+          _ -> {:error, :stale_git_snapshot}
+        end
+
+      {:ok, _invalid} ->
+        {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp authority_matches?(expected, current) when is_map(expected) and is_map(current) do
+    expected == current
+  end
+
+  defp authority_matches?(_, _), do: false
+
+  defp authority_path_member?(status, path, :staged),
+    do: Enum.any?(status.staged, &status_path_match?(&1, path))
+
+  defp authority_path_member?(status, path, :unstaged),
+    do: Enum.any?(status.unstaged, &status_path_match?(&1, path))
+
+  defp authority_path_member?(status, path, :untracked), do: path in status.untracked
+
+  defp authority_path_member?(status, path, :all),
+    do:
+      authority_path_member?(status, path, :staged) or
+        authority_path_member?(status, path, :unstaged) or
+        authority_path_member?(status, path, :untracked)
+
+  defp authority_path_member?(_, _, _), do: false
+
+  defp status_path_match?(entry, path),
+    do: entry.path == path or Map.get(entry, :old_path) == path
+
+  defp status_authority(status) do
+    status
+    |> Map.take([:branch, :staged, :unstaged, :untracked, :conflicted])
+    |> :erlang.term_to_binary()
+    |> digest()
+  end
+
+  defp exact_effect_diff(root, path, scope) do
+    args = ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv"]
+    args = if scope == :staged, do: args ++ ["--cached"], else: args
+
+    case Git.run_git(root, args ++ ["-U2147483647", "--", path]) do
+      {:ok, content} when byte_size(content) <= 8 * 1_024 * 1_024 -> {:ok, content}
+      _ -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp exact_head_diff(root, path) do
+    case Git.run_git(root, [
+           "diff",
+           "HEAD",
+           "--binary",
+           "--full-index",
+           "--no-ext-diff",
+           "--no-textconv",
+           "-U2147483647",
+           "--",
+           path
+         ]) do
+      {:ok, content} when byte_size(content) <= 8 * 1_024 * 1_024 -> {:ok, content}
+      _ -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp digest(value) do
+    :sha256
+    |> :crypto.hash(:erlang.term_to_binary(value))
+    |> Base.encode16(case: :lower)
+  end
+
+  defp before_effect(opts) do
+    case Keyword.get(opts, :before_effect) do
+      fun when is_function(fun, 0) ->
+        _ = fun.()
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
   defp do_revert_file_scope(project_root, file_path, scope, opts) do
+    if Keyword.has_key?(opts, :expected_authority) do
+      do_exact_revert_file_scope(project_root, file_path, scope, opts)
+    else
+      do_legacy_revert_file_scope(project_root, file_path, scope, opts)
+    end
+  end
+
+  defp do_exact_revert_file_scope(project_root, file_path, :untracked, _opts) do
+    with {:ok, _canonical} <- WorkspacePath.resolve(project_root, file_path),
+         :ok <- reject_final_symlink(project_root, file_path) do
+      remove_file(Path.expand(file_path, project_root))
+    else
+      _ -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp do_exact_revert_file_scope(project_root, file_path, scope, opts) do
+    authority = Keyword.fetch!(opts, :expected_authority)
+    staged_patch = Map.get(authority, :staged_patch, "")
+    unstaged_patch = Map.get(authority, :unstaged_patch, "")
+    head_patch = Map.get(authority, :head_patch, "")
+
+    with :ok <-
+           if(scope in [:staged, :all],
+             do: git_scope_preflight(project_root, file_path, scope),
+             else: :ok
+           ) do
+      case scope do
+        :staged when staged_patch != "" ->
+          exact_reverse_apply(project_root, staged_patch, cached: true)
+
+        :unstaged when unstaged_patch != "" ->
+          exact_reverse_apply(project_root, unstaged_patch, [])
+
+        :all when staged_patch == "" and unstaged_patch != "" ->
+          exact_reverse_apply(project_root, unstaged_patch, [])
+
+        :all when staged_patch != "" and unstaged_patch == "" and head_patch != "" ->
+          exact_reverse_apply(project_root, head_patch, index: true)
+
+        :all when staged_patch != "" and unstaged_patch != "" ->
+          {:error, :unsupported_atomic_effect}
+
+        _ ->
+          {:error, :unsupported_atomic_effect}
+      end
+    end
+  end
+
+  defp exact_reverse_apply(root, patch, opts) do
+    case Git.apply_patch(root, patch, [reverse: true, whitespace: "nowarn"] ++ opts) do
+      {:ok, _output} -> {:ok, :reverted}
+      {:error, _reason} -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp do_legacy_revert_file_scope(project_root, file_path, scope, opts) do
     if scope == :untracked do
       with {:ok, _canonical} <- WorkspacePath.resolve(project_root, file_path) do
         # Remove the lexical final component so a symlink is unlinked rather
@@ -224,7 +434,11 @@ defmodule IexCode.Tools.Git.HunkOps do
           file_path in status.untracked ->
             remove_file(full_path)
 
-          git_scope_supported?(status, file_path, :all) ->
+          git_scope_supported?(status, file_path, :all) and
+              Git.restore_shape_allowed(project_root, file_path,
+                staged: true,
+                worktree: true
+              ) == :ok ->
             # One Git command updates the index and worktree from HEAD. Avoid
             # the former unstage-then-restore sequence, which could report an
             # error after already partially mutating the index.
@@ -250,30 +464,39 @@ defmodule IexCode.Tools.Git.HunkOps do
   # satisfies the requested scope. Reject them before any effect instead of
   # leaving a staged deletion or untracked path after a partial failure.
   defp git_scope_preflight(project_root, file_path, scope) do
-    case Git.status(project_root, path_limit: 500, output_limit_bytes: 1_048_576) do
-      {:ok, status} ->
-        if git_scope_supported?(status, file_path, scope),
-          do: :ok,
-          else: {:error, :unsupported_git_shape}
+    restore_opts =
+      if scope == :staged,
+        do: [staged: true, worktree: false],
+        else: [staged: true, worktree: true]
 
-      {:error, reason} ->
-        {:error, reason}
+    with :ok <- Git.restore_shape_allowed(project_root, file_path, restore_opts),
+         {:ok, status} <-
+           Git.status(project_root, path_limit: 500, output_limit_bytes: 1_048_576) do
+      if git_scope_supported?(status, file_path, scope),
+        do: :ok,
+        else: {:error, :unsupported_git_shape}
+    else
+      {:error, reason} -> {:error, reason}
     end
   end
 
   defp git_scope_supported?(status, file_path, :staged) do
     not status.truncated? and not Enum.any?(status.conflicted, &(&1.path == file_path)) and
       not Enum.any?(status.staged, fn entry ->
-        entry.path == file_path and rename_or_copy_status?(entry.status)
+        status_entry_matches_path?(entry, file_path) and rename_or_copy_status?(entry.status)
       end)
   end
 
   defp git_scope_supported?(status, file_path, :all) do
     not status.truncated? and not Enum.any?(status.conflicted, &(&1.path == file_path)) and
       not Enum.any?(status.staged, fn entry ->
-        entry.path == file_path and
+        status_entry_matches_path?(entry, file_path) and
           (rename_or_copy_status?(entry.status) or entry.status in [:added, "added"])
       end)
+  end
+
+  defp status_entry_matches_path?(entry, path) do
+    entry.path == path or Map.get(entry, :old_path) == path
   end
 
   defp rename_or_copy_status?(status) when is_atom(status),
@@ -319,8 +542,24 @@ defmodule IexCode.Tools.Git.HunkOps do
   Accepts all hunks for a given file by staging the file.
   """
   @spec accept_all_hunks(Path.t(), Path.t()) :: {:ok, :accepted} | {:error, term()}
-  def accept_all_hunks(project_root, file_path) do
-    case Git.stage(file_path, project_root) do
+  def accept_all_hunks(project_root, file_path, opts \\ []) do
+    stage_result =
+      case Keyword.get(opts, :_stage) do
+        fun when is_function(fun, 2) ->
+          fun.(file_path, project_root)
+
+        _ ->
+          if Mix.env() == :test do
+            case Application.get_env(:iex_code, :workspace_stage_mutator) do
+              fun when is_function(fun, 2) -> fun.(file_path, project_root)
+              _ -> Git.stage(file_path, project_root)
+            end
+          else
+            Git.stage(file_path, project_root)
+          end
+      end
+
+    case stage_result do
       :ok -> {:ok, :accepted}
       err -> err
     end

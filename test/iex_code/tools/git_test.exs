@@ -237,6 +237,54 @@ defmodule IexCode.Tools.GitTest do
                )
     end
 
+    test "restore denies both endpoints of a staged rename", %{tmp_dir: tmp_dir} do
+      old = Path.join(tmp_dir, "lib/hello.ex")
+      renamed = Path.join(tmp_dir, "lib/renamed.ex")
+      {_, 0} = System.cmd("git", ["mv", "lib/hello.ex", "lib/renamed.ex"], cd: tmp_dir)
+
+      before =
+        for args <- [
+              ["status", "--porcelain=v1", "-uall"],
+              ["ls-files", "--stage"],
+              ["diff", "--cached", "--binary"],
+              ["diff", "--binary"]
+            ],
+            into: %{} do
+          {output, 0} = System.cmd("git", args, cd: tmp_dir)
+          {args, output}
+        end
+
+      for path <- ["lib/hello.ex", "lib/renamed.ex"],
+          opts <- [[staged: true, worktree: false], [staged: true, worktree: true]] do
+        assert {:error, :unsupported_git_shape} = Git.restore_file(tmp_dir, path, opts)
+        refute File.exists?(old)
+        assert File.exists?(renamed)
+
+        after_snapshot =
+          for args <- Map.keys(before), into: %{} do
+            {output, 0} = System.cmd("git", args, cd: tmp_dir)
+            {args, output}
+          end
+
+        assert after_snapshot == before
+      end
+    end
+
+    test "restore denies both endpoints of a staged copy", %{tmp_dir: tmp_dir} do
+      original = Path.join(tmp_dir, "lib/hello.ex")
+      copied = Path.join(tmp_dir, "lib/copied.ex")
+      File.cp!(original, copied)
+      assert :ok = Git.stage("lib/copied.ex", tmp_dir)
+      before = System.cmd("git", ["diff", "--cached", "--binary"], cd: tmp_dir)
+
+      for path <- ["lib/hello.ex", "lib/copied.ex"],
+          opts <- [[staged: true, worktree: false], [staged: true, worktree: true]] do
+        assert {:error, :unsupported_git_shape} = Git.restore_file(tmp_dir, path, opts)
+        assert File.read!(original) == File.read!(copied)
+        assert System.cmd("git", ["diff", "--cached", "--binary"], cd: tmp_dir) == before
+      end
+    end
+
     test "stage/2 and unstage/2 handle (repo_dir, files), (files, repo_dir), (files, opts), and empty lists",
          %{tmp_dir: tmp_dir, sample_file: sample_file} do
       File.write!(sample_file, "changed 1\n")

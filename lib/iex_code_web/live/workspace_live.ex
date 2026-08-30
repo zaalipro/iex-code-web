@@ -1825,7 +1825,11 @@ defmodule IexCodeWeb.WorkspaceLive do
       {hunks, diff_text, truncated?} = load_selected_diff(root, accepted_path, scope)
 
       selected_diff_fingerprint =
-        case not truncated? && git_file_fingerprint(socket, :all, accepted_path) do
+        case not truncated? &&
+               git_file_fingerprint(socket, :all, accepted_path,
+                 displayed_diff: diff_text,
+                 displayed_scope: scope
+               ) do
           {:ok, fingerprint} -> fingerprint
           _ -> nil
         end
@@ -1858,7 +1862,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                   true <- snapshot.fingerprint == expected_fingerprint do
                HunkOps.accept_hunk(root, accepted_path, hunk_id,
                  diff: snapshot.raw_diff,
-                 expected_identity: snapshot.identity
+                 expected_identity: snapshot.identity,
+                 expected_authority: snapshot.authority
                )
              else
                _ -> {:error, :stale_git_snapshot}
@@ -1940,8 +1945,10 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_event("request_revert_git_file", %{"file" => file} = params, socket) do
     scope = git_scope(params["scope"])
+    old_path = params["old_path"]
 
     with scope when scope in [:staged, :unstaged, :untracked] <- scope,
+         true <- is_nil(old_path) or old_path == "",
          source when source in ["viewer", "ledger"] <- params["source"],
          :ok <- authorize_revert_source(socket, file, scope, source),
          {:ok, accepted_path} <- authorize_status_path(socket, file, [scope]) do
@@ -2406,7 +2413,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                   true <- snapshot.fingerprint == expected_fingerprint do
                HunkOps.unstage_hunk(root, accepted_path, hunk_id,
                  diff: snapshot.raw_diff,
-                 expected_identity: snapshot.identity
+                 expected_identity: snapshot.identity,
+                 expected_authority: snapshot.authority
                )
              else
                _ -> {:error, :stale_git_snapshot}
@@ -6817,7 +6825,11 @@ defmodule IexCodeWeb.WorkspaceLive do
         end
 
       selected_diff_fingerprint =
-        case selected_diff_file && git_file_fingerprint(socket, :all, selected_diff_file) do
+        case selected_diff_file &&
+               git_file_fingerprint(socket, :all, selected_diff_file,
+                 displayed_diff: diff_text,
+                 displayed_scope: scope
+               ) do
           {:ok, fingerprint} when not truncated? -> fingerprint
           _ -> nil
         end
@@ -6930,7 +6942,17 @@ defmodule IexCodeWeb.WorkspaceLive do
     opts = [paths: [file_path], unified: 3, max_bytes: @diff_retained_bytes]
     opts = if scope == :staged, do: Keyword.put(opts, :staged, true), else: opts
 
-    case Git.diff_bounded(root, opts) do
+    result =
+      if Mix.env() == :test do
+        case Application.get_env(:iex_code, :workspace_diff_reader) do
+          fun when is_function(fun, 3) -> fun.(root, file_path, scope)
+          _ -> Git.diff_bounded(root, opts)
+        end
+      else
+        Git.diff_bounded(root, opts)
+      end
+
+    case result do
       {:ok, %{content: raw, truncated?: false}} when raw != "" ->
         case DiffParser.parse(raw) do
           {:ok, [file_diff | _]} -> {file_diff.hunks, raw, false}
@@ -7061,7 +7083,17 @@ defmodule IexCodeWeb.WorkspaceLive do
     )
   end
 
-  defp git_file_fingerprint(socket, scope, path) do
+  defp git_file_fingerprint(socket, scope, path, opts \\ []) do
+    with {:ok, first} <- capture_git_file_fingerprint(socket, scope, path, opts),
+         {:ok, second} <- capture_git_file_fingerprint(socket, scope, path, opts),
+         true <- first == second do
+      {:ok, second}
+    else
+      _ -> {:error, :stale_git_confirmation}
+    end
+  end
+
+  defp capture_git_file_fingerprint(socket, scope, path, opts) do
     root = socket.assigns.project.root_path
 
     with {:ok, status} <-
@@ -7072,7 +7104,9 @@ defmodule IexCodeWeb.WorkspaceLive do
            git_path_identity(root, path, allow_final_symlink: scope == :untracked),
          {:ok, staged_diff} <- bounded_exact_diff(root, path, :staged),
          {:ok, unstaged_diff} <- bounded_exact_diff(root, path, :unstaged),
-         {:ok, index_output} <- Git.run_git(root, ["ls-files", "--stage", "--", path]) do
+         true <- displayed_diff_matches?(opts, staged_diff, unstaged_diff),
+         {:ok, index_output} <- Git.run_git(root, ["ls-files", "--stage", "--", path]),
+         {:ok, effect_authority} <- HunkOps.capture_authority(root, path, scope) do
       payload = %{
         project_id: socket.assigns.project.id,
         session_id: socket.assigns.session.id,
@@ -7086,9 +7120,22 @@ defmodule IexCodeWeb.WorkspaceLive do
         unstaged_diff: semantic_digest(unstaged_diff)
       }
 
-      {:ok, %{digest: semantic_digest(payload), identity: identity}}
+      {:ok,
+       %{
+         digest: semantic_digest(payload),
+         identity: identity,
+         authority: effect_authority
+       }}
     else
       _ -> {:error, :stale_git_confirmation}
+    end
+  end
+
+  defp displayed_diff_matches?(opts, staged_diff, unstaged_diff) do
+    case {Keyword.get(opts, :displayed_diff), Keyword.get(opts, :displayed_scope)} do
+      {displayed, :staged} when is_binary(displayed) -> staged_diff == displayed
+      {displayed, :unstaged} when is_binary(displayed) -> unstaged_diff == displayed
+      _ -> true
     end
   end
 
@@ -7127,7 +7174,10 @@ defmodule IexCodeWeb.WorkspaceLive do
           patch: DiffParser.format_hunk_patch(file_diff, hunk)
         })
 
-      {:ok, %{fingerprint: fingerprint, raw_diff: raw_diff, identity: identity}}
+      with {:ok, authority} <- HunkOps.capture_authority(root, path, scope) do
+        {:ok,
+         %{fingerprint: fingerprint, raw_diff: raw_diff, identity: identity, authority: authority}}
+      end
     else
       _ -> {:error, :stale_git_confirmation}
     end
@@ -7205,7 +7255,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                  true <- snapshot.fingerprint == fingerprint do
               HunkOps.reject_hunk(root, accepted_path, hunk_id,
                 diff: snapshot.raw_diff,
-                expected_identity: snapshot.identity
+                expected_identity: snapshot.identity,
+                expected_authority: snapshot.authority
               )
             else
               false -> {:error, :stale_git_confirmation}
@@ -7263,7 +7314,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                  {:ok, current_fingerprint} <- git_file_fingerprint(socket, scope, accepted_path),
                  true <- current_fingerprint.digest == fingerprint.digest do
               HunkOps.revert_file(root, accepted_path, scope,
-                expected_identity: current_fingerprint.identity
+                expected_identity: current_fingerprint.identity,
+                expected_authority: current_fingerprint.authority
               )
             else
               _ -> {:error, :stale_git_confirmation}
