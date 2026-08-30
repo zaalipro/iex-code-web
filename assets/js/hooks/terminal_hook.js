@@ -24,6 +24,8 @@ export const TerminalHook = {
     })
     this.handleThemeChanged = (event) => this.applyTheme(event.detail?.theme)
     this.sessionId = this.el.dataset.sessionId || null
+    this.isActive = this.el.dataset.terminalActive === "true"
+    this.historyNeeded = false
     this.initTerminal(theme)
     window.addEventListener("iexcode:theme-changed", this.handleThemeChanged)
   },
@@ -267,6 +269,7 @@ export const TerminalHook = {
     // Initial fit with small delay to ensure CSS layout settlement
     this.initialHandshakeTimer = setTimeout(() => {
       this.initialHandshakeTimer = null
+      if (this.el.dataset.terminalActive !== "true") return
       this.fitTerminal()
       if (this.term) this.term.focus()
       this.pushEvent("request_terminal_history", {})
@@ -275,11 +278,28 @@ export const TerminalHook = {
 
   updated() {
     const nextSessionId = this.el.dataset.sessionId || null
+    const nextActive = this.el.dataset.terminalActive === "true"
+    const sessionChanged = nextSessionId !== this.sessionId
+    const becameActive = nextActive && !this.isActive
+
     if (nextSessionId !== this.sessionId) {
       this.sessionId = nextSessionId
       if (this.term) this.term.reset()
-      this.pushEvent("request_terminal_history", {})
+      this.historyNeeded = true
+      if (nextActive) {
+        this.pushEvent("request_terminal_history", {})
+        this.historyNeeded = false
+      }
     }
+    if (becameActive && !sessionChanged) {
+      this.fitTerminal()
+      this.term?.focus()
+      if (this.historyNeeded) {
+        this.pushEvent("request_terminal_history", {})
+        this.historyNeeded = false
+      }
+    }
+    this.isActive = nextActive
     if (this.fitTerminal) this.fitTerminal()
   },
 

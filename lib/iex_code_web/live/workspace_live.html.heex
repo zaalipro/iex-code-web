@@ -2249,6 +2249,7 @@
                 workspace_locks={@workspace_locks}
                 can_clear?={@terminal_history != [] or @terminal_output != ""}
                 can_interrupt?={is_binary(@terminal_active_cmd) and @terminal_active_cmd != ""}
+                active?={@active_view == "terminal"}
               />
               </:primary_field>
               <:signal_panel>

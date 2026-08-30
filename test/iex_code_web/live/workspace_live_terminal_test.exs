@@ -5,6 +5,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
 
   alias Phoenix.PubSub
   alias IexCode.Tools.{TerminalServer, TerminalSession}
+  alias IexCode.WorkspaceLocks
 
   # ============================================================================
   # 1. Terminal Mount & DOM Elements
@@ -243,21 +244,17 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       assert Process.alive?(view.pid)
     end
 
-    test "handles clear_terminal event and pushes terminal_clear event", %{
+    test "empty terminal cannot clear until producer history exists", %{
       conn: conn,
       workspace_path: path
     } do
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
 
-      view
-      |> element("#instrument-card-terminal")
-      |> render_click()
-
-      # Click clear button
-      view |> element("#btn-terminal-clear") |> render_click()
-      assert Process.alive?(view.pid)
+      assert has_element?(view, "#btn-terminal-clear[disabled]")
+      refute has_element?(view, "#terminal-clear-confirmation")
     end
 
     test "clear uses the server-owned confirmation sheet and removes replayable history", %{
@@ -307,9 +304,13 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       |> element("#instrument-card-terminal")
       |> render_click()
 
-      # Click restart button
-      html = view |> element("#btn-terminal-restart") |> render_click()
-      assert html =~ "Terminal session restarted" or Process.alive?(view.pid)
+      view |> element("#btn-terminal-restart") |> render_click()
+      assert has_element?(view, "#terminal-restart-confirmation")
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+      _ = :sys.get_state(view.pid)
+      assert {:ok, %{viewer_count: 1, status: status}} = TerminalServer.get_state(session.id)
+      assert status in [:starting, :ready, :running]
+      refute has_element?(view, "#terminal-restart-confirmation")
     end
 
     test "handles kill_terminal_session by sending interrupt signal", %{
@@ -324,9 +325,15 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       |> element("#instrument-card-terminal")
       |> render_click()
 
-      # Forged lifecycle event is a no-op when no foreground process is active.
-      render_click(view, "kill_terminal_session", %{})
-      assert Process.alive?(view.pid)
+      assert :ok = TerminalServer.run_command(session.id, "sleep 5")
+      send(view.pid, {:terminal_command_started, %{session_id: session.id, command: "sleep 5"}})
+      _ = :sys.get_state(view.pid)
+
+      view |> element("#btn-terminal-kill") |> render_click()
+      assert has_element?(view, "#terminal-interrupt-confirmation")
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+      _ = :sys.get_state(view.pid)
+      assert is_pid(TerminalServer.whereis(session.id))
     end
 
     test "handles request_terminal_history event", %{
@@ -490,6 +497,79 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
 
       send(view.pid, {:terminal_resized, %{session_id: session.id, cols: 100, rows: 30}})
       assert render(view) =~ "100x30"
+    end
+  end
+
+  describe "terminal lifecycle authorization" do
+    test "foreign project lock blocks forged resize", %{conn: conn, workspace_path: path} do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, lock} = WorkspaceLocks.acquire(project, [:project], owner_id: "run:foreign")
+      on_exit(fn -> WorkspaceLocks.release(lock) end)
+
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      assert has_element?(view, "#terminal-workspace-lock-banner[data-lock-state='foreign']")
+
+      render_hook(view, "terminal_resize", %{"cols" => 120, "rows" => 45})
+      assert has_element?(view, "#terminal-dimensions-badge", "80x24")
+      refute has_element?(view, "#terminal-dimensions-badge", "120x45")
+    end
+
+    test "stopped terminal starts without restart confirmation", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      assert :ok = TerminalServer.kill(session.id)
+      send(view.pid, {:terminal_exit, %{session_id: session.id, exit_code: 0}})
+      _ = :sys.get_state(view.pid)
+
+      assert has_element?(view, "#btn-terminal-restart", "Start terminal")
+      view |> element("#btn-terminal-restart") |> render_click()
+      refute has_element?(view, "#terminal-restart-confirmation")
+      assert is_pid(TerminalServer.whereis(session.id))
+    end
+
+    test "enqueue does not enter producer trace before completion", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      PubSub.subscribe(IexCode.PubSub, "session:#{session.id}:terminal")
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+
+      render_click(view, "run_terminal_quick_action", %{"cmd" => "sleep 1; echo retained"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.terminal_history == []
+      assert assigns.terminal_active_cmd == "sleep 1; echo retained"
+      refute has_element?(view, "[id^='terminal-command-trace-']")
+      assert has_element?(view, "#btn-terminal-replay[disabled]")
+
+      assert_receive {:terminal_command_completed, %{session_id: sid}}, 5_000
+      assert sid == session.id
+      _ = :sys.get_state(view.pid)
+      assert has_element?(view, "#terminal-command-trace-0", "sleep 1; echo retained")
+    end
+
+    test "same-session retained-host reentry does not replay scrollback", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      render_click(view, "switch_tab", %{"tab" => "files"})
+      assert has_element?(view, "#instrument-workbench-terminal[hidden]")
+      render_click(view, "switch_tab", %{"tab" => "terminal"})
+      refute_push_event(view, "terminal_history", %{history: _}, 100)
+      assert {:ok, %{viewer_count: 1}} = TerminalServer.get_state(session.id)
     end
   end
 end

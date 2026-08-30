@@ -4279,7 +4279,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("terminal_resize", params, socket) do
+    socket = refresh_workspace_locks(socket)
+
     with "terminal" <- socket.assigns.active_view,
+         false <- terminal_input_locked?(socket.assigns),
          {:ok, cols} <-
            parse_terminal_dimension(
              params["cols"] || params[:cols],
@@ -4310,13 +4313,8 @@ defmodule IexCodeWeb.WorkspaceLive do
          {:ok, _command_id} <- TerminalServer.run_command_with_id(socket.assigns.session.id, cmd) do
       public_cmd = TerminalSession.command_summary(cmd)
 
-      updated_history =
-        [public_cmd | Enum.reject(socket.assigns.terminal_history, &(&1 == public_cmd))]
-        |> Enum.take(25)
-
       {:noreply,
        socket
-       |> assign(:terminal_history, updated_history)
        |> assign(:terminal_active_cmd, public_cmd)
        |> assign(:terminal_form, to_form(%{"command" => ""}))
        |> rebuild_instrument_summaries()}
@@ -4366,7 +4364,28 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_event("restart_terminal_session", _params, socket) do
     if socket.assigns.active_view == "terminal" do
-      {:noreply, request_terminal_confirmation(socket, :restart_terminal_session)}
+      case TerminalServer.get_state(socket.assigns.session.id) do
+        {:ok, %{status: status}} when status in [:starting, :ready, :running, :restarting] ->
+          {:noreply, request_terminal_confirmation(socket, :restart_terminal_session)}
+
+        _absent_or_stopped ->
+          start_terminal_session(socket)
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("start_terminal_session", _params, socket) do
+    if socket.assigns.active_view == "terminal" do
+      case TerminalServer.get_state(socket.assigns.session.id) do
+        {:ok, %{status: status}} when status in [:starting, :ready, :running, :restarting] ->
+          {:noreply, socket}
+
+        _absent_or_stopped ->
+          start_terminal_session(socket)
+      end
     else
       {:noreply, socket}
     end
@@ -6188,10 +6207,6 @@ defmodule IexCodeWeb.WorkspaceLive do
         case ensure_terminal_attached(socket) do
           {:ok, attached_socket} ->
             attached_socket
-            |> push_event("terminal_reset", %{})
-            |> push_event("terminal_history", %{
-              history: TerminalServer.get_history(socket.assigns.session.id)
-            })
 
           {:error, _reason, failed_socket} ->
             put_flash(failed_socket, :error, "Terminal unavailable")
@@ -6958,6 +6973,24 @@ defmodule IexCodeWeb.WorkspaceLive do
       socket.assigns.terminal_active_cmd != "" and socket.assigns.terminal_running?
   end
 
+  defp start_terminal_session(socket) do
+    case ensure_terminal_attached(socket) do
+      {:ok, socket} ->
+        {:noreply,
+         socket
+         |> assign(:pending_terminal_confirmation, nil)
+         |> assign(:terminal_active_cmd, nil)
+         |> assign(:terminal_output, "")
+         |> push_event("terminal_reset", %{})
+         |> rebuild_instrument_summaries()
+         |> put_flash(:info, "Terminal started")}
+
+      {:error, reason, socket} ->
+        Logger.warning("[WorkspaceLive] Terminal start failed: #{inspect(reason)}")
+        {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
+    end
+  end
+
   defp request_terminal_confirmation(socket, kind)
        when kind in [:clear_terminal_history, :restart_terminal_session, :interrupt_terminal] do
     socket = refresh_workspace_locks(socket)
@@ -6982,13 +7015,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       })
     else
       _ -> assign(socket, :pending_terminal_confirmation, nil)
-    end
-  end
-
-  defp terminal_confirmation_state(:restart_terminal_session, session_id) do
-    case TerminalServer.get_state(session_id) do
-      {:ok, state} -> {:ok, state}
-      {:error, :not_found} -> {:ok, %{occupant: :user, adapter_generation: nil}}
     end
   end
 
@@ -7020,7 +7046,8 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp terminal_confirmation_still_valid?(:clear_terminal_history, _state, socket),
     do: terminal_retained_history?(socket)
 
-  defp terminal_confirmation_still_valid?(:restart_terminal_session, _state, _socket), do: true
+  defp terminal_confirmation_still_valid?(:restart_terminal_session, state, _socket),
+    do: Map.get(state, :status) in [:starting, :ready, :running, :restarting]
 
   defp terminal_confirmation_still_valid?(:interrupt_terminal, state, _socket),
     do: not is_nil(Map.get(state, :active_command_id))
@@ -7044,11 +7071,7 @@ defmodule IexCodeWeb.WorkspaceLive do
        when previous_tab != "terminal" do
     case ensure_terminal_attached(socket) do
       {:ok, socket} ->
-        history = TerminalServer.get_history(socket.assigns.session.id)
-
         socket
-        |> push_event("terminal_history", %{history: history})
-        |> push_event("terminal_fit", %{})
 
       {:error, _reason, socket} ->
         put_flash(socket, :error, "Terminal unavailable")

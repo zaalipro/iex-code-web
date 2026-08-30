@@ -1444,6 +1444,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
   attr :workspace_locks, :list, default: []
   attr :can_clear?, :boolean, default: false
   attr :can_interrupt?, :boolean, default: false
+  attr :active?, :boolean, default: true
 
   def terminal_session(assigns) do
     session_id =
@@ -1562,7 +1563,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
           <button
             id="btn-terminal-restart"
             type="button"
-            phx-click="restart_terminal_session"
+            phx-click={if(@running, do: "restart_terminal_session", else: "start_terminal_session")}
             disabled={@input_locked}
             class="sf-terminal-control"
             title="Restart PTY Shell Process"
@@ -1619,6 +1620,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
           phx-hook="TerminalHook"
           phx-update="ignore"
           data-session-id={@session_id}
+          data-terminal-active={to_string(@active?)}
           data-monitor-only={to_string(@monitor_only)}
           data-input-locked={to_string(@input_locked)}
           aria-disabled={to_string(@input_locked)}
