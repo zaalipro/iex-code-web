@@ -156,17 +156,65 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
     conn: conn,
     workspace_path: path
   } do
+    parent = Path.dirname(path)
+    suffix = System.unique_integer([:positive])
+    origin = Path.join(parent, "palette-origin-#{suffix}.git")
+    publisher = Path.join(parent, "palette-publisher-#{suffix}")
+
+    on_exit(fn ->
+      File.rm_rf(origin)
+      File.rm_rf(publisher)
+    end)
+
+    {_, 0} = System.cmd("git", ["init", "--bare", "--initial-branch=main", origin])
     {_, 0} = System.cmd("git", ["init", "-b", "main"], cd: path)
+    {_, 0} = System.cmd("git", ["config", "user.name", "Palette Client"], cd: path)
+    {_, 0} = System.cmd("git", ["config", "user.email", "client@example.com"], cd: path)
+    workspace_write_file(path, "README.md", "client head\n")
+    {_, 0} = System.cmd("git", ["add", "README.md"], cd: path)
+    {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+    {_, 0} = System.cmd("git", ["remote", "add", "origin", origin], cd: path)
+    {_, 0} = System.cmd("git", ["push", "-u", "origin", "main"], cd: path)
+    {_, 0} = System.cmd("git", ["fetch", "origin"], cd: path)
+    {old_remote, 0} = System.cmd("git", ["rev-parse", "refs/remotes/origin/main"], cd: path)
+    {client_head, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
+    old_remote = String.trim(old_remote)
+    client_head = String.trim(client_head)
+    assert old_remote == client_head
+
+    {_, 0} = System.cmd("git", ["clone", origin, publisher])
+    {_, 0} = System.cmd("git", ["config", "user.name", "Palette Publisher"], cd: publisher)
+    {_, 0} = System.cmd("git", ["config", "user.email", "publisher@example.com"], cd: publisher)
+    File.write!(Path.join(publisher, "remote.txt"), "remote update\n")
+    {_, 0} = System.cmd("git", ["add", "remote.txt"], cd: publisher)
+    {_, 0} = System.cmd("git", ["commit", "-m", "Remote update"], cd: publisher)
+    {_, 0} = System.cmd("git", ["push", "origin", "main"], cd: publisher)
+    {new_remote, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: publisher)
+    new_remote = String.trim(new_remote)
+    refute new_remote == old_remote
+
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+    # A forged public event is not the private palette dispatch.
+    render_click(view, "git_fetch", %{"source" => "palette"})
+    {still_old, 0} = System.cmd("git", ["rev-parse", "refs/remotes/origin/main"], cd: path)
+    assert String.trim(still_old) == old_remote
 
     render_click(view, "toggle_command_palette")
     render_change(view, "command_palette_search", %{"query" => "Git Fetch and Status"})
     assert has_element?(view, "#palette-item-0[data-palette-item-id='git_fetch']")
     view |> element("#palette-item-0") |> render_click()
 
-    assert has_element?(view, "#flash-info", "Fetched latest remote updates")
+    {fetched_remote, 0} =
+      System.cmd("git", ["rev-parse", "refs/remotes/origin/main"], cd: path)
+
+    {head_after, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
+    assert String.trim(fetched_remote) == new_remote
+    assert String.trim(head_after) == client_head
+    assert File.read!(Path.join(path, "README.md")) == "client head\n"
+    refute File.exists?(Path.join(path, "remote.txt"))
     refute has_element?(view, "#command-palette-dialog")
   end
 

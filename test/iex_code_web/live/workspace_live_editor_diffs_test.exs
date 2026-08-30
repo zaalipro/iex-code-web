@@ -605,6 +605,33 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert has_element?(view, "#git-file-revert-confirmation") == false
     end
 
+    test "viewer request rejects content changed after render but before opening", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "render_request.ex", "head 000\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "render_request.ex", "seen AAA\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      workspace_write_file(path, "render_request.ex", "unseen B\n")
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "render_request.ex",
+        "source" => "viewer",
+        "scope" => "unstaged"
+      })
+
+      refute has_element?(view, "#git-file-revert-confirmation")
+      render_click(view, "revert_file", %{})
+      assert File.read!(Path.join(path, "render_request.ex")) == "unseen B\n"
+      assert {:ok, status} = Git.status(path)
+      assert status.staged == []
+    end
+
     test "scope-specific file confirmation preserves the untouched layer", %{
       conn: conn,
       workspace_path: path
@@ -688,6 +715,152 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert File.read!(Path.join(path, "viewer_all.ex")) == "head\n"
       assert {:ok, status} = Git.status(path)
       assert status.clean?
+    end
+
+    test "viewer all-layer revert denies a staged rename without partial mutation", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "old.txt", "rename sentinel\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      {_, 0} = System.cmd("git", ["mv", "old.txt", "new.txt"], cd: path)
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      render_click(view, "select_diff_file", %{"file" => "new.txt", "scope" => "staged"})
+      before = git_snapshot(path)
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "new.txt",
+        "source" => "viewer",
+        "scope" => "staged"
+      })
+
+      if has_element?(view, "#git-file-revert-confirmation") do
+        render_click(view, "revert_file", %{})
+      end
+
+      assert git_snapshot(path) == before
+      refute File.exists?(Path.join(path, "old.txt"))
+      assert File.read!(Path.join(path, "new.txt")) == "rename sentinel\n"
+      refute has_element?(view, "#git-file-revert-confirmation")
+      refute has_element?(view, "#flash-info", "Reverted all uncommitted changes")
+    end
+
+    test "viewer all-layer revert denies a partially staged added file without partial mutation",
+         %{
+           conn: conn,
+           workspace_path: path
+         } do
+      init_git_repo!(path)
+      workspace_write_file(path, "README.md", "head\n")
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "new.txt", "staged version\n")
+      {_, 0} = System.cmd("git", ["add", "--", "new.txt"], cd: path)
+      workspace_write_file(path, "new.txt", "unstaged version\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      render_click(view, "select_diff_file", %{"file" => "new.txt", "scope" => "unstaged"})
+      before = git_snapshot(path)
+      {staged_before, 0} = System.cmd("git", ["show", ":new.txt"], cd: path)
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "new.txt",
+        "source" => "viewer",
+        "scope" => "unstaged"
+      })
+
+      if has_element?(view, "#git-file-revert-confirmation") do
+        render_click(view, "revert_file", %{})
+      end
+
+      assert git_snapshot(path) == before
+      assert File.read!(Path.join(path, "new.txt")) == "unstaged version\n"
+      assert {^staged_before, 0} = System.cmd("git", ["show", ":new.txt"], cd: path)
+      refute has_element?(view, "#git-file-revert-confirmation")
+      refute has_element?(view, "#flash-info", "Reverted all uncommitted changes")
+    end
+
+    test "viewer all-layer revert restores a staged deletion", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "deleted.txt", "restore deletion\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      {_, 0} = System.cmd("git", ["rm", "--", "deleted.txt"], cd: path)
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      render_click(view, "select_diff_file", %{"file" => "deleted.txt", "scope" => "staged"})
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "deleted.txt",
+        "source" => "viewer",
+        "scope" => "staged"
+      })
+
+      assert has_element?(view, "#git-file-revert-confirmation")
+      render_click(view, "revert_file", %{})
+
+      assert File.read!(Path.join(path, "deleted.txt")) == "restore deletion\n"
+      assert {:ok, status} = Git.status(path)
+      assert status.clean?
+    end
+
+    test "deleted-file confirmation rejects inward and outward intermediate symlink swaps", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      for target_kind <- [:inward, :outward] do
+        case_root = Path.join(path, Atom.to_string(target_kind))
+        File.mkdir_p!(Path.join(case_root, "dir"))
+        workspace_write_file(case_root, "dir/deleted.txt", "tracked deletion\n")
+        init_git_repo!(case_root)
+        {_, 0} = System.cmd("git", ["add", "."], cd: case_root)
+        {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: case_root)
+        File.rm!(Path.join(case_root, "dir/deleted.txt"))
+        File.rmdir!(Path.join(case_root, "dir"))
+        project = create_project_fixture(%{root_path: case_root})
+        session = create_session_fixture(project)
+        {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+
+        render_click(view, "request_revert_git_file", %{
+          "file" => "dir/deleted.txt",
+          "source" => "ledger",
+          "scope" => "unstaged"
+        })
+
+        assert has_element?(view, "#git-file-revert-confirmation")
+
+        target =
+          case target_kind do
+            :inward ->
+              Path.join(case_root, "target")
+
+            :outward ->
+              Path.join(Path.dirname(path), "outside-#{System.unique_integer([:positive])}")
+          end
+
+        File.mkdir_p!(target)
+        on_exit(fn -> if target_kind == :outward, do: File.rm_rf(target) end)
+        File.write!(Path.join(target, "guard.txt"), "guard sentinel\n")
+        File.ln_s!(target, Path.join(case_root, "dir"))
+        before = git_snapshot(case_root)
+        render_click(view, "revert_file", %{})
+
+        assert git_snapshot(case_root) == before
+        assert File.read_link!(Path.join(case_root, "dir")) == target
+        assert File.read!(Path.join(target, "guard.txt")) == "guard sentinel\n"
+        refute File.exists?(Path.join(target, "deleted.txt"))
+        refute has_element?(view, "#git-file-revert-confirmation")
+        refute has_element?(view, "#flash-info", "Reverted working-tree changes")
+      end
     end
 
     test "same-id replacement hunk is not discarded after confirmation opens", %{
@@ -777,6 +950,29 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert {:ok, status} = Git.status(path)
       assert status.staged == []
       assert File.read!(Path.join(path, "stale_all.ex")) == "replacement\n"
+    end
+
+    test "accept all denies a blank fresh diff without staging", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "blank_all.ex", "head\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "blank_all.ex", "rendered\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+
+      # The accepted render was nonblank, but the fresh read is now clean.
+      workspace_write_file(path, "blank_all.ex", "head\n")
+      render_click(view, "accept_all_hunks", %{"file" => "blank_all.ex"})
+
+      assert File.read!(Path.join(path, "blank_all.ex")) == "head\n"
+      assert {:ok, status} = Git.status(path)
+      assert status.clean?
+      refute has_element?(view, "#flash-info", "Staged all changes")
     end
 
     test "oversized file confirmation fails closed without changing index or disk", %{
@@ -892,7 +1088,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert {:ok, "main"} = Git.current_branch(path)
     end
 
-    test "same-view Changes re-entry clears a pending confirmation", %{
+    test "same Changes URL patch clears a pending confirmation", %{
       conn: conn,
       workspace_path: path
     } do
@@ -912,10 +1108,40 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       })
 
       assert has_element?(view, "#git-file-revert-confirmation")
-      render_click(view, "switch_tab", %{"tab" => "changes"})
+      render_patch(view, ~p"/sessions/#{session.id}?view=changes")
+      assert has_element?(view, "#instrument-workbench-changes")
       refute has_element?(view, "#git-file-revert-confirmation")
       render_click(view, "revert_file", %{})
       assert File.read!(Path.join(path, "pending_same_view.ex")) == "temporary\n"
+    end
+
+    test "an accepted Git mutation refresh clears unrelated pending authority", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      init_git_repo!(path)
+      workspace_write_file(path, "README.md", "head\n")
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "pending.ex", "pending\n")
+      workspace_write_file(path, "stage_me.ex", "stage me\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "pending.ex",
+        "source" => "ledger",
+        "scope" => "untracked"
+      })
+
+      assert has_element?(view, "#git-file-revert-confirmation")
+      render_click(view, "stage_file", %{"file" => "stage_me.ex"})
+      refute has_element?(view, "#git-file-revert-confirmation")
+      render_click(view, "revert_file", %{})
+      assert File.read!(Path.join(path, "pending.ex")) == "pending\n"
+      assert {:ok, status} = Git.status(path)
+      assert "stage_me.ex" in Enum.map(status.staged, & &1.path)
     end
 
     test "immediate accept hunk rejects a replacement patch with the same hunk id", %{
@@ -1053,10 +1279,20 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
     test "Change Ledger CSS keeps full-opacity form tokens and strict wide boundary" do
       css = File.read!("assets/css/app.css")
 
-      assert css =~ "#instrument-workbench-changes #git-branch-name::placeholder"
-      assert css =~ "#instrument-workbench-changes #commit-message::placeholder"
-      assert css =~ "opacity: 1;"
-      assert css =~ "@media (max-width: 63.99rem)"
+      assert [_, placeholder_declarations] =
+               Regex.run(
+                 ~r/#instrument-workbench-changes #git-branch-name::placeholder\s*,\s*#instrument-workbench-changes #commit-message::placeholder\s*\{([^}]*)\}/s,
+                 css
+               )
+
+      assert placeholder_declarations =~ "color: var(--sf-text-secondary);"
+      assert placeholder_declarations =~ "opacity: 1;"
+
+      assert Regex.match?(
+               ~r/@media\s*\(max-width:\s*63\.99rem\)\s*\{\s*(?:[^{}]*\{[^{}]*\}\s*)*\.changes-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+               css
+             )
+
       refute css =~ "#instrument-workbench-changes :where(input, textarea)::placeholder"
     end
 
@@ -1152,5 +1388,18 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
 
   defp node_count(document, selector) do
     document |> LazyHTML.query(selector) |> LazyHTML.to_tree() |> length()
+  end
+
+  defp git_snapshot(root) do
+    for args <- [
+          ["status", "--porcelain=v1", "-uall"],
+          ["diff", "--cached", "--binary"],
+          ["diff", "--binary"],
+          ["ls-files", "--stage"]
+        ],
+        into: %{} do
+      {output, exit_code} = System.cmd("git", args, cd: root, stderr_to_stdout: true)
+      {args, {exit_code, output}}
+    end
   end
 end

@@ -28,16 +28,38 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
       conn: conn,
       workspace_path: path
     } do
+      {_, 0} = System.cmd("git", ["checkout", "develop"], cd: path)
+      workspace_write_file(path, "develop_only.txt", "develop branch\n")
+      {_, 0} = System.cmd("git", ["add", "develop_only.txt"], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Develop commit"], cd: path)
+      {_, 0} = System.cmd("git", ["checkout", "main"], cd: path)
+      workspace_write_file(path, "unrelated-sentinel.txt", "keep me\n")
+      {head_develop, 0} = System.cmd("git", ["rev-parse", "develop"], cd: path)
+      head_develop = String.trim(head_develop)
+
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
-      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
 
-      render_click(view, "switch_tab", %{"tab" => "changes"})
+      refute has_element?(view, "#changes-branch-trigger[aria-haspopup]")
+      assert has_element?(view, "#changes-branch-trigger[aria-controls='changes-branch-menu']")
+      render_click(view, "toggle_branch_menu")
+
+      assert has_element?(
+               view,
+               "#changes-branch-menu[role='region'][aria-labelledby='changes-branch-menu-title']"
+             )
 
       # Switch to develop branch
       render_click(view, "switch_git_branch", %{"branch" => "develop"})
-      html = render(view)
-      assert html =~ "develop"
+      assert {:ok, "develop"} = Git.current_branch(path)
+      {head_after, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
+      assert String.trim(head_after) == head_develop
+      assert File.read!(Path.join(path, "develop_only.txt")) == "develop branch\n"
+      assert File.read!(Path.join(path, "unrelated-sentinel.txt")) == "keep me\n"
+      refute has_element?(view, "#changes-branch-menu")
+      assert has_element?(view, "#changes-branch-trigger", "develop")
+      assert has_element?(view, "#changes-branch-trigger[aria-expanded='false']")
     end
 
     test "creates and switches to a new branch from the UI", %{

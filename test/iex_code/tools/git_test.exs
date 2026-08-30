@@ -178,6 +178,65 @@ defmodule IexCode.Tools.GitTest do
       assert status.clean? == true
     end
 
+    test "old Git worktree fallback restores from the index rather than HEAD", %{
+      tmp_dir: tmp_dir
+    } do
+      fake_bin = Path.join(tmp_dir, "fake-bin")
+      log = Path.join(tmp_dir, "git-argv.log")
+      File.mkdir_p!(fake_bin)
+
+      File.write!(
+        Path.join(fake_bin, "git"),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$GIT_ARGV_LOG\"\n" <>
+          "if [ \"$1\" = restore ]; then exit 1; fi\nexit 0\n"
+      )
+
+      File.chmod!(Path.join(fake_bin, "git"), 0o755)
+      old_path = System.get_env("PATH")
+      old_log = System.get_env("GIT_ARGV_LOG")
+      System.put_env("PATH", fake_bin <> ":" <> old_path)
+      System.put_env("GIT_ARGV_LOG", log)
+
+      on_exit(fn ->
+        System.put_env("PATH", old_path)
+
+        if old_log,
+          do: System.put_env("GIT_ARGV_LOG", old_log),
+          else: System.delete_env("GIT_ARGV_LOG")
+      end)
+
+      assert {:ok, _} =
+               Git.restore_file(tmp_dir, "lib/hello.ex", staged: false, worktree: true)
+
+      assert File.read!(log) == "restore -- lib/hello.ex\ncheckout -- lib/hello.ex\n"
+    end
+
+    test "combined restore of an index-added file fails without partial mutation", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/added.ex")
+      File.write!(file, "staged added\n")
+      assert :ok = Git.stage("lib/added.ex", tmp_dir)
+
+      {index_before, 0} =
+        System.cmd("git", ["ls-files", "--stage", "--", "lib/added.ex"], cd: tmp_dir)
+
+      {diff_before, 0} =
+        System.cmd("git", ["diff", "--cached", "--binary", "--", "lib/added.ex"], cd: tmp_dir)
+
+      assert {:error, _reason} = Git.restore_file(tmp_dir, "lib/added.ex")
+
+      assert File.read!(file) == "staged added\n"
+
+      assert {^index_before, 0} =
+               System.cmd("git", ["ls-files", "--stage", "--", "lib/added.ex"], cd: tmp_dir)
+
+      assert {^diff_before, 0} =
+               System.cmd("git", ["diff", "--cached", "--binary", "--", "lib/added.ex"],
+                 cd: tmp_dir
+               )
+    end
+
     test "stage/2 and unstage/2 handle (repo_dir, files), (files, repo_dir), (files, opts), and empty lists",
          %{tmp_dir: tmp_dir, sample_file: sample_file} do
       File.write!(sample_file, "changed 1\n")

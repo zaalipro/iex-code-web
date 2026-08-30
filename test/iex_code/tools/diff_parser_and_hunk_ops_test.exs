@@ -491,24 +491,46 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       assert Enum.map(status.unstaged, & &1.path) == ["lib/sample.txt"]
     end
 
+    test "revert_file all denies staged renames before mutation", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "rename me\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      assert {:ok, _} = Git.commit("initial", tmp_dir)
+      {_, 0} = System.cmd("git", ["mv", "lib/sample.txt", "lib/renamed.txt"], cd: tmp_dir)
+
+      before = git_snapshot(tmp_dir)
+
+      assert {:error, :unsupported_git_shape} =
+               HunkOps.revert_file(tmp_dir, "lib/renamed.txt", :all)
+
+      assert {:error, :unsupported_git_shape} =
+               HunkOps.revert_file(tmp_dir, "lib/renamed.txt", :staged)
+
+      assert git_snapshot(tmp_dir) == before
+      assert File.read!(Path.join(tmp_dir, "lib/renamed.txt")) == "rename me\n"
+      refute File.exists?(file)
+    end
+
+    test "revert_file all denies partially staged added files before mutation", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/new.txt")
+      File.write!(file, "staged\n")
+      assert :ok = Git.stage("lib/new.txt", tmp_dir)
+      File.write!(file, "unstaged\n")
+      before = git_snapshot(tmp_dir)
+
+      assert {:error, :unsupported_git_shape} = HunkOps.revert_file(tmp_dir, "lib/new.txt", :all)
+      assert git_snapshot(tmp_dir) == before
+      assert File.read!(file) == "unstaged\n"
+      {staged, 0} = System.cmd("git", ["show", ":lib/new.txt"], cd: tmp_dir)
+      assert staged == "staged\n"
+    end
+
     test "revert_file expected identity rejects a same-path replacement", %{tmp_dir: tmp_dir} do
       file = Path.join(tmp_dir, "lib/sample.txt")
       File.write!(file, "value AAA\n")
-      {:ok, canonical} = IexCode.WorkspacePath.resolve(tmp_dir, "lib/sample.txt")
-      {:ok, stat} = File.lstat(file)
-
-      identity = %{
-        canonical: canonical,
-        type: stat.type,
-        size: stat.size,
-        mtime: stat.mtime,
-        inode: stat.inode,
-        content_identity:
-          {:regular,
-           :sha256
-           |> :crypto.hash(:erlang.term_to_binary("value AAA\n"))
-           |> Base.encode16(case: :lower)}
-      }
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
 
       File.write!(file, "value BBB\n")
 
@@ -518,6 +540,65 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
                )
 
       assert File.read!(file) == "value BBB\n"
+    end
+
+    test "expected identity is strict and mode changes are stale", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "mode-sensitive\n")
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      File.chmod!(file, 0o755)
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :unstaged,
+                 expected_identity: identity
+               )
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :unstaged,
+                 expected_identity: :forged
+               )
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :unstaged,
+                 expected_identity: %{lexical: "lib/sample.txt"}
+               )
+
+      assert File.read!(file) == "mode-sensitive\n"
+      assert Bitwise.band(File.lstat!(file).mode, 0o777) == 0o755
+    end
+
+    test "apply_to_file with expected identity never falls back after Git apply fails", %{
+      tmp_dir: tmp_dir
+    } do
+      external_root =
+        Path.join(Path.dirname(tmp_dir), "non_git_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(Path.join(external_root, "lib"))
+      on_exit(fn -> File.rm_rf(external_root) end)
+
+      target = Path.join(external_root, "lib/external.txt")
+      original = "original first line\noriginal second line\n"
+      File.write!(target, original)
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(external_root, "lib/external.txt")
+
+      diff =
+        "diff --git a/lib/external.txt b/lib/external.txt\n" <>
+          "--- a/lib/external.txt\n" <>
+          "+++ b/lib/external.txt\n" <>
+          "@@ -1,2 +1,2 @@\n" <>
+          " original first line\n" <>
+          "-original second line\n" <>
+          "+updated second line\n"
+
+      assert {:error, :forced_apply_failure} =
+               HunkOps.accept_hunk(external_root, "lib/external.txt", "hunk-1",
+                 diff: diff,
+                 mode: :apply_to_file,
+                 expected_identity: identity,
+                 _apply_patch: fn _root, _patch -> {:error, :forced_apply_failure} end
+               )
+
+      assert File.read!(target) == original
     end
 
     test "accept_all_hunks stages the entire file", %{tmp_dir: tmp_dir} do
@@ -624,6 +705,19 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
 
       assert {:ok, [file_diff]} = DiffParser.parse(diff)
       assert file_diff.hunks == []
+    end
+  end
+
+  defp git_snapshot(root) do
+    for args <- [
+          ["status", "--porcelain=v1", "-uall"],
+          ["diff", "--cached", "--binary"],
+          ["diff", "--binary"],
+          ["ls-files", "--stage"]
+        ],
+        into: %{} do
+      {output, exit_code} = System.cmd("git", args, cd: root, stderr_to_stdout: true)
+      {args, {exit_code, output}}
     end
   end
 end

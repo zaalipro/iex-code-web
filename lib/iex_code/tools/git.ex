@@ -864,21 +864,75 @@ defmodule IexCode.Tools.Git do
     staged? = Keyword.get(opts, :staged, true)
     worktree? = Keyword.get(opts, :worktree, true)
 
-    with :ok <- if(staged?, do: unstage(repo_dir, file_list), else: :ok) do
-      if worktree? do
+    case restore_shape_allowed?(repo_dir, file_list, staged?, worktree?) do
+      {:error, reason} ->
+        {:error, reason}
+
+      :ok ->
+        do_restore_file(repo_dir, file_list, staged?, worktree?)
+    end
+  end
+
+  defp do_restore_file(repo_dir, file_list, staged?, worktree?) do
+    cond do
+      staged? and worktree? ->
+        # Update both destinations from HEAD in one Git process. The former
+        # unstage-then-worktree sequence could fail after already mutating the
+        # index for added/renamed paths.
+        case run_git(
+               repo_dir,
+               ["restore", "--source=HEAD", "--staged", "--worktree", "--"] ++ file_list
+             ) do
+          {:ok, _} = res -> res
+          {:error, _} -> run_git(repo_dir, ["checkout", "HEAD", "--"] ++ file_list)
+        end
+
+      staged? ->
+        case unstage(repo_dir, file_list) do
+          :ok -> {:ok, "unstaged"}
+          error -> error
+        end
+
+      worktree? ->
         case run_git(repo_dir, ["restore", "--"] ++ file_list) do
           {:ok, _} = res ->
             res
 
           {:error, _} ->
             # Fallback for older git
-            run_git(repo_dir, ["checkout", "HEAD", "--"] ++ file_list)
+            run_git(repo_dir, ["checkout", "--"] ++ file_list)
         end
-      else
+
+      true ->
         {:ok, "unstaged"}
-      end
     end
   end
+
+  defp restore_shape_allowed?(_repo_dir, [], _staged?, _worktree?), do: :ok
+
+  defp restore_shape_allowed?(repo_dir, file_list, staged?, worktree?)
+       when staged? and is_list(file_list) do
+    case status(repo_dir, path_limit: 5_000, output_limit_bytes: 2 * 1_024 * 1_024) do
+      {:ok, status} ->
+        unsupported? =
+          status.truncated? or Enum.any?(status.conflicted, &(&1.path in file_list)) or
+            Enum.any?(status.staged, fn entry ->
+              entry.path in file_list and
+                ((worktree? and entry.status in [:added, :renamed, :copied]) or
+                   (not worktree? and entry.status in [:renamed, :copied]))
+            end)
+
+        if unsupported?, do: {:error, :unsupported_git_shape}, else: :ok
+
+      {:error, :not_a_git_repo} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp restore_shape_allowed?(_repo_dir, _file_list, _staged?, _worktree?), do: :ok
 
   @doc """
   Returns a list of local and remote branches for the repository.

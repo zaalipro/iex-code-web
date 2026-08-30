@@ -10,7 +10,8 @@ defmodule IexCodeWeb.WorkspaceLive do
     Kanban,
     WorkspaceFiles,
     WorkspaceLocks,
-    WorkspacePath
+    WorkspacePath,
+    WorkspaceIdentity
   }
 
   alias IexCode.Engine.SessionServer
@@ -298,6 +299,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:diff_hunks, [])
       |> assign(:parsed_diffs, [])
       |> assign(:selected_diff_file, nil)
+      |> assign(:selected_diff_fingerprint, nil)
       |> assign(:git_status, nil)
       |> assign(:git_error, nil)
       |> assign(:runtime_status, %{state: :unavailable})
@@ -528,6 +530,11 @@ defmodule IexCodeWeb.WorkspaceLive do
 
     socket =
       socket
+      |> then(fn socket ->
+        if previous_view == "changes" and active_view == "changes",
+          do: assign(socket, :pending_git_confirmation, nil),
+          else: socket
+      end)
       |> assign(:workspace_route, route_context)
       |> assign(:active_view, active_view)
       |> maybe_assign_active_tab(active_view)
@@ -1817,9 +1824,16 @@ defmodule IexCodeWeb.WorkspaceLive do
       root = socket.assigns.project.root_path
       {hunks, diff_text, truncated?} = load_selected_diff(root, accepted_path, scope)
 
+      selected_diff_fingerprint =
+        case not truncated? && git_file_fingerprint(socket, :all, accepted_path) do
+          {:ok, fingerprint} -> fingerprint
+          _ -> nil
+        end
+
       {:noreply,
        socket
        |> assign(:selected_diff_file, accepted_path)
+       |> assign(:selected_diff_fingerprint, selected_diff_fingerprint)
        |> assign(:active_diff_scope, scope)
        |> assign(:diff_file_path, accepted_path)
        |> assign(:diff_hunks, hunks)
@@ -1934,7 +1948,11 @@ defmodule IexCodeWeb.WorkspaceLive do
       confirmation_scope = if source == "viewer", do: :all, else: scope
 
       with {:ok, fingerprint} <-
-             git_file_fingerprint(socket, confirmation_scope, accepted_path) do
+             git_file_fingerprint(socket, confirmation_scope, accepted_path),
+           true <-
+             source != "viewer" or
+               (socket.assigns[:selected_diff_fingerprint] != nil and
+                  fingerprint == socket.assigns.selected_diff_fingerprint) do
         return_target =
           if source == "ledger",
             do: {:ledger, git_path_digest(to_string(scope), accepted_path)},
@@ -5281,6 +5299,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:diff_hunks, [])
     |> assign(:parsed_diffs, [])
     |> assign(:selected_diff_file, nil)
+    |> assign(:selected_diff_fingerprint, nil)
     |> assign(:staged_diffs, [])
     |> assign(:unstaged_diffs, [])
     |> assign(:active_diff_scope, :unstaged)
@@ -6797,6 +6816,12 @@ defmodule IexCodeWeb.WorkspaceLive do
           {[], "", false}
         end
 
+      selected_diff_fingerprint =
+        case selected_diff_file && git_file_fingerprint(socket, :all, selected_diff_file) do
+          {:ok, fingerprint} when not truncated? -> fingerprint
+          _ -> nil
+        end
+
       socket
       |> assign(:git_status, status)
       |> assign(:git_branches, branches)
@@ -6805,12 +6830,13 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:unstaged_diffs, unstaged_diffs)
       |> assign(:parsed_diffs, parsed_diffs)
       |> assign(:selected_diff_file, selected_diff_file)
+      |> assign(:selected_diff_fingerprint, selected_diff_fingerprint)
       |> assign(:diff_file_path, selected_diff_file)
       |> assign(:diff_hunks, diff_hunks)
       |> assign(:diff_text, diff_text)
       |> assign(:diff_truncated?, truncated?)
       |> assign(:git_error, nil)
-      |> retain_git_confirmation()
+      |> assign(:pending_git_confirmation, nil)
       |> rebuild_instrument_summaries()
     else
       {:error, reason} ->
@@ -6837,51 +6863,12 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:unstaged_diffs, [])
     |> assign(:parsed_diffs, [])
     |> assign(:selected_diff_file, nil)
+    |> assign(:selected_diff_fingerprint, nil)
     |> assign(:diff_file_path, nil)
     |> assign(:diff_hunks, [])
     |> assign(:diff_text, "")
     |> assign(:diff_truncated?, false)
     |> assign(:pending_git_confirmation, nil)
-  end
-
-  defp retain_git_confirmation(socket) do
-    pending =
-      case socket.assigns.pending_git_confirmation do
-        %{
-          kind: :revert_git_file,
-          project_id: project_id,
-          session_id: session_id,
-          scope: scope,
-          path: path,
-          fingerprint: fingerprint
-        } = pending
-        when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
-          if path in status_paths(socket.assigns.git_status, scope) and
-               match?({:ok, ^fingerprint}, git_file_fingerprint(socket, scope, path)),
-             do: pending
-
-        %{
-          kind: kind,
-          project_id: project_id,
-          session_id: session_id,
-          scope: scope,
-          path: path,
-          hunk_id: hunk_id,
-          fingerprint: fingerprint
-        } = pending
-        when kind in [:discard_git_hunk, :revert_git_hunk] ->
-          if project_id == socket.assigns.project.id and session_id == socket.assigns.session.id and
-               socket.assigns.active_diff_scope == scope and
-               socket.assigns.selected_diff_file == path and
-               Enum.any?(socket.assigns.diff_hunks, &(Map.get(&1, :id) == hunk_id)) and
-               match?({:ok, ^fingerprint}, git_hunk_fingerprint(socket, scope, path, hunk_id)),
-             do: pending
-
-        _ ->
-          nil
-      end
-
-    assign(socket, :pending_git_confirmation, pending)
   end
 
   defp calendar_agenda_items(tasks, from_date \\ Date.utc_today()) do
@@ -7067,30 +7054,11 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp authorize_revert_source(_socket, _file, _scope, _source),
     do: {:error, :unauthorized_source}
 
-  defp git_path_identity(root, path) do
-    with {:ok, canonical} <- WorkspacePath.resolve(root, path),
-         {:ok, stat} <- File.lstat(Path.join(root, path)),
-         {:ok, content_identity} <- bounded_worktree_identity(root, path) do
-      {:ok,
-       %{
-         lexical: path,
-         canonical: canonical,
-         type: stat.type,
-         mode: stat.mode,
-         size: stat.size,
-         mtime: stat.mtime,
-         inode: Map.get(stat, :inode),
-         major_device: Map.get(stat, :major_device),
-         minor_device: Map.get(stat, :minor_device),
-         content_identity: content_identity
-       }}
-    else
-      {:error, :enoent} ->
-        {:ok, %{lexical: path, canonical: Path.expand(Path.join(root, path)), missing?: true}}
-
-      error ->
-        error
-    end
+  defp git_path_identity(root, path, opts \\ []) do
+    WorkspaceIdentity.capture(root, path,
+      max_bytes: @diff_retained_bytes,
+      allow_final_symlink: Keyword.get(opts, :allow_final_symlink, false)
+    )
   end
 
   defp git_file_fingerprint(socket, scope, path) do
@@ -7100,8 +7068,8 @@ defmodule IexCodeWeb.WorkspaceLive do
            Git.status(root, path_limit: 500, output_limit_bytes: 1 * 1_024 * 1_024),
          false <- status.truncated?,
          true <- path in status_paths(status, scope),
-         {:ok, identity} <- git_path_identity(root, path),
-         {:ok, worktree_identity} <- bounded_worktree_identity(root, path),
+         {:ok, identity} <-
+           git_path_identity(root, path, allow_final_symlink: scope == :untracked),
          {:ok, staged_diff} <- bounded_exact_diff(root, path, :staged),
          {:ok, unstaged_diff} <- bounded_exact_diff(root, path, :unstaged),
          {:ok, index_output} <- Git.run_git(root, ["ls-files", "--stage", "--", path]) do
@@ -7112,7 +7080,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         scope: scope,
         path: path,
         identity: identity,
-        worktree_identity: worktree_identity,
+        worktree_identity: Map.take(identity, [:type, :size, :content_digest, :link_target]),
         index_identity: semantic_digest(index_output),
         staged_diff: semantic_digest(staged_diff),
         unstaged_diff: semantic_digest(unstaged_diff)
@@ -7121,31 +7089,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:ok, %{digest: semantic_digest(payload), identity: identity}}
     else
       _ -> {:error, :stale_git_confirmation}
-    end
-  end
-
-  defp bounded_worktree_identity(root, path) do
-    full_path = Path.join(root, path)
-
-    case File.lstat(full_path) do
-      {:ok, %{type: :symlink, size: size}} when size <= @diff_retained_bytes ->
-        with {:ok, target} <- File.read_link(full_path) do
-          {:ok, {:symlink, semantic_digest(target)}}
-        end
-
-      {:ok, %{type: :regular, size: size}} when size <= @diff_retained_bytes ->
-        with {:ok, content} <- File.read(full_path) do
-          {:ok, {:regular, semantic_digest(content)}}
-        end
-
-      {:ok, %{type: type, size: size}} when size <= @diff_retained_bytes ->
-        {:ok, {type, size}}
-
-      {:error, :enoent} ->
-        {:ok, :missing}
-
-      _ ->
-        {:error, :fingerprint_too_large}
     end
   end
 
@@ -7188,11 +7131,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     else
       _ -> {:error, :stale_git_confirmation}
     end
-  end
-
-  defp git_hunk_fingerprint(socket, scope, path, hunk_id) do
-    with {:ok, snapshot} <- fresh_hunk_snapshot(socket, scope, path, hunk_id),
-         do: {:ok, snapshot.fingerprint}
   end
 
   defp displayed_hunk_fingerprint(socket, scope, path, hunk_id) do

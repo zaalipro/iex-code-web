@@ -13,7 +13,7 @@ defmodule IexCode.Tools.Git.HunkOps do
   alias IexCode.Tools.Git
   alias IexCode.Tools.Git.DiffParser
   alias IexCode.Tools.MultiPatch
-  alias IexCode.WorkspacePath
+  alias IexCode.{WorkspaceIdentity, WorkspacePath}
 
   @doc """
   Accepts a specific hunk.
@@ -37,7 +37,7 @@ defmodule IexCode.Tools.Git.HunkOps do
           stage_hunk(project_root, file_path, file_diff, hunk)
 
         :apply_to_file ->
-          apply_hunk_to_file(project_root, file_path, file_diff, hunk)
+          apply_hunk_to_file(project_root, file_path, file_diff, hunk, opts)
       end
     end
   end
@@ -175,9 +175,15 @@ defmodule IexCode.Tools.Git.HunkOps do
 
   defp do_revert_file(project_root, file_path, _full_path, :staged) do
     if local_git_repository?(project_root) do
-      case Git.restore_file(project_root, file_path, staged: true, worktree: false) do
-        {:ok, _} -> {:ok, :reverted}
-        error -> error
+      case git_scope_preflight(project_root, file_path, :staged) do
+        :ok ->
+          case Git.restore_file(project_root, file_path, staged: true, worktree: false) do
+            {:ok, _} -> {:ok, :reverted}
+            error -> error
+          end
+
+        error ->
+          error
       end
     else
       {:error, :not_a_git_repo}
@@ -212,21 +218,23 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp do_revert_git_file(project_root, file_path, full_path) do
-    case Git.status(project_root, paths: [file_path], path_limit: 4, output_limit_bytes: 32_768) do
+    case Git.status(project_root, path_limit: 500, output_limit_bytes: 1_048_576) do
       {:ok, status} ->
-        if file_path in status.untracked do
-          remove_file(full_path)
-        else
-          case Git.restore_file(project_root, file_path, staged: true, worktree: true) do
-            {:ok, _} ->
-              {:ok, :reverted}
+        cond do
+          file_path in status.untracked ->
+            remove_file(full_path)
 
-            {:error, _} ->
-              case Git.run_git(project_root, ["checkout", "HEAD", "--", file_path]) do
-                {:ok, _} -> {:ok, :reverted}
-                error -> error
-              end
-          end
+          git_scope_supported?(status, file_path, :all) ->
+            # One Git command updates the index and worktree from HEAD. Avoid
+            # the former unstage-then-restore sequence, which could report an
+            # error after already partially mutating the index.
+            case Git.run_git(project_root, ["checkout", "HEAD", "--", file_path]) do
+              {:ok, _} -> {:ok, :reverted}
+              error -> error
+            end
+
+          true ->
+            {:error, :unsupported_git_shape}
         end
 
       {:error, :not_a_git_repo} ->
@@ -237,6 +245,46 @@ defmodule IexCode.Tools.Git.HunkOps do
         error
     end
   end
+
+  # Rename/copy and index-added targets have no single-path HEAD restore that
+  # satisfies the requested scope. Reject them before any effect instead of
+  # leaving a staged deletion or untracked path after a partial failure.
+  defp git_scope_preflight(project_root, file_path, scope) do
+    case Git.status(project_root, path_limit: 500, output_limit_bytes: 1_048_576) do
+      {:ok, status} ->
+        if git_scope_supported?(status, file_path, scope),
+          do: :ok,
+          else: {:error, :unsupported_git_shape}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp git_scope_supported?(status, file_path, :staged) do
+    not status.truncated? and not Enum.any?(status.conflicted, &(&1.path == file_path)) and
+      not Enum.any?(status.staged, fn entry ->
+        entry.path == file_path and rename_or_copy_status?(entry.status)
+      end)
+  end
+
+  defp git_scope_supported?(status, file_path, :all) do
+    not status.truncated? and not Enum.any?(status.conflicted, &(&1.path == file_path)) and
+      not Enum.any?(status.staged, fn entry ->
+        entry.path == file_path and
+          (rename_or_copy_status?(entry.status) or entry.status in [:added, "added"])
+      end)
+  end
+
+  defp rename_or_copy_status?(status) when is_atom(status),
+    do: status |> Atom.to_string() |> rename_or_copy_status?()
+
+  defp rename_or_copy_status?(status) when is_binary(status) do
+    normalized = String.downcase(status)
+    String.contains?(normalized, "renam") or String.contains?(normalized, "cop")
+  end
+
+  defp rename_or_copy_status?(_status), do: true
 
   defp local_git_repository?(project_root) do
     case File.lstat(Path.join(project_root, ".git")) do
@@ -347,18 +395,32 @@ defmodule IexCode.Tools.Git.HunkOps do
     end
   end
 
-  defp apply_hunk_to_file(project_root, file_path, file_diff, hunk) do
+  defp apply_hunk_to_file(project_root, file_path, file_diff, hunk, opts) do
     patch_str = DiffParser.format_hunk_patch(file_diff, hunk)
 
-    case Git.apply_patch(project_root, patch_str) do
+    case apply_patch_to_file(project_root, patch_str, opts) do
       {:ok, _output} ->
         fetch_updated_diff(project_root, file_path)
 
-      {:error, _reason} ->
-        case fallback_apply_hunk_in_file(project_root, file_path, hunk) do
-          :ok -> fetch_updated_diff(project_root, file_path)
-          {:error, err} -> {:error, err}
+      {:error, reason} ->
+        if Keyword.has_key?(opts, :expected_identity) do
+          {:error, reason}
+        else
+          case fallback_apply_hunk_in_file(project_root, file_path, hunk) do
+            :ok -> fetch_updated_diff(project_root, file_path)
+            {:error, err} -> {:error, err}
+          end
         end
+    end
+  end
+
+  # A narrow test seam lets the destructive fallback policy be exercised
+  # deterministically without relying on a filesystem race. Production uses
+  # the regular Git adapter.
+  defp apply_patch_to_file(project_root, patch_str, opts) do
+    case Keyword.get(opts, :_apply_patch) do
+      fun when is_function(fun, 2) -> fun.(project_root, patch_str)
+      _ -> Git.apply_patch(project_root, patch_str)
     end
   end
 
@@ -521,63 +583,26 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp verify_expected_identity(root, path, opts) do
-    case Keyword.get(opts, :expected_identity) do
-      %{missing?: true} ->
-        case File.lstat(Path.join(root, path)) do
-          {:error, :enoent} -> :ok
-          _ -> {:error, :stale_git_snapshot}
-        end
+    case Keyword.fetch(opts, :expected_identity) do
+      :error ->
+        :ok
 
-      expected when is_map(expected) ->
+      {:ok, expected} when is_map(expected) ->
         scope = Keyword.get(opts, :scope)
 
-        with {:ok, expected_canonical} <- Map.fetch(expected, :canonical),
-             {:ok, expected_type} <- Map.fetch(expected, :type),
-             {:ok, expected_size} <- Map.fetch(expected, :size),
-             {:ok, expected_mtime} <- Map.fetch(expected, :mtime),
-             {:ok, expected_inode} <- Map.fetch(expected, :inode),
-             {:ok, canonical_root} <- resolve_file_path(root, ""),
-             {:ok, canonical} <- WorkspacePath.resolve(root, path),
-             {:ok, stat} <- File.lstat(Path.join(root, path)),
-             true <- stat.type != :symlink or scope == :untracked,
-             true <- canonical == expected_canonical,
-             true <-
-               scope == :untracked or canonical == Path.expand(Path.join(canonical_root, path)),
-             true <- stat.type == expected_type,
-             true <- stat.size == expected_size,
-             true <- stat.mtime == expected_mtime,
-             true <- stat.inode == expected_inode,
-             true <- identity_content(root, path, stat) == Map.get(expected, :content_identity) do
+        with {:ok, current} <-
+               WorkspaceIdentity.capture(root, path,
+                 max_bytes: 2 * 1_024 * 1_024,
+                 allow_final_symlink: scope == :untracked
+               ),
+             true <- current == expected do
           :ok
         else
           _ -> {:error, :stale_git_snapshot}
         end
 
-      _ ->
-        :ok
+      {:ok, _invalid} ->
+        {:error, :stale_git_snapshot}
     end
-  end
-
-  defp identity_content(root, path, %{type: :regular, size: size})
-       when size <= 2 * 1_024 * 1_024 do
-    case File.read(Path.join(root, path)) do
-      {:ok, content} -> {:regular, identity_digest(content)}
-      _ -> :unreadable
-    end
-  end
-
-  defp identity_content(root, path, %{type: :symlink}) do
-    case File.read_link(Path.join(root, path)) do
-      {:ok, target} -> {:symlink, identity_digest(target)}
-      _ -> :unreadable
-    end
-  end
-
-  defp identity_content(_root, _path, %{type: type}), do: {type, nil}
-
-  defp identity_digest(term) do
-    :sha256
-    |> :crypto.hash(:erlang.term_to_binary(term))
-    |> Base.encode16(case: :lower)
   end
 end

@@ -36,6 +36,8 @@ function composed(initialMobile) {
   const document = new Target()
   const background = new Element("scheduled-task-detail-modal")
   const trigger = new Element("delete-trigger")
+  const successTarget = new Element("changes-staging-title")
+  const hunkSuccessTarget = new Element("changes-diff-panel")
   const sheet = new Element("sheet", {
     sheetCloseEvent: "cancel",
     sheetReturnId: trigger.id,
@@ -43,7 +45,14 @@ function composed(initialMobile) {
   })
   const dialog = new Element("dialog", {cancelEvent: "cancel", initialFocus: ""})
   background.setAttribute("aria-hidden", "sentinel")
-  const elements = new Map([[background.id, background], [trigger.id, trigger], [sheet.id, sheet], [dialog.id, dialog]])
+  const elements = new Map([
+    [background.id, background],
+    [trigger.id, trigger],
+    [sheet.id, sheet],
+    [dialog.id, dialog],
+    [successTarget.id, successTarget],
+    [hunkSuccessTarget.id, hunkSuccessTarget]
+  ])
   document.body = {}
   document.activeElement = trigger
   document.defaultView = {
@@ -52,12 +61,15 @@ function composed(initialMobile) {
     cancelAnimationFrame: () => {}
   }
   document.getElementById = id => elements.get(id) || null
+  document.removeElementById = id => elements.delete(id)
   document.querySelectorAll = () => [dialog]
   sheet.ownerDocument = document
   dialog.ownerDocument = document
   sheet.append(dialog)
   background.ownerDocument = document
   trigger.ownerDocument = document
+  successTarget.ownerDocument = document
+  hunkSuccessTarget.ownerDocument = document
   dialog.closest = () => sheet
 
   const globals = [globalThis.window, globalThis.document, globalThis.HTMLElement, globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame]
@@ -73,7 +85,7 @@ function composed(initialMobile) {
   modalHook.mounted()
 
   return {
-    media, document, background, trigger, sheet, dialog, sheetHook, modalHook,
+    media, document, background, trigger, successTarget, hunkSuccessTarget, sheet, dialog, sheetHook, modalHook,
     destroy(order) {
       try {
         if (order === "inner-first") {
@@ -85,6 +97,26 @@ function composed(initialMobile) {
         ;[globalThis.window, globalThis.document, globalThis.HTMLElement, globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame] = globals
       }
     }
+  }
+}
+
+for (const [kind, targetKey] of [["file", "successTarget"], ["hunk", "hunkSuccessTarget"]]) {
+  for (const mobile of [true, false]) {
+    test(`successful ${kind} confirmation returns once to its stable target (${mobile ? "mobile" : "desktop"})`, () => {
+      const h = composed(mobile)
+      const target = h[targetKey]
+      h.sheet.dataset.sheetReturnId = target.id
+      h.trigger.isConnected = false
+      h.document.removeElementById(h.trigger.id)
+      h.destroy("inner-first")
+
+      assert.equal(target.focusCalls?.length, 1)
+      assert.equal(h.document.activeElement, target)
+      assert.equal(h.trigger.focusCalls?.length || 0, 0)
+      assert.equal(h.document.count("keydown"), 0)
+      assert.equal(h.background.inert, false)
+      assert.equal(h.background.getAttribute("aria-hidden"), "sentinel")
+    })
   }
 }
 
