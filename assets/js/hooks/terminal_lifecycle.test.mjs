@@ -1,6 +1,31 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {initialTerminalLifecycle, transitionTerminalLifecycle} from "./terminal_lifecycle.mjs"
+import {consumeInitialHandshake, initialTerminalLifecycle, transitionTerminalLifecycle} from "./terminal_lifecycle.mjs"
+
+test("active mount timer consumes the pending handshake once", () => {
+  const state = {...initialTerminalLifecycle(true), sessionId: "a"}
+  const consumed = consumeInitialHandshake(state, "a", "a", 0, 0, true)
+  assert.equal(consumed.requestHistory, true)
+  const again = consumeInitialHandshake(consumed.state, "a", "a", 0, 0, true)
+  assert.equal(again.requestHistory, false)
+})
+
+test("active to hidden before timer keeps history pending for reveal", () => {
+  const initial = {...initialTerminalLifecycle(true), sessionId: "a"}
+  const hidden = transitionTerminalLifecycle(initial, "a", false)
+  const skipped = consumeInitialHandshake(hidden.state, "a", "a", 0, 0, false)
+  assert.equal(skipped.requestHistory, false)
+  const reveal = transitionTerminalLifecycle(skipped.state, "a", true)
+  assert.equal(reveal.requestHistory, true)
+})
+
+test("active session switch before timer cannot double request new history", () => {
+  const initial = {...initialTerminalLifecycle(true), sessionId: "a"}
+  const switched = transitionTerminalLifecycle(initial, "b", true)
+  const skipped = consumeInitialHandshake(switched.state, "a", "b", 0, 1, true)
+  assert.equal(switched.requestHistory, true)
+  assert.equal(skipped.requestHistory, false)
+})
 
 test("hidden-first activation requests history exactly once", () => {
   const initial = {...initialTerminalLifecycle(false), sessionId: "a"}

@@ -4,7 +4,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links"
 import { SearchAddon } from "@xterm/addon-search"
 import { CanvasAddon } from "@xterm/addon-canvas"
 import {resolveTheme} from "../theme.mjs"
-import {initialTerminalLifecycle, transitionTerminalLifecycle} from "./terminal_lifecycle.mjs"
+import {consumeInitialHandshake, initialTerminalLifecycle, transitionTerminalLifecycle} from "./terminal_lifecycle.mjs"
 
 /**
  * TerminalHook - High-performance interactive xterm.js LiveView Hook.
@@ -25,6 +25,9 @@ export const TerminalHook = {
     })
     this.handleThemeChanged = (event) => this.applyTheme(event.detail?.theme)
     this.sessionId = this.el.dataset.sessionId || null
+    this.initialHandshakeSessionId = this.sessionId
+    this.sessionChangeGeneration = 0
+    this.initialHandshakeGeneration = this.sessionChangeGeneration
     const lifecycle = initialTerminalLifecycle(this.el.dataset.terminalActive === "true")
     this.isActive = lifecycle.isActive
     this.historyNeeded = lifecycle.historyNeeded
@@ -271,11 +274,18 @@ export const TerminalHook = {
     // Initial fit with small delay to ensure CSS layout settlement
     this.initialHandshakeTimer = setTimeout(() => {
       this.initialHandshakeTimer = null
-      if (this.el.dataset.terminalActive !== "true") return
+      const handshake = consumeInitialHandshake({
+        sessionId: this.sessionId,
+        isActive: this.isActive,
+        historyNeeded: this.historyNeeded
+      }, this.initialHandshakeSessionId, this.el.dataset.sessionId || null,
+      this.initialHandshakeGeneration, this.sessionChangeGeneration,
+      this.el.dataset.terminalActive === "true")
+      if (!handshake.requestHistory) return
       this.fitTerminal()
       if (this.term) this.term.focus()
       this.pushEvent("request_terminal_history", {})
-      this.historyNeeded = false
+      this.historyNeeded = handshake.state.historyNeeded
     }, 50)
   },
 
@@ -289,6 +299,7 @@ export const TerminalHook = {
     }, nextSessionId, nextActive)
 
     if (transition.reset && this.term) this.term.reset()
+    if (transition.reset) this.sessionChangeGeneration += 1
     if (transition.focus) {
       this.fitTerminal()
       this.term?.focus()

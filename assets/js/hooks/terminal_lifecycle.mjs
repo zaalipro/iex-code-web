@@ -1,5 +1,25 @@
 export function initialTerminalLifecycle(active) {
-  return { isActive: active === true, historyNeeded: active !== true }
+  return { isActive: active === true, historyNeeded: true }
+}
+
+export function consumeInitialHandshake(
+  state,
+  scheduledSessionId,
+  currentSessionId,
+  scheduledGeneration = 0,
+  currentGeneration = 0,
+  active
+) {
+  const valid =
+    scheduledSessionId === currentSessionId &&
+      scheduledGeneration === currentGeneration &&
+      active === true &&
+      state.historyNeeded
+  return {
+    state: valid ? {...state, historyNeeded: false} : state,
+    requestHistory: valid,
+    focus: valid
+  }
 }
 
 export function transitionTerminalLifecycle(state, nextSessionId, nextActive) {
