@@ -1465,7 +1465,7 @@
               <header class="flex flex-col gap-5 border-b border-[var(--sf-hairline)] pb-6 lg:flex-row lg:items-end lg:justify-between">
                 <div class="max-w-3xl">
                   <div class="mb-2 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.2em] text-[var(--sf-text-secondary)]">
-                    <span class="h-1.5 w-1.5 bg-[var(--sf-live-mark)]" aria-hidden="true"></span> Evidence workspace
+                    <span class="h-1.5 w-1.5 bg-[var(--sf-text-secondary)]" aria-hidden="true"></span> Evidence workspace
                   </div>
                   <h2 class="text-3xl font-semibold tracking-[-0.04em] text-[var(--sf-text-primary)] sm:text-4xl">
                     Deep research, without hidden work.
@@ -1500,7 +1500,7 @@
                         Queued as a durable finite DAG with exact level limits.
                       </p>
                     </div>
-                    <span class="border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                    <span class="px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                       async · durable
                     </span>
                   </div>
@@ -1513,7 +1513,7 @@
                     label="What should I investigate?"
                     placeholder="Compare evidence, identify disagreements, and recommend a defensible implementation…"
                     required
-                    class="block min-h-32 w-full resize-y border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2.5 text-sm leading-6 text-[var(--sf-text-primary)] outline-none transition-colors placeholder:text-[var(--sf-text-secondary)] focus:border-[var(--sf-live-mark)] focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
+                    class="block min-h-32 w-full resize-y rounded-2xl border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2.5 text-sm leading-6 text-[var(--sf-text-primary)] outline-none transition-colors placeholder:text-[var(--sf-text-secondary)] focus:border-[var(--sf-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
                   />
 
                   </section>
@@ -1534,9 +1534,9 @@
                           ]
                         }
                         class={[
-                          "cursor-pointer border p-3 transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-[var(--sf-focus-ring)]",
+                          "cursor-pointer rounded-2xl border p-3 transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-[var(--sf-focus-ring)]",
                           @research_launch_level == level_name &&
-                            "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] ring-2 ring-[var(--sf-live-mark)]/30",
+                            "border-[var(--sf-hairline)] bg-[var(--sf-raised-control)]",
                           @research_launch_level != level_name &&
                             "border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] hover:border-[var(--sf-text-secondary)]"
                         ]}
@@ -1554,7 +1554,7 @@
                           checked={@research_launch_level == level_name}
                           class="sr-only"
                         />
-                        <span class="flex items-center justify-between gap-2 text-sm font-semibold text-[var(--sf-text-primary)]"><span>{title}</span><span :if={@research_launch_level == level_name} data-selected-indicator class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)]">Selected</span></span>
+                        <span class="flex items-center justify-between gap-2 text-sm font-semibold text-[var(--sf-text-primary)]"><span>{title}</span><span :if={@research_launch_level == level_name} data-selected-indicator class="inline-flex items-center gap-1.5 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)]"><span aria-hidden="true" class="h-1.5 w-1.5 shrink-0 bg-[var(--sf-live-mark)]"></span>Selected</span></span>
                         <span class="sf-body-copy mt-1 block">
                           {research_level_contract(level_name)}
                         </span>
@@ -1562,24 +1562,24 @@
                     </div>
                   </fieldset>
 
-                  <div :if={level} class="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-3 py-2.5">
-                      <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                  <dl :if={level} id="research-level-facts" class="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div class="research-fact-row border-l border-[var(--sf-hairline)] py-1 pl-3">
+                      <dt class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                         Requested rounds
-                      </p>
-                      <p class="sf-body-copy mt-1 text-[var(--sf-text-primary)]">
+                      </dt>
+                      <dd class="sf-body-copy mt-1 text-[var(--sf-text-primary)]">
                         {level.rounds} sequential evidence rounds
-                      </p>
+                      </dd>
                     </div>
-                    <div class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-3 py-2.5">
-                      <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                    <div class="research-fact-row border-l border-[var(--sf-hairline)] py-1 pl-3">
+                      <dt class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                         Per-search-step query fanout
-                      </p>
-                      <p class="sf-body-copy mt-1 text-[var(--sf-text-primary)]">
+                      </dt>
+                      <dd class="sf-body-copy mt-1 text-[var(--sf-text-primary)]">
                         Up to {level.subagents} bounded asynchronous queries
-                      </p>
+                      </dd>
                     </div>
-                  </div>
+                  </dl>
 
                   </section>
                   <section id="research-stage-sources" class="research-stage">
@@ -1593,7 +1593,7 @@
                       max="40"
                       label="Maximum sources"
                       value={@research_launch_sources}
-                      class="block min-h-11 w-full border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 text-sm text-[var(--sf-text-primary)] outline-none focus:border-[var(--sf-live-mark)]"
+                      class="block min-h-11 w-full rounded-2xl border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] px-3 py-2 text-sm text-[var(--sf-text-primary)] outline-none focus:border-[var(--sf-text-secondary)]"
                     />
                     <div>
                       <div class="flex items-center justify-between gap-3">
@@ -1608,7 +1608,7 @@
                         <label
                           :for={provider <- @settings.search_provider_order || ["duckduckgo"]}
                           class={[
-                            "inline-flex min-h-11 items-center gap-2 border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-2.5 font-mono text-xs",
+                            "inline-flex min-h-11 items-center gap-2 rounded-2xl border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-2.5 font-mono text-xs",
                             research_provider_selectable?(@settings, provider) &&
                               "cursor-pointer text-[var(--sf-text-secondary)]",
                             !research_provider_selectable?(@settings, provider) &&
@@ -1656,9 +1656,9 @@
                         phx-click="toggle_research_attachment_picker"
                         aria-expanded={@research_attachment_picker_open?}
                         aria-controls="deep-research-attachment-picker"
-                        class="inline-flex min-h-11 items-center gap-2 border border-[var(--sf-hairline)] px-3 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)] hover:border-[var(--sf-live-mark)]"
+                        class="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-[var(--sf-hairline)] px-3 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)] hover:border-[var(--sf-text-secondary)]"
                       >
-                        <.icon name="hero-paper-clip" class="h-3.5 w-3.5 text-[var(--sf-live-text)]" />
+                        <.icon name="hero-paper-clip" class="research-attachment-icon h-3.5 w-3.5 text-[var(--sf-text-secondary)]" />
                         Attach ready results
                       </button>
                     </div>
@@ -1670,7 +1670,8 @@
                         :for={
                           public_id <- @research_attachments |> MapSet.to_list() |> Enum.sort()
                         }
-                        class="max-w-full truncate border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 py-1 font-mono text-xs text-[var(--sf-live-text)]"
+                        data-research-attachment-id={public_id}
+                        class="max-w-full truncate border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-2 py-1 font-mono text-xs text-[var(--sf-text-primary)]"
                         title={"Ready research result ##{public_id}"}
                       >
                         /deep_research {public_id}
@@ -1690,7 +1691,7 @@
                     >
                       <p
                         :if={@research_results == []}
-                        class="py-5 text-center text-xs text-[var(--sf-text-secondary)]"
+                        class="sf-body-copy py-5 text-center text-[var(--sf-text-secondary)]"
                       >
                         No ready research results in this session.
                       </p>
@@ -1707,12 +1708,12 @@
                           )
                         }
                         class={[
-                          "flex min-h-11 w-full items-center gap-2 px-2 text-left font-mono text-xs transition-colors",
+                          "flex min-h-11 w-full items-center gap-2 rounded-2xl px-2 text-left font-mono text-xs transition-colors",
                           MapSet.member?(
                             @research_attachments,
                             research_result_public_id(result)
                           ) &&
-                            "bg-[var(--sf-instrument-raised)] text-[var(--sf-live-text)]",
+                            "bg-[var(--sf-instrument-raised)] text-[var(--sf-text-primary)]",
                           !MapSet.member?(
                             @research_attachments,
                             research_result_public_id(result)
@@ -1721,10 +1722,11 @@
                         ]}
                       >
                         <.icon name="hero-document-text" class="h-3.5 w-3.5 shrink-0" />
-                        <span class="shrink-0 text-[var(--sf-live-text)]">
+                        <span class="shrink-0 text-[var(--sf-text-primary)]">
                           #{research_result_public_id(result)}
                         </span>
                         <span class="truncate">{research_result_label(result)}</span>
+                        <span :if={MapSet.member?(@research_attachments, research_result_public_id(result))} data-selected-indicator class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)]">Selected</span>
                         <span class="ml-auto shrink-0 text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           {Map.get(result, :level)} · {Map.get(result, :source_count, 0)} sources
                         </span>
@@ -1746,7 +1748,7 @@
                     id="deep-research-submit"
                     type="submit"
                     phx-disable-with="Checking availability…"
-                    class="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 border border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] px-5 font-mono text-sm font-semibold uppercase tracking-wider text-[var(--sf-text-primary)] transition-colors hover:border-[var(--sf-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
+                    class="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-5 font-mono text-sm font-semibold uppercase tracking-wider text-[var(--sf-text-primary)] transition-colors hover:border-[var(--sf-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
                   >
                     <.icon name="hero-arrow-up-right" class="h-4 w-4" /> Queue deep research
                   </button>
@@ -1775,7 +1777,7 @@
                   >
                     <div class="flex items-center justify-between gap-3">
                       <h3 class="text-sm font-semibold text-[var(--sf-text-primary)]">Exact execution semantics</h3>
-                      <span class="border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                      <span class="px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                         Launch contract
                       </span>
                     </div>
@@ -1785,14 +1787,14 @@
                       asynchronous query tasks. Durable provider intents prevent ambiguous
                       paid-call replay.
                     </p>
-                    <dl :if={level} class="mt-4 grid grid-cols-2 gap-px border border-[var(--sf-hairline)] bg-[var(--sf-hairline)]">
-                      <div class="bg-[var(--sf-instrument-raised)] p-3">
+                    <dl :if={level} id="research-semantics-facts" class="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div class="research-fact-row border-l border-[var(--sf-hairline)] py-1 pl-3">
                         <dt class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           Rounds
                         </dt>
                         <dd class="mt-1 text-lg font-semibold text-[var(--sf-text-primary)]">{level.rounds}</dd>
                       </div>
-                      <div class="bg-[var(--sf-instrument-raised)] p-3">
+                      <div class="research-fact-row border-l border-[var(--sf-hairline)] py-1 pl-3">
                         <dt class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           Search-step query fanout
                         </dt>
@@ -1820,7 +1822,7 @@
                       <h3 class="text-sm font-semibold text-[var(--sf-text-primary)]">Recent investigations</h3>
                       <span class="font-mono text-xs text-[var(--sf-text-secondary)]">{length(@research_runs)}</span>
                     </div>
-                    <div :if={@research_runs == []} class="py-8 text-center text-xs text-[var(--sf-text-secondary)]">
+                    <div :if={@research_runs == []} class="research-empty-state sf-body-copy py-8 text-center text-[var(--sf-text-secondary)]">
                       No research runs in this session.
                     </div>
                     <button
@@ -1832,12 +1834,12 @@
                       aria-pressed={to_string(@selected_research_run && @selected_research_run.id == run.id)}
                       data-selection-state={if(@selected_research_run && @selected_research_run.id == run.id, do: "selected", else: "available")}
                       class={[
-                        "mt-2 w-full border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-3 text-left transition-colors hover:border-[var(--sf-text-secondary)]",
-                        @selected_research_run && @selected_research_run.id == run.id && "border-[var(--sf-live-mark)] ring-2 ring-[var(--sf-live-mark)]/30"
+                        "mt-2 w-full rounded-2xl border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-3 text-left transition-colors hover:border-[var(--sf-text-secondary)]",
+                        @selected_research_run && @selected_research_run.id == run.id && "bg-[var(--sf-raised-control)]"
                       ]}
                     >
                       <div class="flex items-center justify-between gap-3">
-                        <span class="flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]"><span :if={@selected_research_run && @selected_research_run.id == run.id} data-selected-indicator class="text-[var(--sf-text-primary)]">Selected</span>{run.status}</span>
+                        <span class="flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]"><span :if={@selected_research_run && @selected_research_run.id == run.id} data-selected-indicator class="inline-flex items-center gap-1.5 text-[var(--sf-text-primary)]"><span aria-hidden="true" class="h-1.5 w-1.5 shrink-0 bg-[var(--sf-live-mark)]"></span>Selected</span>{run.status}</span>
                         <span class="font-mono text-xs tabular-nums text-[var(--sf-text-secondary)]">{run.progress ||
                           0}%</span>
                       </div>
@@ -1863,7 +1865,7 @@
 
                     <div
                       :if={@research_results == []}
-                      class="py-8 text-center text-xs text-[var(--sf-text-secondary)]"
+                      class="research-empty-state sf-body-copy py-8 text-center text-[var(--sf-text-secondary)]"
                     >
                       Completed reports will appear here with an integer result number.
                     </div>
@@ -1898,7 +1900,7 @@
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label={"Open report for research result #{research_result_public_id(result)}"}
-                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)] hover:border-[var(--sf-live-mark)]"
+                          class="inline-flex min-h-11 items-center justify-center gap-1 rounded-2xl border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)] hover:border-[var(--sf-text-secondary)]"
                         >
                           <.icon name="hero-arrow-top-right-on-square" class="h-3 w-3" /> Open
                         </.link>
@@ -1908,7 +1910,7 @@
                             ~p"/research/#{research_result_public_id(result)}/report/download"
                           }
                           aria-label={"Download HTML report for research result #{research_result_public_id(result)}"}
-                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
+                          class="inline-flex min-h-11 items-center justify-center gap-1 rounded-2xl border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                         >
                           <.icon name="hero-arrow-down-tray" class="h-3 w-3" /> HTML
                         </.link>
@@ -1918,7 +1920,7 @@
                             ~p"/research/#{research_result_public_id(result)}/result/download"
                           }
                           aria-label={"Download Markdown report for research result #{research_result_public_id(result)}"}
-                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
+                          class="inline-flex min-h-11 items-center justify-center gap-1 rounded-2xl border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                         >
                           <.icon name="hero-document-arrow-down" class="h-3 w-3" /> MD
                         </.link>

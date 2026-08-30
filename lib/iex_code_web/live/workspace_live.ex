@@ -449,9 +449,18 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:active_diff_scope, :unstaged)
       |> stream(:run_agents, run_agents, dom_id: &"run-agent-#{&1.id}")
 
+    summary_step_summaries =
+      if socket.assigns.live_action == :research and selected_research_run do
+        %{selected_research_run.id => selected_research_steps}
+      else
+        %{}
+      end
+
     socket =
       socket
-      |> refresh_run_summary_facts(durable_runs, ready_research_results)
+      |> refresh_run_summary_facts(durable_runs, ready_research_results,
+        step_summaries: summary_step_summaries
+      )
       |> rebuild_instrument_summaries()
       |> request_runtime_refresh()
       |> request_deck_git_refresh()
@@ -3265,7 +3274,7 @@ defmodule IexCodeWeb.WorkspaceLive do
        :research_attachment_picker_open?,
        !socket.assigns.research_attachment_picker_open?
      )
-     |> refresh_research_results()}
+     |> refresh_research_evidence()}
   end
 
   @impl true
@@ -4086,7 +4095,7 @@ defmodule IexCodeWeb.WorkspaceLive do
         {:research_result_updated, %{result: %{session_id: session_id}}},
         %{assigns: %{session: %{id: session_id}}} = socket
       ) do
-    {:noreply, refresh_research_results(socket)}
+    {:noreply, refresh_research_evidence(socket)}
   end
 
   @impl true
@@ -4564,7 +4573,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({:run_created, run}, socket) do
     if socket.assigns.active_view == "research" do
-      {:noreply, refresh_created_research_run(socket, Map.get(run, :id))}
+      {:noreply, refresh_research_run_notification(socket, Map.get(run, :id), :created)}
     else
       if run.session_id == socket.assigns.session.id do
         socket =
@@ -4580,7 +4589,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({:run_updated, run}, socket) do
     if socket.assigns.active_view == "research" do
-      {:noreply, refresh_selected_research_run(socket, Map.get(run, :id))}
+      {:noreply, refresh_research_run_notification(socket, Map.get(run, :id), :updated)}
     else
       if run.session_id == socket.assigns.session.id do
         socket = sync_run_linked_task(socket, run)
@@ -4605,7 +4614,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({:run_event, event}, socket) do
     if socket.assigns.active_view == "research" do
-      {:noreply, refresh_selected_research_run(socket, Map.get(event, :run_id))}
+      {:noreply, refresh_research_run_notification(socket, Map.get(event, :run_id), :progress)}
     else
       if socket.assigns.selected_run && event.run_id == socket.assigns.selected_run.id do
         if socket.assigns.selected_run.execution_engine == "dag_v1" do
@@ -4641,7 +4650,7 @@ defmodule IexCodeWeb.WorkspaceLive do
            ] do
     cond do
       socket.assigns.active_view == "research" ->
-        {:noreply, refresh_selected_research_run(socket, Map.get(entity, :run_id))}
+        {:noreply, refresh_research_run_notification(socket, Map.get(entity, :run_id), :progress)}
 
       socket.assigns.selected_run && entity.run_id == socket.assigns.selected_run.id ->
         {:noreply, refresh_selected_run(socket) |> refresh_run_summaries()}
@@ -4657,20 +4666,28 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_info({event_name, agent}, socket)
       when event_name in [:run_agent_created, :run_agent_updated] do
-    if socket.assigns.selected_run && agent.run_id == socket.assigns.selected_run.id do
-      {:noreply, refresh_run_fleet(socket) |> refresh_run_summaries()}
+    if socket.assigns.active_view == "research" do
+      {:noreply, refresh_research_run_notification(socket, Map.get(agent, :run_id), :progress)}
     else
-      {:noreply, refresh_run_summaries(socket)}
+      if socket.assigns.selected_run && agent.run_id == socket.assigns.selected_run.id do
+        {:noreply, refresh_run_fleet(socket) |> refresh_run_summaries()}
+      else
+        {:noreply, refresh_run_summaries(socket)}
+      end
     end
   end
 
   @impl true
   def handle_info({event_name, control}, socket)
       when event_name in [:run_agent_control_enqueued, :run_agent_control_updated] do
-    if socket.assigns.selected_run && control.run_id == socket.assigns.selected_run.id do
-      {:noreply, refresh_run_fleet(socket) |> refresh_run_summaries()}
+    if socket.assigns.active_view == "research" do
+      {:noreply, refresh_research_run_notification(socket, Map.get(control, :run_id), :progress)}
     else
-      {:noreply, refresh_run_summaries(socket)}
+      if socket.assigns.selected_run && control.run_id == socket.assigns.selected_run.id do
+        {:noreply, refresh_run_fleet(socket) |> refresh_run_summaries()}
+      else
+        {:noreply, refresh_run_summaries(socket)}
+      end
     end
   end
 
@@ -5030,10 +5047,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> stream(:run_agents, [], reset: true, dom_id: &"run-agent-#{&1.id}")
   end
 
-  defp mission_phase(nil), do: nil
-
-  defp mission_phase(run), do: phase_from_steps(run, Runs.list_step_summaries(run))
-
   defp phase_from_steps(nil, _steps), do: nil
 
   defp phase_from_steps(run, steps) do
@@ -5119,6 +5132,11 @@ defmodule IexCodeWeb.WorkspaceLive do
     mission = select_active_mission(runs)
     research = Enum.find(runs, &(&1.kind == "deep_research"))
 
+    step_summaries =
+      opts
+      |> Keyword.get(:step_summaries, %{})
+      |> load_missing_summary_steps([mission, research], Keyword.get(opts, :load_steps?, true))
+
     research_result =
       if research, do: Enum.find(ready_results, &(&1.run_id == research.id)), else: nil
 
@@ -5126,25 +5144,26 @@ defmodule IexCodeWeb.WorkspaceLive do
       get_in((research && research.metadata) || %{}, ["research", "level"]) ||
         (research_result && research_result.level)
 
-    summary_steps =
-      case Keyword.fetch(opts, :steps) do
-        {:ok, steps} ->
-          steps
+    mission_phase =
+      summary_phase(socket, mission, step_summaries, Keyword.get(opts, :preserve_missing?, false))
 
-        :error ->
-          case research && Runs.list_projection_step_summaries(research) do
-            {:ok, steps} -> steps
-            _unavailable -> []
-          end
-      end
+    summary_steps =
+      summary_research_steps(
+        socket,
+        research,
+        step_summaries,
+        Keyword.get(opts, :preserve_missing?, false)
+      )
+
+    pending_approval_count =
+      Keyword.get_lazy(opts, :pending_approval_count, fn ->
+        Runs.count_pending_approvals(socket.assigns.session.id)
+      end)
 
     socket
     |> assign(:summary_mission_run, mission)
-    |> assign(:summary_mission_phase, mission_phase(mission))
-    |> assign(
-      :summary_pending_approvals,
-      Runs.count_pending_approvals(socket.assigns.session.id)
-    )
+    |> assign(:summary_mission_phase, mission_phase)
+    |> assign(:summary_pending_approvals, pending_approval_count)
     |> assign(:summary_research_run, research)
     |> assign(:summary_research_result, research_result)
     |> assign(:summary_research_level, level)
@@ -5152,6 +5171,57 @@ defmodule IexCodeWeb.WorkspaceLive do
       :research_summary_steps,
       summary_steps
     )
+  end
+
+  defp load_missing_summary_steps(step_summaries, _runs, false), do: step_summaries
+
+  defp load_missing_summary_steps(step_summaries, runs, true) do
+    runs
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq_by(& &1.id)
+    |> Enum.reduce(step_summaries, fn run, summaries ->
+      if Map.has_key?(summaries, run.id) do
+        summaries
+      else
+        steps =
+          case Runs.list_projection_step_summaries(run) do
+            {:ok, rows} -> rows
+            {:error, :step_summary_limit_exceeded} -> []
+          end
+
+        Map.put(summaries, run.id, steps)
+      end
+    end)
+  end
+
+  defp summary_phase(_socket, nil, _step_summaries, _preserve_missing?), do: nil
+
+  defp summary_phase(socket, mission, step_summaries, preserve_missing?) do
+    case Map.fetch(step_summaries, mission.id) do
+      {:ok, steps} ->
+        phase_from_steps(mission, steps)
+
+      :error ->
+        if (preserve_missing? and socket.assigns[:summary_mission_run]) &&
+             socket.assigns.summary_mission_run.id == mission.id,
+           do: socket.assigns[:summary_mission_phase],
+           else: phase_from_steps(mission, [])
+    end
+  end
+
+  defp summary_research_steps(_socket, nil, _step_summaries, _preserve_missing?), do: []
+
+  defp summary_research_steps(socket, research, step_summaries, preserve_missing?) do
+    case Map.fetch(step_summaries, research.id) do
+      {:ok, steps} ->
+        steps
+
+      :error ->
+        if (preserve_missing? and socket.assigns[:summary_research_run]) &&
+             socket.assigns.summary_research_run.id == research.id,
+           do: socket.assigns[:research_summary_steps] || [],
+           else: []
+    end
   end
 
   defp rebuild_instrument_summaries(socket) do
@@ -6689,8 +6759,10 @@ defmodule IexCodeWeb.WorkspaceLive do
     do: "Research #{String.capitalize(to_string(status))}"
 
   defp select_research_projection(socket, %Runs.Run{} = run) do
-    {steps, projection_state} = bounded_research_steps(run)
+    select_research_projection(socket, run, bounded_research_steps(run))
+  end
 
+  defp select_research_projection(socket, %Runs.Run{} = run, {steps, projection_state}) do
     socket
     |> assign(:selected_research_run, run)
     |> assign(:selected_research_steps, steps)
@@ -6698,92 +6770,135 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:research_dag_projection, research_dag_projection(run, steps, projection_state))
   end
 
-  defp assign_research_projection(socket, runs) do
-    selected_id =
-      socket.assigns[:selected_research_run] && socket.assigns.selected_research_run.id
-
-    selected = Enum.find(runs, &(&1.id == selected_id)) || List.first(runs)
-    {steps, projection_state} = bounded_research_steps(selected)
-
-    socket
-    |> assign(:research_runs, runs)
-    |> assign(:selected_research_run, selected)
-    |> assign(:selected_research_steps, steps)
-    |> assign(:research_projection_state, projection_state)
-    |> assign(
-      :research_dag_projection,
-      research_dag_projection(selected, steps, projection_state)
-    )
-  end
-
   defp refresh_research_workbench(socket) do
-    runs =
-      Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
-      |> research_runs()
-
-    ready =
-      ResearchResults.list_ready(session_id: socket.assigns.session.id)
-      |> scoped_research_results(runs)
-
-    socket
-    |> assign_research_projection(runs)
-    |> assign(:research_results, ready)
-  end
-
-  defp refresh_created_research_run(socket, hinted_id) do
-    runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
-    research = research_runs(runs)
-    hinted = Enum.find(research, &(&1.id == hinted_id))
+    snapshot = research_notification_snapshot(socket)
 
     selected_id =
       socket.assigns[:selected_research_run] && socket.assigns.selected_research_run.id
 
-    selected = hinted || Enum.find(research, &(&1.id == selected_id)) || List.first(research)
-    {steps, projection_state} = bounded_research_steps(selected)
+    selected =
+      Enum.find(snapshot.research_runs, &(&1.id == selected_id)) ||
+        List.first(snapshot.research_runs)
 
-    ready =
-      ResearchResults.list_ready(session_id: socket.assigns.session.id)
-      |> scoped_research_results(research)
+    progress = bounded_research_steps(selected)
+    step_summaries = if(selected, do: %{selected.id => elem(progress, 0)}, else: %{})
 
     socket
-    |> assign(:research_runs, research)
-    |> assign(:selected_research_run, selected)
-    |> assign(:selected_research_steps, steps)
-    |> assign(:research_projection_state, projection_state)
-    |> assign(
-      :research_dag_projection,
-      research_dag_projection(selected, steps, projection_state)
+    |> assign_research_snapshot(snapshot,
+      step_summaries: step_summaries,
+      load_steps?: true,
+      preserve_missing?: false
     )
-    |> assign(:research_results, ready)
-    |> refresh_run_summary_facts(runs, ready)
-    |> rebuild_instrument_summaries()
+    |> assign_selected_research_progress(selected, progress)
   end
 
-  defp refresh_selected_research_run(socket, hinted_id) do
-    all_runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
-    research = research_runs(all_runs)
-
-    ready =
-      ResearchResults.list_ready(session_id: socket.assigns.session.id)
-      |> scoped_research_results(research)
+  defp refresh_research_run_notification(socket, hinted_id, mode) do
+    snapshot = research_notification_snapshot(socket)
+    affected = Enum.find(snapshot.runs, &(&1.id == hinted_id))
 
     selected_id =
       socket.assigns[:selected_research_run] && socket.assigns.selected_research_run.id
 
-    durable = Enum.find(research, &(&1.id == hinted_id))
+    durable_selected = Enum.find(snapshot.research_runs, &(&1.id == selected_id))
+
+    selected =
+      case {mode, affected} do
+        {:created, %Runs.Run{kind: "deep_research"} = created} ->
+          created
+
+        _other ->
+          durable_selected || List.first(snapshot.research_runs)
+      end
+
+    refresh_progress? =
+      (match?(%Runs.Run{kind: "deep_research"}, affected) and selected) &&
+        affected.id == selected.id
+
+    progress = if(refresh_progress?, do: bounded_research_steps(selected), else: nil)
+
+    step_summaries =
+      cond do
+        progress ->
+          %{selected.id => elem(progress, 0)}
+
+        summary_target?(snapshot.runs, affected) ->
+          %{affected.id => affected |> bounded_research_steps() |> elem(0)}
+
+        true ->
+          %{}
+      end
 
     socket =
       socket
-      |> assign(:research_runs, research)
-      |> assign(:research_results, ready)
-      |> refresh_run_summary_facts(all_runs, ready)
-      |> rebuild_instrument_summaries()
+      |> maybe_sync_research_linked_task(mode, affected)
+      |> assign_research_snapshot(snapshot,
+        step_summaries: step_summaries,
+        load_steps?: false,
+        preserve_missing?: true
+      )
 
-    if durable && hinted_id == selected_id do
-      select_research_projection(socket, durable)
-    else
-      socket
-    end
+    assign_selected_research_progress(socket, selected, progress)
+  end
+
+  defp research_notification_snapshot(socket) do
+    runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
+    research = research_runs(runs)
+
+    ready =
+      ResearchResults.list_ready(session_id: socket.assigns.session.id)
+      |> scoped_research_results(research)
+
+    %{
+      runs: runs,
+      research_runs: research,
+      ready_results: ready,
+      pending_approval_count: Runs.count_pending_approvals(socket.assigns.session.id)
+    }
+  end
+
+  defp assign_research_snapshot(socket, snapshot, opts) do
+    socket
+    |> assign(:run_rows, snapshot.runs)
+    |> assign(:run_count, length(snapshot.runs))
+    |> assign(:run_counts, run_counts(snapshot.runs, snapshot.pending_approval_count))
+    |> assign(:run_dispatcher_stats, safe_dispatcher_stats())
+    |> assign(:research_runs, snapshot.research_runs)
+    |> assign(:research_results, snapshot.ready_results)
+    |> refresh_run_summary_facts(snapshot.runs, snapshot.ready_results,
+      step_summaries: Keyword.get(opts, :step_summaries, %{}),
+      load_steps?: Keyword.get(opts, :load_steps?, false),
+      preserve_missing?: Keyword.get(opts, :preserve_missing?, true),
+      pending_approval_count: snapshot.pending_approval_count
+    )
+    |> rebuild_instrument_summaries()
+  end
+
+  defp assign_selected_research_progress(socket, nil, _progress) do
+    socket
+    |> assign(:selected_research_run, nil)
+    |> assign(:selected_research_steps, [])
+    |> assign(:research_projection_state, :empty)
+    |> assign(:research_dag_projection, nil)
+  end
+
+  defp assign_selected_research_progress(socket, selected, nil),
+    do: assign(socket, :selected_research_run, selected)
+
+  defp assign_selected_research_progress(socket, selected, progress),
+    do: select_research_projection(socket, selected, progress)
+
+  defp maybe_sync_research_linked_task(socket, :updated, %Runs.Run{} = run),
+    do: sync_run_linked_task(socket, run)
+
+  defp maybe_sync_research_linked_task(socket, _mode, _run), do: socket
+
+  defp summary_target?(_runs, nil), do: false
+
+  defp summary_target?(runs, affected) do
+    mission = select_active_mission(runs)
+    research = Enum.find(runs, &(&1.kind == "deep_research"))
+
+    Enum.any?([mission, research], &(&1 && &1.id == affected.id))
   end
 
   defp enabled_form_providers(providers) when is_map(providers) do
@@ -7046,7 +7161,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp interactive_intent_tab(%Intent{kind: :swarm}, _current), do: "swarm"
   defp interactive_intent_tab(_intent, current), do: current
 
-  defp refresh_research_results(socket) do
+  defp refresh_research_evidence(socket) do
     all_runs = Runs.list_runs(session_id: socket.assigns.session.id, limit: 100)
     research = research_runs(all_runs)
 
@@ -7054,10 +7169,27 @@ defmodule IexCodeWeb.WorkspaceLive do
       ResearchResults.list_ready(session_id: socket.assigns.session.id)
       |> scoped_research_results(research)
 
+    summary_research =
+      case socket.assigns[:summary_research_run] do
+        %{id: id} -> Enum.find(research, &(&1.id == id)) || List.first(research)
+        _missing -> List.first(research)
+      end
+
+    summary_result =
+      if summary_research,
+        do: Enum.find(ready, &(&1.run_id == summary_research.id)),
+        else: nil
+
+    level =
+      get_in((summary_research && summary_research.metadata) || %{}, ["research", "level"]) ||
+        (summary_result && summary_result.level)
+
     socket
     |> assign(:research_runs, research)
     |> assign(:research_results, ready)
-    |> refresh_run_summary_facts(all_runs, ready)
+    |> assign(:summary_research_run, summary_research)
+    |> assign(:summary_research_result, summary_result)
+    |> assign(:summary_research_level, level)
     |> rebuild_instrument_summaries()
   end
 

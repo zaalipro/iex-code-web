@@ -131,6 +131,29 @@ defmodule IexCode.Research.EnqueueTest do
     assert first.metadata["research"]["level"] == "low"
   end
 
+  test "canonical producer retries atom-only marker aliases idempotently", context do
+    request_key = Ecto.UUID.generate()
+
+    attrs = %{
+      project_id: context.project.id,
+      session_id: context.session.id,
+      objective: "Canonical atom marker",
+      request_key: request_key,
+      metadata: %{:projection => "legacy_v1", :research => %{:level => "low"}}
+    }
+
+    research =
+      strict_research(context, %{level: "low", ranked_providers: ["duckduckgo"], max_sources: 5})
+
+    assert {:ok, first} = RunDispatcher.enqueue_research(attrs, research)
+    assert {:ok, duplicate} = RunDispatcher.enqueue_research(attrs, research)
+    assert duplicate.id == first.id
+    assert first.metadata["projection"] == "dag_v1"
+    refute Map.has_key?(first.metadata, :projection)
+    refute Map.has_key?(first.metadata, :research)
+    assert first.metadata["research"]["level"] == "low"
+  end
+
   test "invalid level and unavailable providers fail before inserting anything", context do
     attrs = %{
       project_id: context.project.id,

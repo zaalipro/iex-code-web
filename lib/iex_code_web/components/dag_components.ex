@@ -42,7 +42,7 @@ defmodule IexCodeWeb.DagComponents do
           <div class="max-w-2xl">
             <div class="mb-1.5 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[var(--sf-text-secondary)]">
               <span
-                class="dag-decorative-mark h-1.5 w-1.5 bg-[var(--sf-live-mark)]"
+                class="dag-decorative-mark h-1.5 w-1.5 bg-[var(--sf-text-secondary)]"
                 aria-hidden="true"
               ></span>
               Dependency-aware execution
@@ -89,7 +89,7 @@ defmodule IexCodeWeb.DagComponents do
           <.summary_fact
             label="Running"
             value={summary_count(@summary, :running)}
-            tone="text-[var(--sf-live-text)]"
+            tone="text-[var(--sf-text-primary)]"
           />
           <.summary_fact
             label="Blocked"
@@ -114,7 +114,7 @@ defmodule IexCodeWeb.DagComponents do
           <.summary_fact
             label="Failed"
             value={summary_count(@summary, :failed)}
-            tone="text-[var(--sf-live-text)]"
+            tone="text-[var(--sf-text-primary)]"
           />
         </div>
       </header>
@@ -249,7 +249,7 @@ defmodule IexCodeWeb.DagComponents do
         <div class="min-w-0">
           <div class="flex min-w-0 items-center gap-2">
             <span
-              class={["h-2 w-2 shrink-0 rounded-full", dag_status_dot(@status)]}
+              class={["dag-status-dot h-2 w-2 shrink-0 rounded-full", dag_status_dot(@status)]}
               aria-hidden="true"
             ></span>
             <h6 class="truncate text-sm font-semibold tracking-tight text-[var(--sf-text-primary)]">
@@ -261,7 +261,7 @@ defmodule IexCodeWeb.DagComponents do
           </p>
         </div>
         <span class={[
-          "shrink-0 border px-1.5 py-0.5 font-mono text-xs font-semibold uppercase tracking-wider",
+          "dag-status-badge shrink-0 border px-1.5 py-0.5 font-mono text-xs font-semibold uppercase tracking-wider",
           dag_status_tone(@status)
         ]}>
           {@status}
@@ -284,7 +284,7 @@ defmodule IexCodeWeb.DagComponents do
             class={[
               "max-w-full truncate border px-1.5 py-0.5 font-mono text-xs",
               dependency in @blocked_by &&
-                "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] text-[var(--sf-text-primary)]",
+                "border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-primary)]",
               dependency not in @blocked_by &&
                 "border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)]"
             ]}
@@ -310,7 +310,7 @@ defmodule IexCodeWeb.DagComponents do
         >
           <div
             class={[
-              "h-full transition-[width] duration-300 motion-reduce:transition-none",
+              "dag-progress-fill h-full transition-[width] duration-300 motion-reduce:transition-none",
               dag_progress_tone(@status)
             ]}
             style={"width: #{node_progress(@node)}%"}
@@ -511,34 +511,28 @@ defmodule IexCodeWeb.DagComponents do
 
   defp dag_status_dot("completed"), do: "bg-[var(--sf-success-mark)]"
   defp dag_status_dot(status) when status in ~w(failed cancelled), do: "bg-[var(--sf-live-mark)]"
-
-  defp dag_status_dot(status) when status in ~w(blocked waiting_approval paused retrying),
-    do: "bg-[var(--sf-live-mark)]"
+  defp dag_status_dot("waiting_approval"), do: "bg-[var(--sf-live-mark)]"
 
   defp dag_status_dot(_status), do: "bg-[var(--sf-text-secondary)]"
 
-  defp dag_status_tone(status) when status in ~w(running completed),
+  defp dag_status_tone("completed"),
+    do: "border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-success-text)]"
+
+  defp dag_status_tone(status) when status in ~w(running waiting_approval failed cancelled),
     do: "border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-primary)]"
 
   defp dag_status_tone("ready"),
     do: "border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-primary)]"
 
-  defp dag_status_tone(status) when status in ~w(failed cancelled),
-    do: "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] text-[var(--sf-live-text)]"
-
-  defp dag_status_tone(status) when status in ~w(blocked waiting_approval paused retrying),
-    do: "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] text-[var(--sf-live-text)]"
-
   defp dag_status_tone(_status),
     do:
       "border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)]"
 
-  defp dag_node_border("failed", _critical), do: "border-[var(--sf-live-mark)]"
   defp dag_node_border(_status, true), do: "border-[var(--sf-text-secondary)]"
   defp dag_node_border(_status, _critical), do: "border-[var(--sf-hairline)]"
 
   defp dag_progress_tone("completed"), do: "bg-[var(--sf-success-mark)]"
-  defp dag_progress_tone(_status), do: "bg-[var(--sf-live-mark)]"
+  defp dag_progress_tone(_status), do: "bg-[var(--sf-text-secondary)]"
 
   defp pluralize(1, singular, _plural), do: singular
   defp pluralize(_count, _singular, plural), do: plural

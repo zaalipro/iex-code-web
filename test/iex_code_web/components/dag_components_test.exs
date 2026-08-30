@@ -153,6 +153,45 @@ defmodule IexCodeWeb.DagComponentsTest do
     refute html =~ "text-cyan-300"
   end
 
+  test "reserves live tone for active or failed DAG states" do
+    projection = %{
+      engine: "dag_v1",
+      available?: true,
+      summary: %{},
+      layers: [
+        for status <- ~w(blocked paused retrying) do
+          %{
+            id: status,
+            key: status,
+            title: String.capitalize(status),
+            kind: "task",
+            status: status,
+            progress: 25,
+            attempt: 0,
+            max_attempts: 1,
+            depends_on: []
+          }
+        end
+      ]
+    }
+
+    html = render_component(&DagComponents.dag_projection/1, projection: projection)
+    document = LazyHTML.from_fragment(html)
+
+    for status <- ~w(blocked paused retrying) do
+      node = LazyHTML.query(document, "#dag-node-#{status}-desktop")
+
+      for selector <- [".dag-status-dot", ".dag-status-badge", ".dag-progress-fill"] do
+        classes =
+          node |> LazyHTML.query(selector) |> LazyHTML.attribute("class")
+
+        classes = if(is_binary(classes), do: classes, else: Enum.join(classes || [], " "))
+
+        refute classes =~ "--sf-live", "#{status} #{selector} should remain neutral"
+      end
+    end
+  end
+
   test "fails closed honestly and suppresses controls when scheduler is unavailable" do
     projection = %{
       engine: "dag_v1",

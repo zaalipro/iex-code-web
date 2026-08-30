@@ -265,6 +265,22 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
     assert rule(css, ".sf-dag-projection summary") =~ "min-height: 44px"
   end
 
+  test "research focus planes stay flat after the shared focus-surface cascade", %{css: css} do
+    flat_planes =
+      css_block(
+        css,
+        "#instrument-workbench-research .sf-focus-surface.sf-workbench-primary-field,\n#instrument-workbench-research .sf-focus-surface.sf-workbench-signal-panel"
+      )
+
+    assert flat_planes =~ "border: 0"
+    assert flat_planes =~ "border-radius: 0"
+    assert flat_planes =~ "box-shadow: none"
+
+    {research_offset, _} = :binary.match(css, "#instrument-workbench-research .sf-focus-surface")
+    {shared_offset, _} = :binary.match(css, ".sf-focus-surface {")
+    assert research_offset > shared_offset
+  end
+
   defp sha256(path) do
     path
     |> File.read!()
