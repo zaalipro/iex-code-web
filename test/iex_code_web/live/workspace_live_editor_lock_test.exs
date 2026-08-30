@@ -44,7 +44,14 @@ defmodule IexCodeWeb.WorkspaceLiveEditorLockTest do
 
     assert has_element?(view, "#editor-lock-ribbon")
     assert render(view) =~ "Your changes are still in the editor"
-    assert render(view) =~ "Unsaved Changes"
+    assert render(view) =~ "Unsaved changes"
+
+    render_click(view, "toggle_files_focus_mode")
+    assert has_element?(view, "#files-focus-mode-toggle[aria-pressed='true']")
+    assert has_element?(view, "#editor-lock-ribbon")
+    assert has_element?(view, "#code-editor-textarea[readonly]")
+    assert has_element?(view, "#save-file-btn[disabled]")
+    assert has_element?(view, "#retry-file-lock-btn")
   end
 
   test "retry reflects release and a subsequent save acquires and releases a short file lock", %{

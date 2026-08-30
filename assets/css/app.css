@@ -3024,6 +3024,46 @@
 .sf-chat-jump-sheet { padding-bottom: env(safe-area-inset-bottom); }
 .sf-chat-jump-sheet .sf-sheet-scroll { max-height: min(68dvh, 32rem); }
 
+/* File Atlas workbench: matte surfaces, tactile controls, and bounded panes. */
+.sf-file-atlas {
+  background: var(--sf-instrument);
+  color: var(--sf-text-primary);
+}
+.sf-file-atlas-tree,
+.sf-file-atlas-tabs,
+.sf-file-atlas-toolbar {
+  background: var(--sf-instrument-raised);
+}
+.sf-file-atlas-editor,
+.sf-code-surface { background: var(--sf-canvas-deep); }
+.sf-file-atlas-filter {
+  border: 1px solid var(--sf-hairline);
+  background: var(--sf-instrument);
+  color: var(--sf-text-primary);
+}
+.sf-file-atlas-filter:focus { border-color: var(--sf-live-mark); outline: 2px solid color-mix(in srgb, var(--sf-live-mark) 35%, transparent); }
+.sf-file-atlas-file:hover { background: var(--sf-raised-control); }
+.sf-file-atlas-empty { color: var(--sf-text-secondary); }
+.sf-file-atlas-dirty {
+  border: 1px solid color-mix(in srgb, var(--sf-live-mark) 55%, var(--sf-hairline));
+  color: var(--sf-live-text);
+  background: color-mix(in srgb, var(--sf-live-mark) 10%, transparent);
+}
+.sf-file-atlas-signals { padding: 1.15rem; }
+.sf-file-atlas-signal-list { display: grid; gap: .85rem; margin-top: 1rem; }
+.sf-file-atlas-signal { border-top: 1px solid var(--sf-hairline); padding-top: .7rem; }
+.sf-file-atlas-signal dt { color: var(--sf-text-secondary); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
+.sf-file-atlas-signal dd { margin-top: .25rem; color: var(--sf-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; overflow-wrap: anywhere; }
+#file-atlas-primary-field[data-files-focus-mode="true"] .sf-file-atlas-tree { width: 19rem; }
+@media (max-width: 639px) {
+  #file-atlas-primary-field[data-files-focus-mode="true"] .sf-file-atlas-tree { width: 100%; }
+  .sf-file-atlas-tree { max-height: 42%; }
+  .sf-file-atlas-editor { min-height: 20rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #instrument-workbench-files *, #instrument-workbench-files *::before, #instrument-workbench-files *::after { transition: none !important; animation: none !important; }
+}
+
 @media (max-width: 639px) {
   #instrument-workbench-chat { border: 0; border-radius: 0; }
   #instrument-workbench-chat .sf-workbench-header { padding: 1rem; }

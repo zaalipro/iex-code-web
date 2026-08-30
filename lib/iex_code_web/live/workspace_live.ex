@@ -296,7 +296,10 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:expanded_folders, all_directory_paths(files))
       |> assign(:files_loaded?, false)
       |> assign(:files_more?, false)
+      |> assign(:files_can_load_more?, false)
       |> assign(:file_limit, @file_page_size)
+      |> assign(:files_focus_mode?, false)
+      |> assign(:pending_file_confirmation, nil)
       # Interactive Diff assigns (real git state; populated by refresh_git_state below)
       |> assign(:diff_text, "")
       |> assign(:diff_truncated?, false)
@@ -660,6 +663,10 @@ defmodule IexCodeWeb.WorkspaceLive do
                   if(project_changed?, do: false, else: socket.assigns.files_more?)
                 )
                 |> assign(
+                  :files_can_load_more?,
+                  if(project_changed?, do: false, else: socket.assigns.files_can_load_more?)
+                )
+                |> assign(
                   :file_limit,
                   if(project_changed?, do: @file_page_size, else: socket.assigns.file_limit)
                 )
@@ -683,6 +690,11 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:workspace_search_form, to_form(%{"query" => ""}))
                 |> assign(:file_filter, "")
                 |> assign(:file_filter_form, to_form(%{"filter" => ""}))
+                |> assign(:pending_file_confirmation, nil)
+                |> assign(
+                  :files_focus_mode?,
+                  if(project_changed?, do: false, else: socket.assigns.files_focus_mode?)
+                )
                 |> assign(:operations, operations)
                 |> assign(:resume_instrument, nil)
                 |> assign(:terminal_running?, terminal_status in [:starting, :ready, :running])
@@ -1533,16 +1545,21 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("toggle_folder", %{"path" => path}, socket) do
-    expanded = socket.assigns.expanded_folders || MapSet.new()
+    with {:ok, canonical} <- canonical_file_identity(socket, path),
+         true <- File.dir?(Path.join(socket.assigns.project.root_path, canonical)) do
+      expanded = socket.assigns.expanded_folders || MapSet.new()
 
-    new_expanded =
-      if MapSet.member?(expanded, path) do
-        MapSet.delete(expanded, path)
-      else
-        MapSet.put(expanded, path)
-      end
+      new_expanded =
+        if MapSet.member?(expanded, canonical) do
+          MapSet.delete(expanded, canonical)
+        else
+          MapSet.put(expanded, canonical)
+        end
 
-    {:noreply, assign(socket, :expanded_folders, new_expanded)}
+      {:noreply, assign(socket, :expanded_folders, new_expanded)}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   @impl true
@@ -1610,17 +1627,27 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_file", %{"path" => rel_path}, socket) do
-    socket =
-      socket
-      |> open_file_buffer(rel_path)
-      |> assign(:active_tab, "files")
-      |> rebuild_instrument_summaries()
+    case open_file_buffer(socket, rel_path) do
+      {:ok, socket} ->
+        socket =
+          socket
+          |> assign(:active_tab, "files")
+          |> rebuild_instrument_summaries()
 
-    if socket.assigns.active_view == "files" do
-      {:noreply, socket}
-    else
-      {:noreply, navigate_workspace_socket(socket, "files")}
+        if socket.assigns.active_view == "files" do
+          {:noreply, socket}
+        else
+          {:noreply, navigate_workspace_socket(socket, "files")}
+        end
+
+      {:error, socket} ->
+        {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_event("toggle_files_focus_mode", _params, socket) do
+    {:noreply, update(socket, :files_focus_mode?, &(!&1))}
   end
 
   @impl true
@@ -1726,30 +1753,102 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("request_revert_file_buffer", _params, socket) do
+    case current_dirty_file(socket) do
+      {:ok, path} ->
+        {:noreply,
+         socket
+         |> assign(:pending_file_confirmation, %{
+           kind: :revert,
+           project_id: socket.assigns.project.id,
+           session_id: socket.assigns.session.id,
+           path: path,
+           return_id: "file-buffer-revert-trigger"
+         })}
+
+      :error ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("cancel_file_confirmation", _params, socket),
+    do: {:noreply, assign(socket, :pending_file_confirmation, nil)}
+
   def handle_event("revert_file_buffer", _params, socket) do
-    orig = socket.assigns.file_content || ""
-    file_path = socket.assigns.selected_file
+    case socket.assigns.pending_file_confirmation do
+      %{kind: :revert, project_id: project_id, session_id: session_id, path: path}
+      when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
+        case current_dirty_file(socket) do
+          {:ok, ^path} ->
+            orig =
+              socket.assigns.open_buffers
+              |> Enum.find(&(&1.path == path))
+              |> Map.get(:content, socket.assigns.file_content || "")
 
-    buffers =
-      Enum.map(socket.assigns.open_buffers, fn b ->
-        if b.path == file_path do
-          %{b | dirty_content: orig, dirty?: false}
-        else
-          b
+            buffers =
+              Enum.map(socket.assigns.open_buffers, fn b ->
+                if b.path == path, do: %{b | dirty_content: orig, dirty?: false}, else: b
+              end)
+
+            {:noreply,
+             socket
+             |> assign(:pending_file_confirmation, nil)
+             |> assign(:dirty_content, orig)
+             |> assign(:file_content, orig)
+             |> assign(:is_dirty?, false)
+             |> assign(:open_buffers, buffers)
+             |> rebuild_instrument_summaries()
+             |> put_flash(:info, "Reverted unsaved edits in #{path}")}
+
+          _ ->
+            {:noreply, assign(socket, :pending_file_confirmation, nil)}
         end
-      end)
 
-    {:noreply,
-     socket
-     |> assign(:dirty_content, orig)
-     |> assign(:is_dirty?, false)
-     |> assign(:open_buffers, buffers)
-     |> rebuild_instrument_summaries()
-     |> put_flash(:info, "Reverted unsaved edits in #{file_path}")}
+      _ ->
+        {:noreply, assign(socket, :pending_file_confirmation, nil)}
+    end
   end
 
   @impl true
   def handle_event("close_file_buffer", %{"path" => path}, socket) do
+    with {:ok, canonical} <- canonical_file_identity(socket, path),
+         true <- Enum.any?(socket.assigns.open_buffers, &(&1.path == canonical)) do
+      if Enum.any?(socket.assigns.open_buffers, &(&1.path == canonical and &1.dirty?)) do
+        {:noreply,
+         assign(socket, :pending_file_confirmation, %{
+           kind: :close,
+           project_id: socket.assigns.project.id,
+           session_id: socket.assigns.session.id,
+           path: canonical,
+           return_id: file_buffer_close_id(canonical)
+         })}
+      else
+        {:noreply, close_clean_file_buffer(socket, canonical)}
+      end
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("close_file_buffer", _params, socket) do
+    case socket.assigns.pending_file_confirmation do
+      %{kind: :close, project_id: project_id, session_id: session_id, path: path}
+      when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
+        case current_open_file(socket, path) do
+          {:ok, %{dirty?: true}} ->
+            {:noreply,
+             close_clean_file_buffer(assign(socket, :pending_file_confirmation, nil), path)}
+
+          _ ->
+            {:noreply, assign(socket, :pending_file_confirmation, nil)}
+        end
+
+      _ ->
+        {:noreply, assign(socket, :pending_file_confirmation, nil)}
+    end
+  end
+
+  defp close_clean_file_buffer(socket, path) do
     buffers = Enum.reject(socket.assigns.open_buffers, &(&1.path == path))
 
     {selected, content, dirty_content, is_dirty} =
@@ -1766,14 +1865,13 @@ defmodule IexCodeWeb.WorkspaceLive do
          socket.assigns.is_dirty?}
       end
 
-    {:noreply,
-     socket
-     |> assign(:open_buffers, buffers)
-     |> assign(:selected_file, selected)
-     |> assign(:file_content, content)
-     |> assign(:dirty_content, dirty_content)
-     |> assign(:is_dirty?, is_dirty)
-     |> rebuild_instrument_summaries()}
+    socket
+    |> assign(:open_buffers, buffers)
+    |> assign(:selected_file, selected)
+    |> assign(:file_content, content)
+    |> assign(:dirty_content, dirty_content)
+    |> assign(:is_dirty?, is_dirty)
+    |> rebuild_instrument_summaries()
   end
 
   @impl true
@@ -1787,8 +1885,12 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("load_more_files", _params, socket) do
-    next_limit = min(socket.assigns.file_limit + @file_page_size, @file_retained_limit)
-    {:noreply, load_workspace_files(socket, next_limit) |> rebuild_instrument_summaries()}
+    if socket.assigns.files_can_load_more? do
+      next_limit = min(socket.assigns.file_limit + @file_page_size, @file_retained_limit)
+      {:noreply, load_workspace_files(socket, next_limit) |> rebuild_instrument_summaries()}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -5349,6 +5451,8 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:show_edit_scheduled_task_modal, false)
     |> assign(:pending_calendar_task_delete, nil)
     |> assign(:pending_git_confirmation, nil)
+    |> assign(:pending_file_confirmation, nil)
+    |> assign(:files_focus_mode?, false)
     |> assign(:open_buffers, [])
     |> assign(:active_editor_path, nil)
     |> assign(:active_editor_content, nil)
@@ -5678,8 +5782,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     assign(socket, :instrument_summaries, summaries)
   end
 
-  defp bounded_git_relation(_status, error) when not is_nil(error), do: "Git unavailable"
-
   defp bounded_git_relation(nil, _error), do: nil
 
   defp bounded_git_relation(status, _error) do
@@ -5690,7 +5792,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     total = staged + unstaged + untracked + conflicted
 
     cond do
-      Map.get(status, :truncated?, false) -> "Git status truncated"
+      Map.get(status, :truncated?, false) -> "Bounded Git status"
       total == 0 -> "Git clean"
       true -> "Git · #{total} #{if(total == 1, do: "change", else: "changes")}"
     end
@@ -5830,6 +5932,11 @@ defmodule IexCodeWeb.WorkspaceLive do
         else: socket
 
     socket =
+      if previous_view == "files" and view != "files",
+        do: assign(socket, :pending_file_confirmation, nil),
+        else: socket
+
+    socket =
       if previous_view == "calendar" and view != "calendar" do
         socket
         |> assign(:pending_calendar_task_delete, nil)
@@ -5884,6 +5991,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:pending_task_confirmation, nil)
     |> assign(:pending_session_delete, nil)
     |> assign(:pending_git_confirmation, nil)
+    |> assign(:pending_file_confirmation, nil)
   end
 
   defp bounded_confirmation_title(title) when is_binary(title) do
@@ -6091,41 +6199,85 @@ defmodule IexCodeWeb.WorkspaceLive do
   # -- File buffer and command palette helpers ---------------------------------
 
   defp open_file_buffer(socket, rel_path) do
+    with {:ok, canonical} <- canonical_file_identity(socket, rel_path) do
+      case current_open_file(socket, canonical) do
+        {:ok, buffer} ->
+          {:ok,
+           socket
+           |> assign(:selected_file, canonical)
+           |> assign(:file_content, buffer.content)
+           |> assign(:dirty_content, buffer.dirty_content)
+           |> assign(:is_dirty?, buffer.dirty?)}
+
+        :error ->
+          {:ok, full_path} = WorkspacePath.resolve(socket.assigns.project.root_path, canonical)
+
+          content =
+            case File.read(full_path) do
+              {:ok, text} -> text
+              {:error, reason} -> "Could not read file: #{inspect(reason)}"
+            end
+
+          buffer = %{path: canonical, content: content, dirty_content: content, dirty?: false}
+
+          {:ok,
+           socket
+           |> assign(:open_buffers, socket.assigns.open_buffers ++ [buffer])
+           |> assign(:selected_file, canonical)
+           |> assign(:file_content, content)
+           |> assign(:dirty_content, content)
+           |> assign(:is_dirty?, false)}
+      end
+    else
+      _ -> {:error, put_flash(socket, :error, "Invalid file path")}
+    end
+  end
+
+  defp canonical_file_identity(socket, path) when is_binary(path) do
     root = socket.assigns.project.root_path
 
-    case WorkspacePath.resolve(root, rel_path) do
-      {:ok, full_path} ->
-        content =
-          case File.read(full_path) do
-            {:ok, text} -> text
-            {:error, reason} -> "Could not read file: #{inspect(reason)}"
-          end
-
-        # Add or select open buffer
-        buffers = socket.assigns.open_buffers
-
-        updated_buffers =
-          if Enum.any?(buffers, &(&1.path == rel_path)) do
-            buffers
-          else
-            buffers ++
-              [%{path: rel_path, content: content, dirty_content: content, dirty?: false}]
-          end
-
-        active_buffer = Enum.find(updated_buffers, &(&1.path == rel_path))
-        is_dirty = active_buffer && active_buffer.dirty?
-        dirty_text = (active_buffer && active_buffer.dirty_content) || content
-
-        socket
-        |> assign(:open_buffers, updated_buffers)
-        |> assign(:selected_file, rel_path)
-        |> assign(:file_content, content)
-        |> assign(:dirty_content, dirty_text)
-        |> assign(:is_dirty?, is_dirty)
-
-      {:error, _reason} ->
-        put_flash(socket, :error, "Invalid file path")
+    with true <- path != "" and Path.type(path) == :relative,
+         {:ok, canonical_root} <- WorkspacePath.resolve(root, ""),
+         {:ok, full_path} <- WorkspacePath.resolve(root, path),
+         relative <- Path.relative_to(full_path, canonical_root),
+         true <- relative not in ["", "."] and Path.type(relative) == :relative,
+         false <- ".." in Path.split(relative) do
+      {:ok, relative}
+    else
+      _ -> {:error, :invalid_path}
     end
+  end
+
+  defp canonical_file_identity(_socket, _path), do: {:error, :invalid_path}
+
+  defp current_open_file(socket, path) do
+    case Enum.find(socket.assigns.open_buffers, &(&1.path == path)) do
+      nil -> :error
+      buffer -> {:ok, buffer}
+    end
+  end
+
+  defp current_dirty_file(socket) do
+    path = socket.assigns.selected_file
+
+    with path when is_binary(path) <- path,
+         {:ok, canonical} <- canonical_file_identity(socket, path),
+         true <- canonical == path,
+         {:ok, %{dirty?: true}} <- current_open_file(socket, canonical) do
+      {:ok, canonical}
+    else
+      _ -> :error
+    end
+  end
+
+  defp file_buffer_close_id(path) do
+    digest =
+      :sha256
+      |> :crypto.hash(path)
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 8)
+
+    "close-file-buffer-#{digest}"
   end
 
   # Editor writes intentionally use the low-level gateway form so the lock can
@@ -9043,7 +9195,8 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:project_files, page.files)
     |> assign(:files, page.files)
     |> assign(:files_loaded?, true)
-    |> assign(:files_more?, page.more? and limit < @file_retained_limit)
+    |> assign(:files_more?, page.more?)
+    |> assign(:files_can_load_more?, page.more? and limit < @file_retained_limit)
     |> assign(:file_limit, limit)
     |> assign(:expanded_folders, expanded)
   end

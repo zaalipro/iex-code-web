@@ -148,6 +148,7 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     # not retain a full tree while the user is working in another tab.
     assert live_assigns(view).project_files == []
     refute live_assigns(view).files_loaded?
+    assert has_element?(view, "#instrument-card-files", "Standby · files not loaded")
     render_click(view, "switch_tab", %{"tab" => "files"})
     files = live_assigns(view).project_files
     assert live_assigns(view).files_loaded?
@@ -319,6 +320,44 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
 
     assert calendar_grid =~ "August target task"
     refute calendar_grid =~ "September same-day task"
+  end
+
+  test "file atlas workbench exposes bounded inventory and focus controls", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=files")
+    assert has_element?(view, "#instrument-workbench-files")
+    assert has_element?(view, "#files-focus-mode-toggle[aria-pressed='false']")
+    assert has_element?(view, "#file-atlas-primary-field[data-files-focus-mode='false']")
+    assert has_element?(view, "#instrument-workbench-files-status", "No files discovered")
+    assert has_element?(view, "#file-tree-empty", "No files discovered")
+
+    File.mkdir_p!(Path.join(path, "bulk"))
+
+    for index <- 1..501 do
+      File.write!(
+        Path.join(path, "bulk/#{String.pad_leading(to_string(index), 4, "0")}.txt"),
+        "x"
+      )
+    end
+
+    render_click(view, "refresh_files")
+    assigns = live_assigns(view)
+    assert length(assigns.project_files) == 500
+    assert assigns.files_more?
+    assert assigns.files_can_load_more?
+    assert has_element?(view, "#instrument-workbench-files-status", "500+ files indexed")
+    assert has_element?(view, "#load-more-files")
+
+    render_click(view, "load_more_files")
+    assigns = live_assigns(view)
+    assert length(assigns.project_files) == 501
+    refute assigns.files_more?
+    refute assigns.files_can_load_more?
+    refute has_element?(view, "#load-more-files")
   end
 
   defp live_assigns(view) do

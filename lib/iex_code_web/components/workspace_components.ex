@@ -887,6 +887,9 @@ defmodule IexCodeWeb.WorkspaceComponents do
   attr :editor_lock, :map, default: nil
   attr :auto_save, :boolean, default: false
   attr :more_files, :boolean, default: false
+  attr :files_omitted, :boolean, default: false
+  attr :inventory_loaded, :boolean, default: true
+  attr :inventory_status, :string, default: nil
 
   def file_explorer(assigns) do
     has_filter = assigns.filter != "" and not is_nil(assigns.filter)
@@ -921,36 +924,54 @@ defmodule IexCodeWeb.WorkspaceComponents do
     ~H"""
     <div
       id="file-explorer-container"
-      class="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#0a0d12] md:flex-row"
+      class="sf-file-atlas flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden md:flex-row"
     >
       <!-- Left Tree / List Navigation -->
       <aside
         id="file-tree-panel"
         aria-label="Project files"
-        class="flex h-[min(38%,20rem)] w-full shrink-0 flex-col overflow-hidden border-b border-[#21262d] bg-[#11151c] md:h-full md:w-64 md:border-r md:border-b-0 xl:w-72"
+        class="sf-file-atlas-tree flex h-[min(38%,20rem)] w-full shrink-0 flex-col overflow-hidden border-b border-[var(--sf-hairline)] md:h-full md:w-64 md:border-r md:border-b-0 xl:w-72"
       >
         <!-- Search Header -->
-        <div class="p-3 border-b border-[#21262d]">
+        <div class="p-3 border-b border-[var(--sf-hairline)]">
           <.form
             for={@filter_form}
             id="file-filter-form"
             phx-change="filter_files"
             class="relative"
           >
-            <input
+            <.input
+              field={@filter_form[:filter]}
+              id="file-filter-input"
               type="text"
               name="filter"
-              value={@filter}
               placeholder="Search files (e.g. .ex)..."
-              class="w-full bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-1.5 pl-8 text-xs text-white placeholder-gray-500 font-mono focus:border-cyan-500 focus:outline-none"
+              autocomplete="off"
+              class="sf-file-atlas-filter w-full min-h-11 rounded-xl px-3 py-1.5 pl-8 text-xs font-mono"
             />
-            <.icon name="hero-magnifying-glass" class="w-4 h-4 text-gray-400 absolute left-2.5 top-2" />
+            <.icon
+              name="hero-magnifying-glass"
+              class="w-4 h-4 text-[var(--sf-text-secondary)] absolute left-2.5 top-3.5"
+            />
           </.form>
-          <div class="flex items-center justify-between mt-2 px-1 text-[11px] font-mono text-gray-400">
-            <span>{if @has_filter, do: length(@tree_items), else: length(@files)} files</span>
+          <div class="flex items-center justify-between mt-2 px-1 text-[11px] font-mono text-[var(--sf-text-secondary)]">
+            <span>
+              <%= cond do %>
+                <% !@inventory_loaded -> %>
+                  Standby · files not loaded
+                <% @has_filter -> %>
+                  {length(@tree_items)} retained matches
+                <% @files_omitted -> %>
+                  500+ files indexed
+                <% true -> %>
+                  {length(@files)} {if(length(@files) == 1, do: "file", else: "files")} indexed
+              <% end %>
+            </span>
             <button
+              id="refresh-files"
+              type="button"
               phx-click="refresh_files"
-              class="hover:text-white transition-smooth flex items-center gap-1"
+              class="sf-control min-h-11 px-2 text-xs"
             >
               <.icon name="hero-arrow-path" class="w-3 h-3" /> Refresh
             </button>
@@ -958,7 +979,19 @@ defmodule IexCodeWeb.WorkspaceComponents do
         </div>
 
         <!-- Files List & Hierarchical Tree -->
-        <div class="flex-1 overflow-y-auto p-2 space-y-0.5 font-mono text-xs">
+        <div id="file-tree-list" class="flex-1 overflow-y-auto p-2 space-y-0.5 font-mono text-xs">
+          <%= if !@inventory_loaded do %>
+            <div id="file-tree-standby" class="sf-file-atlas-empty p-4 text-sm">
+              Load the project inventory to inspect files.
+            </div>
+          <% end %>
+          <%= if @inventory_loaded and @tree_items == [] do %>
+            <div id="file-tree-empty" class="sf-file-atlas-empty p-4 text-sm">
+              {if @has_filter,
+                do: "No retained matches for this filter.",
+                else: "No files discovered."}
+            </div>
+          <% end %>
           <%= for item <- @tree_items do %>
             <%= if item.type == :dir do %>
               <button
@@ -966,17 +999,18 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 phx-click="toggle_folder"
                 phx-value-path={item.path}
                 style={"padding-left: #{item.depth * 12 + 6}px"}
-                class="w-full text-left py-1 pr-2 rounded-lg truncate transition-smooth flex items-center gap-1.5 text-gray-400 hover:text-white hover:bg-[#161b22] group"
+                aria-label={"Toggle folder #{item.path}"}
+                class="w-full text-left py-1 pr-2 rounded-lg truncate transition-smooth flex items-center gap-1.5 text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)] hover:bg-[var(--sf-instrument-raised)] group"
               >
                 <.icon
                   name={if item.expanded, do: "hero-chevron-down", else: "hero-chevron-right"}
-                  class="w-3 h-3 text-gray-500 group-hover:text-gray-300 shrink-0"
+                  class="w-3 h-3 text-[var(--sf-text-secondary)] group-hover:text-[var(--sf-text-primary)] shrink-0"
                 />
                 <.icon
                   name={if item.expanded, do: "hero-folder-open", else: "hero-folder"}
-                  class="w-3.5 h-3.5 text-amber-400 shrink-0"
+                  class="w-3.5 h-3.5 text-[var(--sf-live-text)] shrink-0"
                 />
-                <span class="truncate font-medium text-gray-300 group-hover:text-white">{item.name}</span>
+                <span class="truncate font-medium text-[var(--sf-text-primary)] group-hover:text-[var(--sf-text-primary)]">{item.name}</span>
               </button>
             <% else %>
               <% is_open = Enum.any?(@open_buffers, &(&1.path == item.path))
@@ -988,29 +1022,35 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 phx-value-path={item.path}
                 style={"padding-left: #{if @has_filter, do: 8, else: item.depth * 12 + 16}px"}
                 class={[
-                  "w-full text-left py-1.5 pr-2.5 rounded-lg truncate transition-smooth flex items-center justify-between gap-2 group",
+                  "sf-file-atlas-file w-full min-h-11 text-left py-1.5 pr-2.5 rounded-lg truncate transition-smooth flex items-center justify-between gap-2 group",
                   @selected_file == item.path &&
-                    "bg-[#21262d] text-cyan-300 font-medium shadow-sm border border-[#30363d]",
+                    "bg-[var(--sf-raised-control)] text-[var(--sf-topology-text)] font-medium shadow-sm border border-[var(--sf-hairline)]",
                   @selected_file != item.path &&
-                    "text-gray-400 hover:text-gray-200 hover:bg-[#161b22]"
+                    "text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)] hover:bg-[var(--sf-instrument-raised)]"
                 ]}
               >
                 <div class="flex items-center gap-2 truncate">
                   <.icon
                     name={file_icon(item.name)}
-                    class={["w-3.5 h-3.5 shrink-0", @selected_file == item.path && "text-cyan-400"]}
+                    class={[
+                      "w-3.5 h-3.5 shrink-0",
+                      @selected_file == item.path && "text-[var(--sf-topology-text)]"
+                    ]}
                   />
                   <span class="truncate">{item.name}</span>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                   <%= if is_buffer_dirty do %>
                     <span
-                      class="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_4px_rgba(245,158,11,0.8)]"
+                      class="w-2 h-2 rounded-full bg-[var(--sf-live-mark)]"
                       title="Unsaved changes"
                     ></span>
                   <% else %>
                     <%= if is_open do %>
-                      <span class="w-1.5 h-1.5 rounded-full bg-cyan-400/60" title="Open tab"></span>
+                      <span
+                        class="w-1.5 h-1.5 rounded-full bg-[var(--sf-topology-text)]"
+                        title="Open tab"
+                      ></span>
                     <% end %>
                   <% end %>
                 </div>
@@ -1022,7 +1062,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
             id="load-more-files"
             type="button"
             phx-click="load_more_files"
-            class="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#30363d] bg-[#161b22] px-3 py-2 text-[11px] font-semibold text-cyan-300 transition-smooth hover:border-cyan-500/50 hover:text-cyan-200"
+            class="sf-control mt-2 flex min-h-11 w-full items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-semibold"
           >
             <.icon name="hero-chevron-down" class="h-3.5 w-3.5" /> Load more files
           </button>
@@ -1032,17 +1072,19 @@ defmodule IexCodeWeb.WorkspaceComponents do
       <!-- Right Interactive Code Editor Viewport -->
       <div
         id="file-editor-panel"
-        class="flex min-h-0 min-w-0 flex-1 flex-col bg-[#0a0d12] overflow-hidden"
+        class="sf-file-atlas-editor flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       >
         <%= if @selected_file do %>
           <!-- Open Buffer Tabs Bar -->
-          <div class="flex items-center bg-[#11151c] border-b border-[#21262d] overflow-x-auto px-2 pt-1.5 gap-1 shrink-0">
+          <div class="sf-file-atlas-tabs flex items-center border-b border-[var(--sf-hairline)] overflow-x-auto px-2 pt-1.5 gap-1 shrink-0">
             <%= for tab <- @open_buffers do %>
               <% is_active = tab.path == @selected_file %>
               <div class={[
-                "flex items-center gap-2 px-3 py-1.5 rounded-t-xl text-xs font-mono transition-smooth border-t border-x border-[#21262d] group shrink-0",
-                is_active && "bg-[#0a0d12] text-cyan-300 font-medium border-b-0",
-                !is_active && "bg-[#161b22] text-gray-400 hover:text-gray-200 hover:bg-[#1c2128]"
+                "flex items-center gap-2 px-3 py-1.5 rounded-t-xl text-xs font-mono transition-smooth border-t border-x border-[var(--sf-hairline)] group shrink-0",
+                is_active &&
+                  "bg-[var(--sf-canvas-deep)] text-[var(--sf-topology-text)] font-medium border-b-0",
+                !is_active &&
+                  "bg-[var(--sf-instrument-raised)] text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)] hover:bg-[var(--sf-raised-control)]"
               ]}>
                 <button
                   type="button"
@@ -1055,15 +1097,19 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 </button>
 
                 <%= if tab.dirty? do %>
-                  <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="Unsaved changes">●</span>
+                  <span
+                    class="w-2 h-2 rounded-full bg-[var(--sf-live-mark)] shrink-0"
+                    title="Unsaved changes"
+                  >●</span>
                 <% end %>
 
                 <button
                   type="button"
                   phx-click="close_file_buffer"
                   phx-value-path={tab.path}
+                  id={"close-file-buffer-#{Base.encode16(:crypto.hash(:sha256, tab.path), case: :lower) |> binary_part(0, 8)}"}
                   aria-label={"Close #{Path.basename(tab.path)} buffer"}
-                  class="text-gray-500 hover:text-rose-400 p-0.5 rounded transition-smooth ml-1 shrink-0"
+                  class="sf-control min-h-11 min-w-11 text-[var(--sf-text-secondary)] ml-1 shrink-0"
                   title="Close buffer"
                 >
                   <.icon name="hero-x-mark" class="w-3 h-3" />
@@ -1073,13 +1119,16 @@ defmodule IexCodeWeb.WorkspaceComponents do
           </div>
 
           <!-- Active File Toolbar -->
-          <div class="file-editor-toolbar p-2.5 border-b border-[#21262d] bg-[#161b22] flex flex-wrap items-center justify-between gap-2 shrink-0 font-mono text-xs">
+          <div class="sf-file-atlas-toolbar p-2.5 border-b border-[var(--sf-hairline)] flex flex-wrap items-center justify-between gap-2 shrink-0 font-mono text-xs">
             <div class="flex items-center gap-2 min-w-0">
-              <.icon name={file_icon(@selected_file)} class="w-4 h-4 text-cyan-400 shrink-0" />
-              <span class="text-white font-semibold truncate">{@selected_file}</span>
+              <.icon
+                name={file_icon(@selected_file)}
+                class="w-4 h-4 text-[var(--sf-topology-text)] shrink-0"
+              />
+              <span class="text-[var(--sf-text-primary)] font-semibold truncate">{@selected_file}</span>
               <%= if @is_dirty do %>
-                <span class="text-[10px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded font-semibold shrink-0">
-                  ● Unsaved Changes
+                <span class="sf-file-atlas-dirty text-[10px] px-2 py-0.5 rounded font-semibold shrink-0">
+                  Unsaved changes
                 </span>
               <% end %>
             </div>
@@ -1088,8 +1137,10 @@ defmodule IexCodeWeb.WorkspaceComponents do
             <div class="flex max-w-full items-center gap-1.5 sm:gap-2 shrink-0 overflow-x-auto">
               <%= if @is_dirty do %>
                 <button
-                  phx-click="revert_file_buffer"
-                  class="px-2.5 py-1 bg-gray-700/40 hover:bg-gray-700/60 text-gray-300 border border-gray-600/30 rounded-lg text-xs font-mono transition-smooth flex items-center gap-1"
+                  id="file-buffer-revert-trigger"
+                  type="button"
+                  phx-click="request_revert_file_buffer"
+                  class="sf-control min-h-11 px-2.5 text-xs font-mono flex items-center gap-1"
                   title="Discard unsaved buffer edits"
                 >
                   <.icon name="hero-arrow-uturn-left" class="w-3.5 h-3.5" />
@@ -1099,17 +1150,18 @@ defmodule IexCodeWeb.WorkspaceComponents do
 
               <button
                 id="save-file-btn"
+                type="button"
                 phx-click="save_file"
                 disabled={@editor_locked?}
                 class={[
                   "px-3 py-1 rounded-lg text-xs font-mono font-semibold transition-smooth flex items-center gap-1.5",
                   @editor_locked? &&
-                    "cursor-not-allowed bg-rose-950/50 text-rose-300/60 border border-rose-500/20",
+                    "cursor-not-allowed bg-[color-mix(in_srgb,var(--sf-live-mark)_12%,transparent)] text-[var(--sf-live-text)]/60 border border-[var(--sf-live-mark)]",
                   @is_dirty &&
                     !@editor_locked? &&
-                    "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20",
+                    "bg-[var(--sf-success-mark)] hover:bg-[var(--sf-success-mark)] text-[var(--sf-text-primary)] shadow-[0_12px_30px_-18px_var(--sf-shadow)]",
                   !@is_dirty && !@editor_locked? &&
-                    "bg-[#21262d] text-gray-400 hover:text-gray-200"
+                    "bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                 ]}
                 title={
                   if(@editor_locked?,
@@ -1127,7 +1179,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 id="copy-file-btn"
                 phx-hook="CodeCopy"
                 data-code={@current_text}
-                class="px-2.5 py-1 bg-[#21262d] hover:bg-[#30363d] text-gray-200 rounded-lg text-xs font-mono transition-smooth flex items-center gap-1.5"
+                type="button"
+                class="sf-control min-h-11 px-2.5 text-xs font-mono flex items-center gap-1.5"
               >
                 <.icon name="hero-clipboard-document" class="w-3.5 h-3.5" />
                 <span class="hidden sm:inline">Copy</span>
@@ -1141,13 +1194,13 @@ defmodule IexCodeWeb.WorkspaceComponents do
               role="status"
               data-lock-state="foreign"
               data-lock-resource={@editor_lock.resource_type}
-              class="flex items-center justify-between gap-4 border-b border-rose-500/30 bg-rose-950/35 px-3 py-2 font-mono text-xs text-rose-100"
+              class="flex items-center justify-between gap-4 border-b border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_12%,transparent)] px-3 py-2 font-mono text-xs text-[var(--sf-text-primary)]"
             >
               <div class="flex min-w-0 items-center gap-2">
-                <.icon name="hero-lock-closed" class="h-4 w-4 shrink-0 text-rose-400" />
+                <.icon name="hero-lock-closed" class="h-4 w-4 shrink-0 text-[var(--sf-live-text)]" />
                 <span class="truncate">
                   Read-only while
-                  <strong class="text-rose-300">{workspace_lock_label(@editor_lock)}</strong>
+                  <strong class="text-[var(--sf-live-text)]">{workspace_lock_label(@editor_lock)}</strong>
                   holds the {editor_lock_label(@editor_lock)} lock. Your unsaved buffer is safe.
                 </span>
               </div>
@@ -1155,7 +1208,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 id="retry-file-lock-btn"
                 type="button"
                 phx-click="retry_file_lock"
-                class="shrink-0 rounded-lg border border-rose-400/30 bg-rose-400/10 px-2.5 py-1 font-semibold text-rose-200 transition hover:border-rose-300/60 hover:bg-rose-400/20"
+                class="shrink-0 rounded-lg border border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)] px-2.5 py-1 font-semibold text-[var(--sf-live-text)] transition hover:border-[var(--sf-live-mark)] hover:bg-rose-400/20"
               >
                 Retry access
               </button>
@@ -1167,10 +1220,10 @@ defmodule IexCodeWeb.WorkspaceComponents do
             id="code-editor-viewport"
             phx-hook=".CodeEditor"
             data-auto-save={to_string(@auto_save)}
-            class="flex-1 flex overflow-hidden bg-[#0a0d12] relative font-mono text-xs"
+            class="sf-code-surface flex-1 flex overflow-hidden relative font-mono text-xs"
           >
             <!-- Line Numbers Gutter -->
-            <div class="editor-gutter w-12 bg-[#0d1117] border-r border-[#21262d] py-3 pr-2 text-right text-gray-600 select-none overflow-hidden shrink-0 font-mono text-[11px] leading-relaxed">
+            <div class="editor-gutter w-12 border-r border-[var(--sf-hairline)] py-3 pr-2 text-right text-[var(--sf-text-secondary)] select-none overflow-hidden shrink-0 font-mono text-[11px] leading-relaxed">
             </div>
 
             <!-- Code Input Textarea -->
@@ -1184,8 +1237,9 @@ defmodule IexCodeWeb.WorkspaceComponents do
               readonly={@editor_locked?}
               aria-readonly={to_string(@editor_locked?)}
               class={[
-                "flex-1 bg-transparent border-0 p-3 text-gray-200 font-mono text-xs leading-relaxed focus:outline-none focus:ring-0 resize-none overflow-auto whitespace-pre tab-2",
-                @editor_locked? && "cursor-not-allowed bg-rose-950/5 text-gray-400"
+                "flex-1 bg-transparent border-0 p-3 text-[var(--sf-text-primary)] font-mono text-xs leading-relaxed focus:outline-none focus:ring-0 resize-none overflow-auto whitespace-pre tab-2",
+                @editor_locked? &&
+                  "cursor-not-allowed bg-[color-mix(in_srgb,var(--sf-live-mark)_5%,transparent)] text-[var(--sf-text-secondary)]"
               ]}
             ><%= @current_text %></textarea>
           </div>
@@ -1276,8 +1330,11 @@ defmodule IexCodeWeb.WorkspaceComponents do
             }
           </script>
         <% else %>
-          <div class="flex-1 flex flex-col items-center justify-center text-gray-500 font-mono text-xs space-y-2">
-            <.icon name="hero-folder-open" class="w-8 h-8 text-gray-600" />
+          <div
+            id="file-editor-empty"
+            class="flex-1 flex flex-col items-center justify-center text-[var(--sf-text-secondary)] font-mono text-xs space-y-2"
+          >
+            <.icon name="hero-folder-open" class="w-8 h-8 text-[var(--sf-text-secondary)]" />
             <p>Select a workspace file on the left to preview contents</p>
           </div>
         <% end %>

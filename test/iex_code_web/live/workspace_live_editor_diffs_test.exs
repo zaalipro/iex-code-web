@@ -39,6 +39,23 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       # Switch to files tab
       render_click(view, "switch_tab", %{"tab" => "files"})
 
+      document = view |> render() |> LazyHTML.from_fragment()
+
+      for selector <- [
+            "#instrument-workbench-files[data-workbench-surface='files']",
+            "#instrument-workbench-files-title",
+            "#instrument-workbench-files-status[role='status'][aria-live='polite']",
+            "#return-to-instrument-deck-files[data-phx-link='patch'][data-phx-link-state='replace']",
+            "#file-explorer-container",
+            "#file-tree-panel[aria-label='Project files']",
+            "#file-editor-panel",
+            "#file-filter-form[phx-change='filter_files']",
+            "#files-focus-mode-toggle[aria-pressed='false']",
+            "#prompt-form"
+          ] do
+        assert document |> LazyHTML.query(selector) |> Enum.count() == 1, selector
+      end
+
       html = render(view)
       assert html =~ "lib/iex_code/auth/user.ex"
       assert html =~ "lib/iex_code/auth/token.ex"
@@ -98,6 +115,24 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
                view,
                "#copy-file-btn[data-code*='defmodule IexCode.Engine.SampleWorker']"
              )
+
+      assert has_element?(view, "#files-selected-signal", "lib/sample_worker.ex")
+      assert has_element?(view, "#files-buffer-signal", "Saved")
+
+      render_click(view, "toggle_files_focus_mode")
+      assert has_element?(view, "#files-focus-mode-toggle[aria-pressed='true']")
+      assert has_element?(view, "#file-atlas-primary-field[data-files-focus-mode='true']")
+
+      for selector <- [
+            "#file-tree-panel:not([hidden]):not([inert]):not([aria-hidden='true'])",
+            "#file-filter-form",
+            "#file-editor-panel:not([hidden]):not([inert]):not([aria-hidden='true'])",
+            "#code-editor-textarea",
+            "#save-file-btn",
+            "#copy-file-btn"
+          ] do
+        assert has_element?(view, selector), selector
+      end
     end
 
     test "refreshes file tree when new files are created on disk", %{
@@ -138,6 +173,9 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       # Root directory traversal
       html3 = render_click(view, "select_file", %{"path" => "../../.ssh/id_rsa"})
       assert html3 =~ "Invalid file path"
+      assert has_element?(view, "#workspace-shell[data-active-view='deck']")
+      refute has_element?(view, "#instrument-workbench-files")
+      assert is_nil(live_assigns(view).selected_file)
     end
 
     test "gracefully handles missing or unreadable files without crashing", %{
@@ -178,27 +216,41 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       # 1. Select file
       render_click(view, "select_file", %{"path" => "lib/edit_demo.ex"})
       assert render(view) =~ "def original, do: 1"
-      refute render(view) =~ "Unsaved Changes"
+      refute has_element?(view, "#files-buffer-signal", "Unsaved changes")
 
       # 2. Edit content in buffer
       modified_content = "defmodule EditDemo do\n  def modified, do: 2\nend\n"
       render_change(view, "file_content_changed", %{"content" => modified_content})
       html = render(view)
-      assert html =~ "Unsaved Changes"
-      assert html =~ "Revert"
-      assert html =~ "Save"
+      assert html =~ "Unsaved changes"
+      assert has_element?(view, "#file-buffer-revert-trigger")
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
 
       # 3. Revert buffer back to disk state
+      render_click(view, "request_revert_file_buffer")
+      assert has_element?(view, "#file-buffer-revert-confirmation")
+
+      assert has_element?(
+               view,
+               "#file-buffer-revert-confirmation[data-sheet-close-event='cancel_file_confirmation'][data-sheet-return-id='file-buffer-revert-trigger'][data-sheet-background-id='workspace-shell']"
+             )
+
+      assert has_element?(view, "#file-buffer-revert-confirmation-dialog[role='dialog']")
+      render_click(view, "cancel_file_confirmation")
+      assert has_element?(view, "#code-editor-textarea")
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
+      render_click(view, "request_revert_file_buffer")
       render_click(view, "revert_file_buffer")
       html_reverted = render(view)
-      refute html_reverted =~ "Unsaved Changes"
+      refute html_reverted =~ "Unsaved changes"
       assert html_reverted =~ "def original, do: 1"
+      assert has_element?(view, "#files-buffer-signal", "Saved")
 
       # 4. Modify buffer again and save to disk
       render_change(view, "file_content_changed", %{"content" => modified_content})
       html_saved = render_click(view, "save_file", %{"content" => modified_content})
       assert html_saved =~ "Saved lib/edit_demo.ex"
-      refute render(view) =~ "Unsaved Changes"
+      refute render(view) =~ "Unsaved changes"
 
       # Verify disk file actually contains saved text
       full_disk_path = Path.join(path, "lib/edit_demo.ex")
@@ -221,6 +273,31 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
 
       render_click(view, "close_file_buffer", %{"path" => "lib/close_me.ex"})
       assert render(view) =~ "Select a workspace file on the left to preview contents"
+    end
+
+    test "reselecting a dirty buffer restores its stored original and dirty body", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      original = "original on disk\n"
+      dirty = "exact dirty editor text\n"
+      workspace_write_file(path, "lib/buffer_truth.ex", original)
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=files")
+
+      render_click(view, "select_file", %{"path" => "lib/buffer_truth.ex"})
+      render_change(view, "file_content_changed", %{"content" => dirty})
+      workspace_write_file(path, "lib/buffer_truth.ex", "externally changed\n")
+      render_click(view, "select_file", %{"path" => "lib/buffer_truth.ex"})
+
+      assigns = live_assigns(view)
+      assert assigns.file_content == original
+      assert assigns.dirty_content == dirty
+      assert assigns.is_dirty?
+
+      assert LazyHTML.query(view |> render() |> LazyHTML.from_fragment(), "#code-editor-textarea")
+             |> LazyHTML.text() =~ dirty
     end
   end
 
@@ -1506,6 +1583,12 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
 
   defp node_count(document, selector) do
     document |> LazyHTML.query(selector) |> LazyHTML.to_tree() |> length()
+  end
+
+  defp live_assigns(view) do
+    view.pid
+    |> :sys.get_state()
+    |> then(& &1.socket.assigns)
   end
 
   defp assert_confirmation_ops(view, host_id, target_id, action) do

@@ -2140,22 +2140,71 @@
           </script>
         <% end %>
 
-        <!-- TAB 6: FILES TREE EXPLORER & INLINE CODE EDITOR -->
-        <%= if @active_tab == "files" do %>
-          <.file_explorer
-            files={@project_files}
-            more_files={@files_more?}
-            filter={@file_filter}
-            filter_form={@file_filter_form}
-            expanded_folders={@expanded_folders}
-            selected_file={@selected_file}
-            file_content={@file_content}
-            dirty_content={@dirty_content}
-            is_dirty={@is_dirty?}
-            open_buffers={@open_buffers}
-            editor_lock={editor_lock(assigns)}
-            auto_save={@settings.auto_save == true}
-          />
+        <%!-- Instrument 07: File Atlas --%>
+        <%= if @active_view == "files" do %>
+          <% file_summary = @instrument_summaries["files"] %>
+          <.workbench_chassis
+            id="instrument-workbench-files"
+            surface="files"
+            index="07"
+            title="File Atlas"
+            status={file_summary.primary}
+            return_to={workspace_path(@workspace_route, "deck")}
+            return_instrument_id="instrument-card-files"
+          >
+            <:primary_action>
+              <button
+                id="files-focus-mode-toggle"
+                type="button"
+                phx-click="toggle_files_focus_mode"
+                aria-controls="file-atlas-primary-field"
+                aria-pressed={to_string(@files_focus_mode?)}
+                class="sf-control min-h-11 px-4 text-sm font-semibold"
+              >
+                <.icon name={if(@files_focus_mode?, do: "hero-arrows-pointing-in", else: "hero-arrows-pointing-out")} class="size-4" />
+                {if(@files_focus_mode?, do: "Exit focus", else: "Focus editor")}
+              </button>
+            </:primary_action>
+            <:primary_field>
+              <div
+                id="file-atlas-primary-field"
+                data-files-focus-mode={to_string(@files_focus_mode?)}
+                class="sf-file-atlas-field flex min-h-0 flex-1"
+              >
+                <.file_explorer
+                  files={@project_files}
+                  more_files={@files_can_load_more?}
+                  files_omitted={@files_more?}
+                  inventory_loaded={@files_loaded?}
+                  inventory_status={file_summary.primary}
+                  filter={@file_filter}
+                  filter_form={@file_filter_form}
+                  expanded_folders={@expanded_folders}
+                  selected_file={@selected_file}
+                  file_content={@file_content}
+                  dirty_content={@dirty_content}
+                  is_dirty={@is_dirty?}
+                  open_buffers={@open_buffers}
+                  editor_lock={editor_lock(assigns)}
+                  auto_save={@settings.auto_save == true}
+                />
+              </div>
+            </:primary_field>
+            <:signal_panel>
+              <div id="file-atlas-signal-panel" class="sf-file-atlas-signals">
+                <p class="sf-metadata">Current buffer signal</p>
+                <dl class="sf-file-atlas-signal-list">
+                  <%= for fact <- file_summary.secondary do %>
+                    <div id={"files-#{String.downcase(fact.label)}-signal"} class="sf-file-atlas-signal">
+                      <dt>{fact.label}</dt>
+                      <dd>{fact.value}</dd>
+                    </div>
+                  <% end %>
+                </dl>
+              </div>
+            </:signal_panel>
+            <:command_dock><.shared_command_dock workspace_assigns={assigns} /></:command_dock>
+          </.workbench_chassis>
         <% end %>
 
         <!-- TAB 7: TERMINAL SESSION RUNNER -->
@@ -2526,12 +2575,57 @@
       </div>
 
       <%!-- Shared command dock --%>
-      <%= if @active_view not in ["kanban", "calendar", "swarm", "research", "changes", "chat"] do %>
+      <%= if @active_view not in ["kanban", "calendar", "swarm", "research", "changes", "chat", "files"] do %>
         <.shared_command_dock workspace_assigns={assigns} />
       <% end %>
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>
     </main>
   </div>
+
+  <%= if @pending_file_confirmation do %>
+    <% pending_file = @pending_file_confirmation %>
+    <div
+      id="file-buffer-revert-confirmation"
+      phx-hook="ResponsiveSheet"
+      role="presentation"
+      data-sheet-close-event="cancel_file_confirmation"
+      data-sheet-return-id={pending_file.return_id}
+      data-sheet-background-id="workspace-shell"
+      class="file-confirmation-overlay fixed inset-0 z-[70] flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
+    >
+      <div
+        id="file-buffer-revert-confirmation-dialog"
+        phx-hook="ModalFocus"
+        data-modal-focus
+        data-cancel-event="cancel_file_confirmation"
+        data-initial-focus="#cancel-file-confirmation"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="file-buffer-confirmation-title"
+        tabindex="-1"
+        class="file-confirmation-dialog sf-chassis sf-sheet-scroll w-full max-w-md p-6"
+      >
+        <p class="sf-metadata">Destructive buffer action</p>
+        <h2 id="file-buffer-confirmation-title" class="mt-2 text-lg font-semibold text-[var(--sf-text-primary)]">
+          {if(pending_file.kind == :close, do: "Close unsaved buffer?", else: "Revert unsaved changes?")}
+        </h2>
+        <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
+          Your current unsaved editor text will be discarded. The file on disk is not changed.
+        </p>
+        <div class="mt-6 flex flex-wrap justify-end gap-3 pb-[env(safe-area-inset-bottom)]">
+          <button id="cancel-file-confirmation" type="button" phx-click="cancel_file_confirmation" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
+          <button
+            id="confirm-file-confirmation"
+            type="button"
+            phx-click={if(pending_file.kind == :close, do: "close_file_buffer", else: "revert_file_buffer")}
+            class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
+          >
+            {if(pending_file.kind == :close, do: "Close buffer", else: "Revert changes")}
+          </button>
+        </div>
+      </div>
+    </div>
+  <% end %>
 
   <%= if @pending_git_confirmation do %>
     <% pending_git = @pending_git_confirmation
