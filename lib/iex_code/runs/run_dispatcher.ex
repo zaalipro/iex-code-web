@@ -1698,7 +1698,11 @@ defmodule IexCode.Runs.RunDispatcher do
          attachment_refs,
          budget_requirements
        ) do
-    metadata = Map.get(attrs, :metadata) || Map.get(attrs, "metadata") || %{}
+    metadata =
+      attrs
+      |> then(&(Map.get(&1, :metadata) || Map.get(&1, "metadata") || %{}))
+      |> then(fn value -> if is_map(value), do: value, else: %{} end)
+      |> Map.drop([:projection, "projection", :research, "research"])
 
     research = %{
       "level" => policy.level,

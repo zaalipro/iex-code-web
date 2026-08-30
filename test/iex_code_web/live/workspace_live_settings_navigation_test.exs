@@ -18,9 +18,12 @@ defmodule IexCodeWeb.WorkspaceLiveSettingsNavigationTest do
     assert has_element?(settings_view, "#settings-form")
     assert has_element?(settings_view, "#execution")
 
-    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
-    render_click(view, "open_research_settings")
-    assert_redirect(view, "/sessions/#{session.id}/settings#research")
+    {:ok, research_view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+
+    assert has_element?(
+             research_view,
+             "#research-open-settings[href='/sessions/#{session.id}/settings#providers']"
+           )
   end
 
   test "root settings links use root context", %{conn: conn, workspace_path: path} do

@@ -136,6 +136,23 @@ defmodule IexCodeWeb.DagComponentsTest do
     refute text =~ "must-not-render"
   end
 
+  test "uses shared Signal Foundry tokens and accessible disclosure targets" do
+    projection = %{engine: "dag_v1", available?: true, summary: %{}, layers: []}
+    html = render_component(&DagComponents.dag_projection/1, projection: projection)
+    document = LazyHTML.from_fragment(html)
+
+    assert LazyHTML.query(document, "#dag-execution-projection[data-surface='instrument']")
+
+    assert LazyHTML.query(
+             document,
+             "#dag-execution-projection .dag-decorative-mark[aria-hidden='true']"
+           )
+
+    assert LazyHTML.query(document, "#dag-execution-projection summary.min-h-11")
+    refute html =~ "bg-[#0b0f14]"
+    refute html =~ "text-cyan-300"
+  end
+
   test "fails closed honestly and suppresses controls when scheduler is unavailable" do
     projection = %{
       engine: "dag_v1",

@@ -273,6 +273,7 @@ defmodule IexCode.Runs do
     :heartbeat_at,
     :completed_at
   ]
+  @projection_step_summary_limit 128
 
   defp existing_request_result(%Run{} = existing, %Changeset{} = changeset) do
     requested = Changeset.apply_changes(changeset)
@@ -1561,8 +1562,12 @@ defmodule IexCode.Runs do
   end
 
   @doc "Lists lightweight step lifecycle rows without params, results, or error payloads."
-  def list_step_summaries(run_or_id) do
+  def list_step_summaries(run_or_id, opts \\ [])
+
+  def list_step_summaries(run_or_id, opts) when is_list(opts) do
     with %Run{} = run <- resolve_run(run_or_id) do
+      limit = bounded_limit(opts[:limit], nil, 1_000)
+
       RunStep
       |> where([s], s.run_id == ^run.id)
       |> order_by([s], asc: s.position, asc: s.inserted_at, asc: s.id)
@@ -1592,9 +1597,23 @@ defmodule IexCode.Runs do
           :updated_at
         ])
       )
+      |> maybe_limit(limit)
       |> Repo.all()
     else
       nil -> []
+    end
+  end
+
+  def list_step_summaries(_run_or_id, _opts), do: []
+
+  @doc "Returns a closed, query-bounded step set suitable for a durable DAG projection."
+  def list_projection_step_summaries(run_or_id) do
+    rows = list_step_summaries(run_or_id, limit: @projection_step_summary_limit + 1)
+
+    if length(rows) > @projection_step_summary_limit do
+      {:error, :step_summary_limit_exceeded}
+    else
+      {:ok, rows}
     end
   end
 
@@ -7668,6 +7687,9 @@ defmodule IexCode.Runs do
     do: value |> max(1) |> min(maximum)
 
   defp bounded_limit(_value, default, _maximum), do: default
+
+  defp maybe_limit(query, nil), do: query
+  defp maybe_limit(query, limit), do: Ecto.Query.limit(query, ^limit)
 
   defp dispatchable_execution_engines(nil), do: ExecutionEngine.available_ids()
 

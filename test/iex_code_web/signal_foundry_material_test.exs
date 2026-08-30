@@ -228,7 +228,11 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
   end
 
   test "raises Signal Foundry touch targets to 44px on coarse pointers", %{css: css} do
-    [coarse_pointer] = at_rule_blocks(css, "@media (pointer: coarse)")
+    coarse_pointer =
+      at_rule_blocks(css, "@media (pointer: coarse)")
+      |> Enum.find(&String.contains?(&1, "min-height: 44px"))
+
+    assert coarse_pointer
 
     target_rule =
       css_block(
@@ -238,6 +242,27 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
 
     assert target_rule =~ "min-width: 44px"
     assert target_rule =~ "min-height: 44px"
+  end
+
+  test "research workbench owns bounded scroll and exact tablet and phone compositions", %{
+    css: css
+  } do
+    research_chassis = rule(css, "#instrument-workbench-research")
+    assert research_chassis =~ "height: 100%"
+    assert research_chassis =~ "min-height: 0"
+    assert research_chassis =~ "overflow: hidden"
+
+    research_page = rule(css, "#deep-research-page")
+    assert research_page =~ "overflow-x: hidden"
+    assert research_page =~ "overflow-y: auto"
+
+    assert css =~
+             ~r/@media\s*\(max-width:\s*64rem\)\s*\{.*?#instrument-workbench-research \.sf-workbench-fields\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s
+
+    assert css =~
+             ~r/@media\s*\(max-width:\s*39\.99rem\)\s*\{.*?#instrument-workbench-research\s*\{[^}]*width:\s*100%[^}]*border-radius:\s*0/s
+
+    assert rule(css, ".sf-dag-projection summary") =~ "min-height: 44px"
   end
 
   defp sha256(path) do

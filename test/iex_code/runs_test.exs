@@ -370,6 +370,77 @@ defmodule IexCode.RunsTest do
     assert Runs.list_steps(run) == []
   end
 
+  test "step summary queries enforce a bounded limit at the Runs boundary", %{
+    project: project,
+    session: session
+  } do
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Bound summaries",
+        kind: "deep_research",
+        mode: "research"
+      })
+
+    for index <- 1..3 do
+      assert {:ok, _step} =
+               Runs.create_step(run, %{
+                 key: "step-#{index}",
+                 kind: "analysis",
+                 title: "Step #{index}"
+               })
+    end
+
+    assert length(Runs.list_step_summaries(run, limit: 2)) == 2
+    assert length(Runs.list_step_summaries(run, limit: 0)) == 1
+    assert {:ok, summaries} = Runs.list_projection_step_summaries(run)
+    assert length(summaries) == 3
+  end
+
+  test "projection step summaries fail closed above the durable graph limit", %{
+    project: project,
+    session: session
+  } do
+    {:ok, run} =
+      Runs.create_run(%{
+        project_id: project.id,
+        session_id: session.id,
+        objective: "Reject oversized summaries",
+        kind: "deep_research",
+        mode: "research"
+      })
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    rows =
+      for index <- 1..129 do
+        %{
+          id: Ecto.UUID.generate(),
+          run_id: run.id,
+          key: "overflow-#{index}",
+          kind: "analysis",
+          title: "Overflow #{index}",
+          status: "pending",
+          position: index,
+          progress: 0,
+          attempt: 0,
+          max_attempts: 1,
+          depends_on: [],
+          params: %{},
+          handler_version: 1,
+          effect_class: "legacy",
+          replay_policy: "never",
+          resource_spec: %{},
+          inserted_at: now,
+          updated_at: now
+        }
+      end
+
+    {129, nil} = Repo.insert_all(IexCode.Runs.RunStep, rows)
+    assert {:error, :step_summary_limit_exceeded} = Runs.list_projection_step_summaries(run)
+  end
+
   test "run claims include canonical dag_v1 work", %{
     project: project,
     session: session

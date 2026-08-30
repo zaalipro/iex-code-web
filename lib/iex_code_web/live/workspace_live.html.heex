@@ -6,12 +6,12 @@
     data-active-view={@active_view}
     data-project-id={@project.id}
     data-session-id={@session.id}
-    class="workspace-shell flex h-dvh min-h-0 w-full bg-[#0a0d12] text-[#f0f6fc] font-sans antialiased overflow-hidden"
+    class="workspace-shell flex h-dvh min-h-0 w-full bg-[var(--sf-canvas-deep)] text-[var(--sf-text-primary)] font-sans antialiased overflow-hidden"
   >
     <main
       id="main-content"
       tabindex="-1"
-      class="flex-1 flex flex-col h-full min-w-0 bg-[#0a0d12] relative overflow-hidden"
+      class="flex-1 flex flex-col h-full min-w-0 bg-[var(--sf-canvas-deep)] text-[var(--sf-text-primary)] relative overflow-hidden"
     >
       <h1 class="sr-only">IexCode workspace: {@project.name}</h1>
       <.mission_strip
@@ -1464,13 +1464,13 @@
             <div class="mx-auto max-w-7xl space-y-5">
               <header class="flex flex-col gap-5 border-b border-[var(--sf-hairline)] pb-6 lg:flex-row lg:items-end lg:justify-between">
                 <div class="max-w-3xl">
-                  <div class="mb-2 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.2em] text-[var(--sf-live-text)]">
-                    <span class="h-1.5 w-1.5 bg-[var(--sf-live-mark)]"></span> Evidence workspace
+                  <div class="mb-2 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.2em] text-[var(--sf-text-secondary)]">
+                    <span class="h-1.5 w-1.5 bg-[var(--sf-live-mark)]" aria-hidden="true"></span> Evidence workspace
                   </div>
                   <h2 class="text-3xl font-semibold tracking-[-0.04em] text-[var(--sf-text-primary)] sm:text-4xl">
                     Deep research, without hidden work.
                   </h2>
-                  <p class="mt-3 max-w-[68ch] text-sm leading-6 text-[var(--sf-text-secondary)]">
+                  <p class="sf-body-copy mt-3 max-w-[68ch]">
                     Define an exact bounded investigation, attach prior research, and keep the
                     requested execution contract visible before any work begins.
                   </p>
@@ -1496,11 +1496,11 @@
                   <div class="mb-5 flex items-center justify-between gap-4">
                     <div>
                       <h3 class="text-base font-semibold text-[var(--sf-text-primary)]">Research brief</h3>
-                      <p class="mt-1 text-xs leading-5 text-[var(--sf-text-secondary)]">
+                      <p class="sf-body-copy mt-1">
                         Queued as a durable finite DAG with exact level limits.
                       </p>
                     </div>
-                    <span class="border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">
+                    <span class="border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                       async · durable
                     </span>
                   </div>
@@ -1536,11 +1536,12 @@
                         class={[
                           "cursor-pointer border p-3 transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-[var(--sf-focus-ring)]",
                           @research_launch_level == level_name &&
-                            "border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)]",
+                            "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] ring-2 ring-[var(--sf-live-mark)]/30",
                           @research_launch_level != level_name &&
                             "border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] hover:border-[var(--sf-text-secondary)]"
                         ]}
                         data-level={level_name}
+                        data-selection-state={if(@research_launch_level == level_name, do: "selected", else: "available")}
                         data-subagents={research_level_semantics(level_name).subagents}
                         data-rounds={research_level_semantics(level_name).rounds}
                         data-query-fanout={research_level_semantics(level_name).subagents}
@@ -1553,20 +1554,20 @@
                           checked={@research_launch_level == level_name}
                           class="sr-only"
                         />
-                        <span class="block text-sm font-semibold text-[var(--sf-text-primary)]">{title}</span>
-                        <span class="mt-1 block font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                        <span class="flex items-center justify-between gap-2 text-sm font-semibold text-[var(--sf-text-primary)]"><span>{title}</span><span :if={@research_launch_level == level_name} data-selected-indicator class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)]">Selected</span></span>
+                        <span class="sf-body-copy mt-1 block">
                           {research_level_contract(level_name)}
                         </span>
                       </label>
                     </div>
                   </fieldset>
 
-                  <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div :if={level} class="mt-4 grid gap-3 sm:grid-cols-2">
                     <div class="border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-3 py-2.5">
                       <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                         Requested rounds
                       </p>
-                      <p class="mt-1 text-xs text-[var(--sf-text-primary)]">
+                      <p class="sf-body-copy mt-1 text-[var(--sf-text-primary)]">
                         {level.rounds} sequential evidence rounds
                       </p>
                     </div>
@@ -1574,7 +1575,7 @@
                       <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                         Per-search-step query fanout
                       </p>
-                      <p class="mt-1 text-xs text-[var(--sf-text-primary)]">
+                      <p class="sf-body-copy mt-1 text-[var(--sf-text-primary)]">
                         Up to {level.subagents} bounded asynchronous queries
                       </p>
                     </div>
@@ -1734,14 +1735,18 @@
                   </section>
                   <section id="research-stage-contract" class="research-stage">
                     <div class="research-stage-heading"><span class="sf-metadata">04</span><h3>Run contract</h3></div>
-                    <div id="research-run-contract" class="research-run-contract">
-                      {level.rounds} rounds · {level.subagents} query fanout · max {@research_launch_sources} sources
+                    <div id="research-run-contract" class="research-run-contract" data-contract-state={if(level, do: "valid", else: "invalid")}>
+                      <%= if level do %>
+                        <span data-rounds={level.rounds} data-query-fanout={level.subagents}>{level.rounds} rounds · {level.subagents} query fanout · max {@research_launch_sources} sources</span>
+                      <% else %>
+                        <span id="research-invalid-level" data-invalid-level={@research_launch_level}>Choose a valid research level before queuing.</span>
+                      <% end %>
                     </div>
                   <button
                     id="deep-research-submit"
                     type="submit"
                     phx-disable-with="Checking availability…"
-                    class="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 bg-[var(--sf-live-mark)] px-5 font-mono text-sm font-semibold uppercase tracking-wider text-[var(--sf-canvas-deep)] transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
+                    class="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 border border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)] px-5 font-mono text-sm font-semibold uppercase tracking-wider text-[var(--sf-text-primary)] transition-colors hover:border-[var(--sf-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sf-focus-ring)]"
                   >
                     <.icon name="hero-arrow-up-right" class="h-4 w-4" /> Queue deep research
                   </button>
@@ -1752,7 +1757,7 @@
                 <section id="research-progress-dag" :if={@selected_research_run && @research_dag_projection} class="research-progress" aria-label="Research progress">
                   <DagComponents.dag_projection projection={@research_dag_projection} />
                 </section>
-                <section id="research-progress-fallback" :if={is_nil(@research_dag_projection)} data-run-status={if(@selected_research_run, do: @selected_research_run.status, else: "none")} class="research-progress-fallback" aria-label="Research progress">
+                <section id="research-progress-fallback" :if={is_nil(@research_dag_projection)} data-run-status={if(@selected_research_run, do: @selected_research_run.status, else: "none")} data-projection-state={if(@research_projection_state == :bounded_out, do: "bounded-out", else: @research_projection_state)} class="research-progress-fallback" aria-label="Research progress">
                   <%= if @selected_research_run do %>
                     <p class="sf-metadata">Status · {@selected_research_run.status}</p>
                     <p class="mt-1 text-sm">Progress · {min(max(@selected_research_run.progress || 0, 0), 100)}%</p>
@@ -1770,8 +1775,8 @@
                   >
                     <div class="flex items-center justify-between gap-3">
                       <h3 class="text-sm font-semibold text-[var(--sf-text-primary)]">Exact execution semantics</h3>
-                      <span class="border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">
-                        active
+                      <span class="border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                        Launch contract
                       </span>
                     </div>
                     <p class="mt-3 text-sm leading-5 text-[var(--sf-text-secondary)]">
@@ -1780,7 +1785,7 @@
                       asynchronous query tasks. Durable provider intents prevent ambiguous
                       paid-call replay.
                     </p>
-                    <dl class="mt-4 grid grid-cols-2 gap-px border border-[var(--sf-hairline)] bg-[var(--sf-hairline)]">
+                    <dl :if={level} class="mt-4 grid grid-cols-2 gap-px border border-[var(--sf-hairline)] bg-[var(--sf-hairline)]">
                       <div class="bg-[var(--sf-instrument-raised)] p-3">
                         <dt class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                           Rounds
@@ -1796,12 +1801,12 @@
                         </dd>
                       </div>
                     </dl>
-                    <div class="mt-4 border border-[var(--sf-hairline)] bg-[var(--sf-canvas-deep)] p-3 text-xs leading-5 text-[var(--sf-text-secondary)]">
+                    <div class="sf-body-copy mt-4 border-t border-[var(--sf-hairline)] pt-3 text-[var(--sf-text-secondary)]">
                       The composer, <code class="text-[var(--sf-text-primary)]">/research</code>, and this page
                       all queue the exact finite DAG. Existing persisted legacy runs keep their
                       fixed-stage execution history without being reinterpreted.
                     </div>
-                    <div class="mt-4 border-t border-[var(--sf-hairline)] pt-3 text-xs leading-5 text-[var(--sf-live-text)]/70">
+                    <div class="sf-body-copy mt-4 border-t border-[var(--sf-hairline)] pt-3 text-[var(--sf-text-primary)]">
                       Stage cards are observational. Pause, resume, cancel, and retry remain run-scoped
                       and generation-fenced in Mission Control. Immutable DAG runs cannot be steered.
                     </div>
@@ -1825,14 +1830,18 @@
                       phx-click="open_research_run"
                       phx-value-id={run.id}
                       aria-pressed={to_string(@selected_research_run && @selected_research_run.id == run.id)}
-                      class="mt-2 w-full border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-3 text-left transition-colors hover:border-[var(--sf-live-mark)]"
+                      data-selection-state={if(@selected_research_run && @selected_research_run.id == run.id, do: "selected", else: "available")}
+                      class={[
+                        "mt-2 w-full border border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-3 text-left transition-colors hover:border-[var(--sf-text-secondary)]",
+                        @selected_research_run && @selected_research_run.id == run.id && "border-[var(--sf-live-mark)] ring-2 ring-[var(--sf-live-mark)]/30"
+                      ]}
                     >
                       <div class="flex items-center justify-between gap-3">
-                        <span class="font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">{run.status}</span>
+                        <span class="flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]"><span :if={@selected_research_run && @selected_research_run.id == run.id} data-selected-indicator class="text-[var(--sf-text-primary)]">Selected</span>{run.status}</span>
                         <span class="font-mono text-xs tabular-nums text-[var(--sf-text-secondary)]">{run.progress ||
                           0}%</span>
                       </div>
-                      <p class="mt-2 text-xs leading-5 text-[var(--sf-text-secondary)]">Persisted research run</p>
+                      <p class="sf-body-copy mt-2 text-[var(--sf-text-secondary)]">Persisted research run</p>
                     </button>
                   </section>
 
@@ -1843,7 +1852,7 @@
                     <div class="flex items-center justify-between gap-3">
                       <div>
                         <h3 class="text-sm font-semibold text-[var(--sf-text-primary)]">Ready reports</h3>
-                        <p class="mt-1 text-xs leading-5 text-[var(--sf-text-secondary)]">
+                        <p class="sf-body-copy mt-1 text-[var(--sf-text-secondary)]">
                           Recorded Markdown and self-contained HTML artifacts.
                         </p>
                       </div>
@@ -1866,15 +1875,15 @@
                       data-evidence-source-count={Map.get(result, :source_count, 0)}
                       data-artifacts-recorded={to_string(is_binary(Map.get(result, :result_path)) and is_binary(Map.get(result, :html_path)))}
                       data-digests-recorded={to_string(is_binary(Map.get(result, :markdown_sha256)) and is_binary(Map.get(result, :html_sha256)))}
-                      class="research-evidence mt-3 border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-3"
+                      class="research-evidence mt-3 border-t border-[var(--sf-hairline)] bg-[var(--sf-instrument)] p-3"
                     >
                       <div id={"deep-research-result-#{research_result_public_id(result)}"} class="contents">
                       <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
-                          <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)]">
+                          <p class="font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                             Result #{research_result_public_id(result)} · {Map.get(result, :level)}
                           </p>
-                          <p class="mt-1 text-xs leading-5 text-[var(--sf-text-primary)]">
+                          <p class="sf-body-copy mt-1 text-[var(--sf-text-primary)]">
                             Persisted ready report · artifacts and digests recorded
                           </p>
                         </div>
@@ -1888,7 +1897,8 @@
                           href={~p"/research/#{research_result_public_id(result)}/report"}
                           target="_blank"
                           rel="noopener noreferrer"
-                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-live-mark)] bg-[var(--sf-instrument-raised)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-live-text)] hover:border-[var(--sf-live-mark)]"
+                          aria-label={"Open report for research result #{research_result_public_id(result)}"}
+                          class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-primary)] hover:border-[var(--sf-live-mark)]"
                         >
                           <.icon name="hero-arrow-top-right-on-square" class="h-3 w-3" /> Open
                         </.link>
@@ -1897,6 +1907,7 @@
                           href={
                             ~p"/research/#{research_result_public_id(result)}/report/download"
                           }
+                          aria-label={"Download HTML report for research result #{research_result_public_id(result)}"}
                           class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                         >
                           <.icon name="hero-arrow-down-tray" class="h-3 w-3" /> HTML
@@ -1906,6 +1917,7 @@
                           href={
                             ~p"/research/#{research_result_public_id(result)}/result/download"
                           }
+                          aria-label={"Download Markdown report for research result #{research_result_public_id(result)}"}
                           class="inline-flex min-h-11 items-center justify-center gap-1 border border-[var(--sf-hairline)] px-2 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)] hover:text-[var(--sf-text-primary)]"
                         >
                           <.icon name="hero-document-arrow-down" class="h-3 w-3" /> MD
@@ -1923,7 +1935,7 @@
               <section id="research-signal-panel" aria-label="Research readiness">
                 <p class="sf-metadata">Research signal</p>
                 <p class="mt-2 text-sm">{length(@research_runs)} recent investigations · {length(@research_results)} ready reports</p>
-                <p class="mt-2 text-xs text-[var(--sf-text-secondary)]">Depth, source bounds, and artifact readiness are persisted facts.</p>
+                <p class="sf-body-copy mt-2">Launch contract and recorded evidence remain server-owned facts.</p>
               </section>
             </:signal_panel>
             <:command_dock>

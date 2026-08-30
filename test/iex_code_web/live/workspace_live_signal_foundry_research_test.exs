@@ -1,7 +1,9 @@
 defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
   use IexCode.E2E.Case, async: false
+  import Ecto.Query, only: [from: 2]
 
   alias IexCode.Runs
+  alias IexCode.Runs.RunStep
   alias IexCode.Research.Results
 
   setup %{workspace_path: path} do
@@ -27,7 +29,13 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
 
-    for research_path <- [~p"/research", ~p"/sessions/#{session.id}/research"] do
+    contexts = [
+      {~p"/research", "/", "/settings#providers"},
+      {~p"/sessions/#{session.id}/research", "/sessions/#{session.id}",
+       "/sessions/#{session.id}/settings#providers"}
+    ]
+
+    for {research_path, return_path, settings_path} <- contexts do
       {:ok, view, _html} = live(conn, research_path)
       document = view |> render() |> LazyHTML.from_fragment()
 
@@ -43,8 +51,10 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
 
       assert has_element?(
                view,
-               "#return-to-instrument-deck-research[data-return-instrument-id='instrument-card-research']"
+               "#return-to-instrument-deck-research[href='#{return_path}'][data-return-instrument-id='instrument-card-research'][data-phx-link='patch'][data-phx-link-state='replace']"
              )
+
+      assert has_element?(view, "#research-open-settings[href='#{settings_path}']")
 
       assert has_element?(view, "#research-run-contract")
 
@@ -67,6 +77,24 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
     end
   end
 
+  test "conflicting route queries replace to the same canonical research context", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    for {path_with_query, canonical} <- [
+          {"/research?view=terminal", "/research"},
+          {"/sessions/#{session.id}/research?view=terminal", "/sessions/#{session.id}/research"}
+        ] do
+      {:ok, view, _html} = live(conn, canonical)
+      render_patch(view, path_with_query)
+      assert_patch(view, canonical)
+      assert has_element?(view, "#instrument-workbench-research")
+    end
+  end
+
   test "authorized marked and legacy research runs keep each canonical route", %{
     conn: conn,
     workspace_path: path
@@ -78,7 +106,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
 
     {:ok, session_view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
     session_view |> element("#deep-research-run-#{marked.id}") |> render_click()
-    assert_push_patch(session_view, "/sessions/#{session.id}/research")
+    assert_patch(session_view, "/sessions/#{session.id}/research")
 
     assert has_element?(
              session_view,
@@ -88,7 +116,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
     refute has_element?(session_view, "#research-progress-fallback")
 
     session_view |> element("#deep-research-run-#{legacy.id}") |> render_click()
-    assert_push_patch(session_view, "/sessions/#{session.id}/research")
+    assert_patch(session_view, "/sessions/#{session.id}/research")
     assert has_element?(session_view, "#research-progress-fallback[data-run-status='queued']")
     refute has_element?(session_view, "#research-progress-dag")
     refute has_element?(session_view, "#dag-execution-projection")
@@ -113,7 +141,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
     run = marked_research_run(project, session, "Root marked")
 
     render_click(view, "open_research_run", %{"id" => run.id})
-    assert_push_patch(view, "/research")
+    assert_patch(view, "/research")
     assert has_element?(view, "#research-progress-dag")
     assert has_element?(view, "#research-open-settings[href='/settings#providers']")
   end
@@ -139,7 +167,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
     render_click(view, "open_research_run", %{"id" => selected.id})
-    assert_push_patch(view, "/sessions/#{session.id}/research")
+    assert_patch(view, "/sessions/#{session.id}/research")
 
     for hostile_params <- [
           %{"id" => foreign.id},
@@ -154,6 +182,77 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
       assert has_element?(view, "#research-progress-dag")
       refute_receive {_, {:patch, _, _}}, 50
     end
+  end
+
+  test "markerless and unknown dag markers fail to factual bounded fallback", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+
+    markerless =
+      marked_research_run(project, session, "MARKERLESS_OBJECTIVE_SENTINEL")
+      |> rewrite_metadata(%{
+        "research" => %{"level" => "medium"},
+        "provider_payload" => "PROVIDER_SENTINEL"
+      })
+      |> set_raw_progress(140)
+
+    unknown =
+      marked_research_run(project, session, "UNKNOWN_OBJECTIVE_SENTINEL")
+      |> rewrite_metadata(%{
+        "projection" => "DAG_V1",
+        "research" => %{"level" => "high"},
+        "lease" => "LEASE_SENTINEL"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+
+    for {run, progress} <- [{markerless, 100}, {unknown, 0}] do
+      view |> element("#deep-research-run-#{run.id}") |> render_click()
+      assert_patch(view, "/sessions/#{session.id}/research")
+      assert has_element?(view, "#research-progress-fallback[data-run-status='queued']")
+      assert has_element?(view, "#research-progress-fallback", "Progress · #{progress}%")
+      refute has_element?(view, "#research-progress-dag")
+      refute has_element?(view, "#dag-execution-projection")
+
+      fallback =
+        view
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("#research-progress-fallback")
+
+      fallback_text = LazyHTML.text(fallback)
+
+      for hostile <- ~w(OBJECTIVE_SENTINEL PROVIDER_SENTINEL LEASE_SENTINEL) do
+        refute String.contains?(fallback_text, hostile)
+      end
+
+      if run.id == markerless.id do
+        send(view.pid, {:run_updated, %{run | metadata: %{projection: "dag_v1"}}})
+        _ = :sys.get_state(view.pid)
+        assert has_element?(view, "#research-progress-fallback")
+        refute has_element?(view, "#dag-execution-projection")
+      end
+    end
+  end
+
+  test "oversized authorized progress fails closed before a full projection is retained", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    run = marked_research_run(project, session, "Oversized projection")
+    insert_corrupt_steps(run, 128)
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+    assert has_element?(view, "#deep-research-run-#{run.id}[aria-pressed='true']")
+    assert has_element?(view, "#research-progress-fallback[data-projection-state='bounded-out']")
+    refute has_element?(view, "#research-progress-dag")
+    refute has_element?(view, "#dag-execution-projection")
+    refute has_element?(view, "#research-progress-fallback", "overflow-128")
   end
 
   test "research selection ignores newer coding runs and resets on session switch", %{
@@ -217,17 +316,17 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
 
     assert has_element?(
              view,
-             "#deep-research-result-open-#{result.id}[href='/research/#{result.id}/report'][target='_blank'][rel='noopener noreferrer']"
+             "#deep-research-result-open-#{result.id}[href='/research/#{result.id}/report'][target='_blank'][rel='noopener noreferrer'][aria-label='Open report for research result #{result.id}']"
            )
 
     assert has_element?(
              view,
-             "#deep-research-result-html-#{result.id}[href='/research/#{result.id}/report/download']"
+             "#deep-research-result-html-#{result.id}[href='/research/#{result.id}/report/download'][aria-label='Download HTML report for research result #{result.id}']"
            )
 
     assert has_element?(
              view,
-             "#deep-research-result-md-#{result.id}[href='/research/#{result.id}/result/download']"
+             "#deep-research-result-md-#{result.id}[href='/research/#{result.id}/result/download'][aria-label='Download Markdown report for research result #{result.id}']"
            )
 
     refute has_element?(view, "#research-evidence-#{foreign.id}")
@@ -243,6 +342,157 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
     refute String.contains?(evidence_text, result.html_sha256)
     refute String.contains?(evidence_text, result.result_path)
     refute String.contains?(evidence_text, result.html_path)
+  end
+
+  test "selected progress refreshes only for the durably selected research run", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    foreign_session = create_session_fixture(project)
+    selected = marked_research_run(project, session, "Selected refresh")
+    [selected_step] = Runs.list_steps(selected)
+    foreign = marked_research_run(project, foreign_session, "Foreign refresh")
+    [foreign_step] = Runs.list_steps(foreign)
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+    assert has_element?(view, "[data-node-key='inventory'][data-node-status='ready']")
+
+    IexCode.Repo.update_all(
+      from(step in RunStep, where: step.id == ^selected_step.id),
+      set: [status: "completed", progress: 100]
+    )
+
+    send(view.pid, {:run_step_updated, foreign_step})
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "[data-node-key='inventory'][data-node-status='ready']")
+
+    send(view.pid, {:run_step_updated, selected_step})
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "[data-node-key='inventory'][data-node-status='completed']")
+  end
+
+  test "result refreshes update evidence without rebuilding selected progress", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    selected = marked_research_run(project, session, "Evidence-only refresh")
+    [selected_step] = Runs.list_steps(selected)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+
+    result = Results.get_by_run(selected)
+    {:ok, running} = Results.mark_running(result)
+    {:ok, ready} = Results.commit(running, "# Focused evidence", source_count: 2)
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#research-evidence-#{ready.id}")
+    assert has_element?(view, "[data-node-key='inventory'][data-node-status='ready']")
+
+    IexCode.Repo.update_all(
+      from(step in RunStep, where: step.id == ^selected_step.id),
+      set: [status: "completed", progress: 100]
+    )
+
+    send(view.pid, {:research_result_updated, %{result: ready}})
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#research-evidence-#{ready.id}")
+    assert has_element?(view, "[data-node-key='inventory'][data-node-status='ready']")
+  end
+
+  test "forged run-created hints are reauthorized from the scoped durable snapshot", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    foreign_session = create_session_fixture(project)
+    selected = marked_research_run(project, session, "Selected durable")
+    foreign = marked_research_run(project, foreign_session, "Foreign durable")
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+    forged = %{foreign | session_id: session.id, metadata: %{"projection" => "dag_v1"}}
+    send(view.pid, {:run_created, forged})
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(view, "#deep-research-run-#{selected.id}[aria-pressed='true']")
+    refute has_element?(view, "#deep-research-run-#{foreign.id}")
+    assert has_element?(view, "#research-progress-dag")
+  end
+
+  test "invalid depth stays explicit and selected controls have non-color markers", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    run = legacy_research_run(project, session, "Selected marker")
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+
+    assert has_element?(
+             view,
+             "[data-level='medium'][data-selection-state='selected'] [data-selected-indicator]"
+           )
+
+    assert has_element?(
+             view,
+             "#deep-research-run-#{run.id}[aria-pressed='true'][data-selection-state='selected'] [data-selected-indicator]"
+           )
+
+    render_submit(view, "submit_deep_research", %{
+      "research" => %{
+        "objective" => "Reject false contract",
+        "level" => "extreme",
+        "max_sources" => "8",
+        "providers" => %{"duckduckgo" => "true"},
+        "request_id" => Ecto.UUID.generate()
+      }
+    })
+
+    assert has_element?(view, "#research-run-contract[data-contract-state='invalid']")
+    assert has_element?(view, "#research-invalid-level[data-invalid-level='extreme']")
+    refute has_element?(view, "#research-run-contract[data-rounds='2'][data-query-fanout='3']")
+  end
+
+  test "populated research owns singular progress evidence actions request and dock IDs", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    result = ready_result(project, session, "Singular evidence", "# Evidence")
+    run = marked_research_run(project, session, "Singular progress")
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+    view |> element("#deep-research-run-#{run.id}") |> render_click()
+    assert_patch(view, "/sessions/#{session.id}/research")
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    selectors = [
+      "#instrument-workbench-research",
+      "#deep-research-page",
+      "#deep-research-form",
+      "#deep-research-request-id",
+      "#research-stage-objective",
+      "#research-stage-depth",
+      "#research-stage-sources",
+      "#research-stage-contract",
+      "#research-run-contract",
+      "#research-progress-dag",
+      "#dag-execution-projection",
+      "#research-evidence-#{result.id}",
+      "#deep-research-result-#{result.id}",
+      "#deep-research-result-open-#{result.id}",
+      "#deep-research-result-html-#{result.id}",
+      "#deep-research-result-md-#{result.id}",
+      "#prompt-composer",
+      "#prompt-form"
+    ]
+
+    for selector <- selectors, do: assert(node_count(document, selector) == 1, selector)
+    refute has_element?(view, "#settings-modal")
+    refute has_element?(view, "#instrument-workbench-research #settings-form")
+    refute has_element?(view, "#async-run-dag-projection")
   end
 
   test "result and run notifications refresh focused evidence and marked progress", %{
@@ -278,10 +528,6 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
     document |> LazyHTML.query(selector) |> LazyHTML.to_tree() |> length()
   end
 
-  defp assert_push_patch(%{proxy: {ref, topic, _proxy_pid}}, to) do
-    assert_receive {^ref, {:patch, ^topic, %{to: ^to, kind: :push}}}
-  end
-
   defp marked_research_run(project, session, objective) do
     {:ok, run} =
       Runs.create_run_with_steps(
@@ -315,6 +561,50 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
       })
 
     run
+  end
+
+  defp rewrite_metadata(run, metadata) do
+    {:ok, updated} = Runs.heartbeat_run(run, %{metadata: metadata})
+    updated
+  end
+
+  defp set_raw_progress(run, progress) do
+    IexCode.Repo.update_all(
+      from(persisted in IexCode.Runs.Run, where: persisted.id == ^run.id),
+      set: [progress: progress]
+    )
+
+    Runs.get_run!(run.id)
+  end
+
+  defp insert_corrupt_steps(run, count) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    rows =
+      for index <- 1..count do
+        %{
+          id: Ecto.UUID.generate(),
+          run_id: run.id,
+          key: "overflow-#{index}",
+          kind: "project_inventory",
+          title: "Overflow #{index}",
+          status: "pending",
+          position: index,
+          progress: 0,
+          attempt: 0,
+          max_attempts: 1,
+          depends_on: [],
+          params: %{},
+          handler_version: 1,
+          effect_class: "pure",
+          replay_policy: "safe",
+          resource_spec: %{},
+          inserted_at: now,
+          updated_at: now
+        }
+      end
+
+    {^count, nil} = IexCode.Repo.insert_all(RunStep, rows)
   end
 
   defp ready_result(project, session, objective, markdown, opts \\ []) do

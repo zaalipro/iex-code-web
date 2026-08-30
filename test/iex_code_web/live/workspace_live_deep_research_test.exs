@@ -124,19 +124,18 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     view |> element("#instrument-card-research") |> render_click()
 
-    html =
-      view
-      |> form("#deep-research-form", %{
-        "research" => %{
-          "objective" => "Compare durable coordination designs",
-          "level" => "ultra",
-          "max_sources" => "24",
-          "providers" => %{"duckduckgo" => "true"}
-        }
-      })
-      |> render_submit()
+    view
+    |> form("#deep-research-form", %{
+      "research" => %{
+        "objective" => "Compare durable coordination designs",
+        "level" => "ultra",
+        "max_sources" => "24",
+        "providers" => %{"duckduckgo" => "true"}
+      }
+    })
+    |> render_submit()
 
-    assert html =~ "Deep research #"
+    assert has_element?(view, "#flash-info", "Deep research #")
     assert [run] = Runs.list_runs(session_id: session.id)
     assert run.kind == "deep_research"
     assert run.execution_engine == "dag_v1"
@@ -163,19 +162,23 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
 
-    html =
-      view
-      |> form("#deep-research-form", %{
-        "research" => %{
-          "objective" => "Reject silent source truncation",
-          "level" => "low",
-          "max_sources" => "41",
-          "providers" => %{"duckduckgo" => "true"}
-        }
-      })
-      |> render_submit()
+    view
+    |> form("#deep-research-form", %{
+      "research" => %{
+        "objective" => "Reject silent source truncation",
+        "level" => "low",
+        "max_sources" => "41",
+        "providers" => %{"duckduckgo" => "true"}
+      }
+    })
+    |> render_submit()
 
-    assert html =~ "maximum sources must be a whole number from 1 to 40"
+    assert has_element?(
+             view,
+             "#flash-error",
+             "maximum sources must be a whole number from 1 to 40"
+           )
+
     assert has_element?(view, "#deep-research-max-sources[value='41']")
     assert Runs.list_runs(session_id: session.id) == []
   end
@@ -188,18 +191,22 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     session = create_session_fixture(project)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
 
-    html =
-      render_submit(view, "submit_deep_research", %{
-        "research" => %{
-          "objective" => "Reject silent effort coercion",
-          "level" => "extreme",
-          "max_sources" => "8",
-          "providers" => %{"duckduckgo" => "true"},
-          "request_id" => Ecto.UUID.generate()
-        }
-      })
+    render_submit(view, "submit_deep_research", %{
+      "research" => %{
+        "objective" => "Reject silent effort coercion",
+        "level" => "extreme",
+        "max_sources" => "8",
+        "providers" => %{"duckduckgo" => "true"},
+        "request_id" => Ecto.UUID.generate()
+      }
+    })
 
-    assert html =~ "research effort must be one of low, medium, high, or ultra"
+    assert has_element?(
+             view,
+             "#flash-error",
+             "research effort must be one of low, medium, high, or ultra"
+           )
+
     assert Runs.list_runs(session_id: session.id) == []
   end
 
@@ -269,12 +276,11 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     assert has_element?(view, "#deep-research-result-md-#{own.id}")
     refute has_element?(view, "#deep-research-result-#{foreign.id}")
 
-    html =
-      view
-      |> form("#prompt-form", %{"prompt" => "/deep_research #{foreign.id}"})
-      |> render_submit()
+    view
+    |> form("#prompt-form", %{"prompt" => "/deep_research #{foreign.id}"})
+    |> render_submit()
 
-    assert html =~ "was not found in this session"
+    assert has_element?(view, "#flash-error", "was not found in this session")
     refute has_element?(view, "#prompt-research-attachment-#{foreign.id}")
     assert Enum.map(Runs.list_runs(session_id: session.id), & &1.id) == [own.run_id]
   end
@@ -288,12 +294,11 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
     oversized_id = String.duplicate("9", 1_000)
 
-    html =
-      view
-      |> form("#prompt-form", %{"prompt" => "/deep_research #{oversized_id}"})
-      |> render_submit()
+    view
+    |> form("#prompt-form", %{"prompt" => "/deep_research #{oversized_id}"})
+    |> render_submit()
 
-    assert html =~ "outside the supported range"
+    assert has_element?(view, "#flash-error", "outside the supported range")
     refute has_element?(view, "#prompt-research-attachments")
   end
 
@@ -424,12 +429,11 @@ defmodule IexCodeWeb.WorkspaceLiveDeepResearchTest do
       view |> element("#deep-research-attachment-#{result.id}") |> render_click()
     end)
 
-    html =
-      view
-      |> element("#deep-research-attachment-#{List.last(results).id}")
-      |> render_click()
+    view
+    |> element("#deep-research-attachment-#{List.last(results).id}")
+    |> render_click()
 
-    assert html =~ "You can attach up to 12 research results"
+    assert has_element?(view, "#flash-error", "You can attach up to 12 research results")
   end
 
   test "provider settings link opens all configured provider controls", %{

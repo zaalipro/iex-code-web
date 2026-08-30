@@ -2570,12 +2570,52 @@
 
 /* Research Radar: staged launch, authorized progress, and bounded evidence. */
 #instrument-workbench-research {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
+}
+
+#instrument-workbench-research .sf-workbench-fields {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 #instrument-workbench-research .sf-workbench-primary-field {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
+}
+
+#deep-research-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#deep-research-form,
+#deep-research-semantics,
+#deep-research-run-list,
+#deep-research-ready-results {
+  border-color: transparent;
+  background-color: var(--sf-instrument);
+}
+
+#research-stage-depth label,
+#research-stage-depth > div > div,
+#research-stage-sources > div:last-child,
+#deep-research-run-list > button,
+.research-evidence {
+  box-shadow: none;
 }
 
 .research-stage {
@@ -2605,8 +2645,8 @@
 
 .research-run-contract,
 .research-progress-fallback {
-  border: 1px solid var(--sf-hairline);
-  background-color: var(--sf-instrument-raised);
+  border-top: 1px solid var(--sf-hairline);
+  background-color: var(--sf-instrument);
   color: var(--sf-text-secondary);
   padding: 1rem;
   font-size: 0.875rem;
@@ -2619,7 +2659,7 @@
 }
 
 .research-evidence {
-  border-left: 3px solid var(--sf-live-mark);
+  border-left: 3px solid var(--sf-hairline);
 }
 
 #instrument-workbench-research :where(.research-stage label, .research-stage button, .research-evidence a) {
@@ -2637,9 +2677,30 @@
   }
 }
 
-@media (max-width: 40rem) {
+@media (max-width: 64rem) {
+  #instrument-workbench-research .sf-workbench-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #instrument-workbench-research .sf-workbench-signal-panel {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 39.99rem) {
+  #instrument-workbench-research {
+    width: 100%;
+    border-width: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  #instrument-workbench-research .sf-workbench-primary-field {
+    padding: 0;
+  }
+
   #deep-research-page {
-    padding: 1rem;
+    padding: 0.875rem;
   }
 
   .research-stage {
@@ -2649,4 +2710,12 @@
   .research-evidence [class*="grid-cols-3"] {
     grid-template-columns: 1fr;
   }
+}
+
+.sf-dag-projection {
+  color: var(--sf-text-primary);
+}
+
+.sf-dag-projection summary {
+  min-height: 44px;
 }
