@@ -510,6 +510,62 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryResearchTest do
     assert source_count_for_run(queries, "run_step_attempts", nonselected.id) == 0
   end
 
+  test "retained run cap cannot pair a replacement selection with stale DAG progress", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    selected = marked_research_run(project, session, "Evicted selected Research")
+    replacement = legacy_research_run(project, session, "Retained replacement Research")
+
+    fillers =
+      for index <- 1..99 do
+        {:ok, filler} =
+          Runs.create_run(%{
+            project_id: project.id,
+            session_id: session.id,
+            objective: "Snapshot filler #{index}",
+            kind: "analysis",
+            mode: "workflow",
+            status: "queued"
+          })
+
+        filler
+      end
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    IexCode.Repo.update_all(
+      from(run in Runs.Run, where: run.id == ^selected.id),
+      set: [inserted_at: DateTime.add(now, 100, :second)]
+    )
+
+    newer_ids = [replacement.id | Enum.map(fillers, & &1.id)]
+
+    IexCode.Repo.update_all(
+      from(run in Runs.Run, where: run.id in ^newer_ids),
+      set: [inserted_at: DateTime.add(now, -1, :second)]
+    )
+
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/research")
+    assert has_element?(view, "#deep-research-run-#{selected.id}[aria-pressed='true']")
+    assert has_element?(view, "#research-progress-dag")
+
+    IexCode.Repo.update_all(
+      from(run in Runs.Run, where: run.id == ^selected.id),
+      set: [inserted_at: DateTime.add(now, -200, :second)]
+    )
+
+    [filler | _] = Enum.reverse(fillers)
+    send(view.pid, {:run_updated, filler})
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(view, "#deep-research-run-#{replacement.id}[aria-pressed='true']")
+    assert has_element?(view, "#research-progress-fallback")
+    refute has_element?(view, "#research-progress-dag")
+  end
+
   test "result refreshes update evidence without rebuilding selected progress", %{
     conn: conn,
     workspace_path: path

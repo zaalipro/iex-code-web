@@ -6881,8 +6881,18 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:research_dag_projection, nil)
   end
 
-  defp assign_selected_research_progress(socket, selected, nil),
-    do: assign(socket, :selected_research_run, selected)
+  defp assign_selected_research_progress(socket, selected, nil) do
+    if socket.assigns[:selected_research_run] &&
+         socket.assigns.selected_research_run.id == selected.id do
+      assign(socket, :selected_research_run, selected)
+    else
+      socket
+      |> assign(:selected_research_run, selected)
+      |> assign(:selected_research_steps, [])
+      |> assign(:research_projection_state, :empty)
+      |> assign(:research_dag_projection, nil)
+    end
+  end
 
   defp assign_selected_research_progress(socket, selected, progress),
     do: select_research_projection(socket, selected, progress)
