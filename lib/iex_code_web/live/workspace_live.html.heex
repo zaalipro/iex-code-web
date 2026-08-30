@@ -1079,6 +1079,7 @@
                           id="changes-branch-trigger"
                           type="button"
                           phx-click="toggle_branch_menu"
+                          aria-haspopup="true"
                           aria-expanded={to_string(@show_branch_menu)}
                           aria-controls="changes-branch-menu"
                           aria-label={"Current branch #{@current_branch}. Toggle branch menu"}
@@ -1092,10 +1093,10 @@
                           :if={@show_branch_menu}
                           id="changes-branch-menu"
                           role="region"
-                          aria-label="Git branches"
+                          aria-labelledby="changes-branch-menu-title"
                           class="absolute left-0 top-full z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-2 shadow-xl"
                         >
-                          <div class="px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                          <div id="changes-branch-menu-title" class="px-2 py-1 font-mono text-xs uppercase tracking-wider text-[var(--sf-text-secondary)]">
                             Branches
                           </div>
                           <div class="max-h-52 overflow-y-auto">
@@ -2539,7 +2540,6 @@
       role="presentation"
       data-sheet-close-event="cancel_git_confirmation"
       data-sheet-return-id={git_confirmation_return_id(pending_git)}
-      data-sheet-fallback-return-id="changes-fetch-action"
       data-sheet-background-id="workspace-shell"
       class="git-confirmation-overlay fixed inset-0 z-[70] flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
     >
@@ -2575,7 +2575,13 @@
           <button
             id="confirm-git-confirmation"
             type="button"
-            phx-click={action}
+            phx-click={
+              JS.set_attribute(
+                {"data-sheet-return-id", git_confirmation_success_return_id(pending_git)},
+                to: "##{host_id}"
+              )
+              |> JS.push(action)
+            }
             phx-disable-with="Confirming…"
             class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
           >Confirm destructive action</button>

@@ -2861,13 +2861,14 @@
 #instrument-workbench-changes #diff-mode-split,
 #instrument-workbench-changes #copy-diff-btn { min-height: 2.75rem; }
 
-#instrument-workbench-changes label > span {
+#instrument-workbench-changes .changes-primary-field label > span {
   color: var(--sf-text-secondary);
 }
 
-#instrument-workbench-changes :where(input, textarea)::placeholder {
+#instrument-workbench-changes #git-branch-name::placeholder,
+#instrument-workbench-changes #commit-message::placeholder {
   color: var(--sf-text-secondary);
-  opacity: 0.82;
+  opacity: 1;
 }
 
 #instrument-workbench-changes .sf-workbench-signal-panel {

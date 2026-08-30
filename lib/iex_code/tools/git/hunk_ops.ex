@@ -28,7 +28,8 @@ defmodule IexCode.Tools.Git.HunkOps do
   @spec accept_hunk(Path.t(), Path.t(), String.t() | integer(), keyword()) ::
           {:ok, String.t()} | {:error, term()}
   def accept_hunk(project_root, file_path, hunk_id, opts \\ []) do
-    with {:ok, {file_diff, hunk}} <- find_target_hunk(project_root, file_path, hunk_id, opts) do
+    with :ok <- verify_expected_identity(project_root, file_path, opts),
+         {:ok, {file_diff, hunk}} <- find_target_hunk(project_root, file_path, hunk_id, opts) do
       mode = Keyword.get(opts, :mode, :stage)
 
       case mode do
@@ -51,7 +52,8 @@ defmodule IexCode.Tools.Git.HunkOps do
   @spec reject_hunk(Path.t(), Path.t(), String.t() | integer(), keyword()) ::
           {:ok, String.t()} | {:error, term()}
   def reject_hunk(project_root, file_path, hunk_id, opts \\ []) do
-    with {:ok, {file_diff, hunk}} <- find_target_hunk(project_root, file_path, hunk_id, opts) do
+    with :ok <- verify_expected_identity(project_root, file_path, opts),
+         {:ok, {file_diff, hunk}} <- find_target_hunk(project_root, file_path, hunk_id, opts) do
       patch_str = DiffParser.format_hunk_patch(file_diff, hunk)
       staged? = Keyword.get(opts, :staged, false)
 
@@ -67,7 +69,7 @@ defmodule IexCode.Tools.Git.HunkOps do
           fetch_updated_diff(project_root, file_path)
 
         {:error, reason} ->
-          if staged? do
+          if staged? or is_map(Keyword.get(opts, :expected_identity)) do
             {:error, reason}
           else
             # Fallback to in-memory replacement on the file
@@ -111,6 +113,20 @@ defmodule IexCode.Tools.Git.HunkOps do
           {:ok, :reverted} | {:error, term()}
   def revert_file(project_root, file_path, scope)
       when scope in [:staged, :unstaged, :untracked, :all] do
+    revert_file(project_root, file_path, scope, [])
+  end
+
+  @spec revert_file(Path.t(), Path.t(), :staged | :unstaged | :untracked | :all, keyword()) ::
+          {:ok, :reverted} | {:error, term()}
+  def revert_file(project_root, file_path, scope, opts)
+      when scope in [:staged, :unstaged, :untracked, :all] and is_list(opts) do
+    with :ok <-
+           verify_expected_identity(project_root, file_path, Keyword.put(opts, :scope, scope)) do
+      do_revert_file_scope(project_root, file_path, scope, opts)
+    end
+  end
+
+  defp do_revert_file_scope(project_root, file_path, scope, opts) do
     if scope == :untracked do
       with {:ok, _canonical} <- WorkspacePath.resolve(project_root, file_path) do
         # Remove the lexical final component so a symlink is unlinked rather
@@ -121,13 +137,30 @@ defmodule IexCode.Tools.Git.HunkOps do
       end
     else
       with :ok <- reject_final_symlink(project_root, file_path),
-           {:ok, full_path} <- resolve_file_path(project_root, file_path),
-           {:ok, canonical_root} <- resolve_file_path(project_root, "") do
-        git_path = Path.relative_to(full_path, canonical_root)
+           {:ok, git_path, full_path} <- verified_git_path(project_root, file_path, opts) do
         do_revert_file(project_root, git_path, full_path, scope)
       else
         {:error, reason} -> {:error, {:invalid_path, file_path, reason}}
       end
+    end
+  end
+
+  defp verified_git_path(project_root, file_path, opts) do
+    case Keyword.get(opts, :expected_identity) do
+      %{canonical: canonical} ->
+        with {:ok, canonical_root} <- resolve_file_path(project_root, ""),
+             relative when relative != "" <- Path.relative_to(canonical, canonical_root),
+             false <- String.starts_with?(relative, "..") do
+          {:ok, relative, canonical}
+        else
+          _ -> {:error, :stale_git_snapshot}
+        end
+
+      _ ->
+        with {:ok, full_path} <- resolve_file_path(project_root, file_path),
+             {:ok, canonical_root} <- resolve_file_path(project_root, "") do
+          {:ok, Path.relative_to(full_path, canonical_root), full_path}
+        end
     end
   end
 
@@ -485,5 +518,66 @@ defmodule IexCode.Tools.Git.HunkOps do
 
   defp resolve_file_path(project_root, path) do
     WorkspacePath.resolve(project_root, path)
+  end
+
+  defp verify_expected_identity(root, path, opts) do
+    case Keyword.get(opts, :expected_identity) do
+      %{missing?: true} ->
+        case File.lstat(Path.join(root, path)) do
+          {:error, :enoent} -> :ok
+          _ -> {:error, :stale_git_snapshot}
+        end
+
+      expected when is_map(expected) ->
+        scope = Keyword.get(opts, :scope)
+
+        with {:ok, expected_canonical} <- Map.fetch(expected, :canonical),
+             {:ok, expected_type} <- Map.fetch(expected, :type),
+             {:ok, expected_size} <- Map.fetch(expected, :size),
+             {:ok, expected_mtime} <- Map.fetch(expected, :mtime),
+             {:ok, expected_inode} <- Map.fetch(expected, :inode),
+             {:ok, canonical_root} <- resolve_file_path(root, ""),
+             {:ok, canonical} <- WorkspacePath.resolve(root, path),
+             {:ok, stat} <- File.lstat(Path.join(root, path)),
+             true <- stat.type != :symlink or scope == :untracked,
+             true <- canonical == expected_canonical,
+             true <-
+               scope == :untracked or canonical == Path.expand(Path.join(canonical_root, path)),
+             true <- stat.type == expected_type,
+             true <- stat.size == expected_size,
+             true <- stat.mtime == expected_mtime,
+             true <- stat.inode == expected_inode,
+             true <- identity_content(root, path, stat) == Map.get(expected, :content_identity) do
+          :ok
+        else
+          _ -> {:error, :stale_git_snapshot}
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp identity_content(root, path, %{type: :regular, size: size})
+       when size <= 2 * 1_024 * 1_024 do
+    case File.read(Path.join(root, path)) do
+      {:ok, content} -> {:regular, identity_digest(content)}
+      _ -> :unreadable
+    end
+  end
+
+  defp identity_content(root, path, %{type: :symlink}) do
+    case File.read_link(Path.join(root, path)) do
+      {:ok, target} -> {:symlink, identity_digest(target)}
+      _ -> :unreadable
+    end
+  end
+
+  defp identity_content(_root, _path, %{type: type}), do: {type, nil}
+
+  defp identity_digest(term) do
+    :sha256
+    |> :crypto.hash(:erlang.term_to_binary(term))
+    |> Base.encode16(case: :lower)
   end
 end

@@ -269,6 +269,19 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
       assert {:ok, "main"} = Git.current_branch(path)
     end
 
+    test "rejects a fresh branch that was never in the accepted menu snapshot", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      {_, 0} = System.cmd("git", ["branch", "fresh-after-render"], cd: path)
+
+      render_click(view, "switch_git_branch", %{"branch" => "fresh-after-render"})
+      assert {:ok, "main"} = Git.current_branch(path)
+    end
+
     test "a synchronous Git error clears the prior accepted detailed snapshot", %{
       conn: conn,
       workspace_path: path

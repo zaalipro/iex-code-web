@@ -491,6 +491,35 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       assert Enum.map(status.unstaged, & &1.path) == ["lib/sample.txt"]
     end
 
+    test "revert_file expected identity rejects a same-path replacement", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "value AAA\n")
+      {:ok, canonical} = IexCode.WorkspacePath.resolve(tmp_dir, "lib/sample.txt")
+      {:ok, stat} = File.lstat(file)
+
+      identity = %{
+        canonical: canonical,
+        type: stat.type,
+        size: stat.size,
+        mtime: stat.mtime,
+        inode: stat.inode,
+        content_identity:
+          {:regular,
+           :sha256
+           |> :crypto.hash(:erlang.term_to_binary("value AAA\n"))
+           |> Base.encode16(case: :lower)}
+      }
+
+      File.write!(file, "value BBB\n")
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :unstaged,
+                 expected_identity: identity
+               )
+
+      assert File.read!(file) == "value BBB\n"
+    end
+
     test "accept_all_hunks stages the entire file", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "lib/sample.txt"), "new content\n")
 

@@ -152,6 +152,24 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
     assert_patch(view, "/sessions/#{session.id}")
   end
 
+  test "server-owned palette Fetch executes outside Changes", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    {_, 0} = System.cmd("git", ["init", "-b", "main"], cd: path)
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+    render_click(view, "toggle_command_palette")
+    render_change(view, "command_palette_search", %{"query" => "Git Fetch and Status"})
+    assert has_element?(view, "#palette-item-0[data-palette-item-id='git_fetch']")
+    view |> element("#palette-item-0") |> render_click()
+
+    assert has_element?(view, "#flash-info", "Fetched latest remote updates")
+    refute has_element?(view, "#command-palette-dialog")
+  end
+
   test "palette selection indices are bounded and malformed input is a no-op", %{
     conn: conn,
     workspace_path: path

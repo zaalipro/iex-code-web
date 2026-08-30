@@ -494,7 +494,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
             {@file_path || "Multi-File Patch Preview"}
           </span>
           <span class={[
-            "border border-[var(--sf-hairline)] px-2 py-0.5 text-[10px] font-bold uppercase shrink-0 text-[var(--sf-text-secondary)]"
+            "border border-[var(--sf-hairline)] px-2 py-0.5 text-xs font-bold uppercase shrink-0 text-[var(--sf-text-secondary)]"
           ]}>
             {to_string(@status || "MODIFIED")}
           </span>
@@ -725,11 +725,11 @@ defmodule IexCodeWeb.WorkspaceComponents do
               {"hover:bg-[var(--sf-raised-control)]", "text-[var(--sf-code-text)]", " "}
           end %>
         <div class={["flex items-center px-2 py-0.5", bg]}>
-          <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.old_num ||
+          <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-xs">{line.old_num ||
             " "}</span>
-          <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-3 text-[10px]">{line.new_num ||
+          <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-3 text-xs">{line.new_num ||
             " "}</span>
-          <span class="w-4 text-center select-none font-bold text-[11px] text-[var(--sf-text-secondary)]">{sign}</span>
+          <span class="w-4 text-center select-none font-bold text-xs text-[var(--sf-text-secondary)]">{sign}</span>
           <span class={["min-w-max whitespace-pre", text_color]}>{line.content}</span>
         </div>
       <% end %>
@@ -741,7 +741,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
     ~H"""
     <div class="grid min-w-[42rem] grid-cols-2 gap-2 font-mono text-[13px]">
       <div class="space-y-0.5 border-r border-[var(--sf-hairline)] pr-2">
-        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
+        <div class="text-[var(--sf-text-secondary)] text-xs uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Original
         </div>
         <%= for line <- @lines do %>
@@ -753,14 +753,14 @@ defmodule IexCodeWeb.WorkspaceComponents do
               line.type == :context &&
                 "text-[var(--sf-code-text)] hover:bg-[var(--sf-raised-control)]"
             ]}>
-              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.old_num}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-xs">{line.old_num}</span>
               <span class="min-w-max whitespace-pre">{line.content}</span>
             </div>
           <% end %>
         <% end %>
       </div>
       <div class="space-y-0.5 pl-2">
-        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
+        <div class="text-[var(--sf-text-secondary)] text-xs uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Modified
         </div>
         <%= for line <- @lines do %>
@@ -772,7 +772,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
               line.type == :context &&
                 "text-[var(--sf-code-text)] hover:bg-[var(--sf-raised-control)]"
             ]}>
-              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.new_num}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-xs">{line.new_num}</span>
               <span class="min-w-max whitespace-pre">{line.content}</span>
             </div>
           <% end %>
@@ -811,8 +811,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
               {"hover:bg-[var(--sf-raised-control)]", "text-[var(--sf-code-text)]", " "}
           end %>
         <div class={["flex items-center px-2 py-0.5 font-mono", bg]}>
-          <span class="w-10 text-right text-[var(--sf-text-secondary)] select-none pr-3 text-[10px]">{idx}</span>
-          <span class="w-4 text-center select-none font-bold text-[11px] text-[var(--sf-text-secondary)]">{sign}</span>
+          <span class="w-10 text-right text-[var(--sf-text-secondary)] select-none pr-3 text-xs">{idx}</span>
+          <span class="w-4 text-center select-none font-bold text-xs text-[var(--sf-text-secondary)]">{sign}</span>
           <span class={["flex-1 whitespace-pre-wrap", text_color]}>{line}</span>
         </div>
       <% end %>
@@ -827,7 +827,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
     ~H"""
     <div class="grid min-w-[42rem] grid-cols-2 gap-2">
       <div class="space-y-0.5 border-r border-[var(--sf-hairline)] pr-2">
-        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
+        <div class="text-[var(--sf-text-secondary)] text-xs uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Original
         </div>
         <%= for {line, idx} <- Enum.with_index(@lines, 1) do %>
@@ -837,14 +837,14 @@ defmodule IexCodeWeb.WorkspaceComponents do
               String.starts_with?(line, "-") &&
                 "border-l-2 border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)] text-[var(--sf-live-text)]"
             ]}>
-              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{idx}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-xs">{idx}</span>
               <span class="flex-1 whitespace-pre-wrap">{line}</span>
             </div>
           <% end %>
         <% end %>
       </div>
       <div class="space-y-0.5 pl-2">
-        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
+        <div class="text-[var(--sf-text-secondary)] text-xs uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Modified
         </div>
         <%= for {line, idx} <- Enum.with_index(@lines, 1) do %>
@@ -854,7 +854,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
               String.starts_with?(line, "+") &&
                 "border-l-2 border-[var(--sf-success-text)] bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)] text-[var(--sf-success-text)]"
             ]}>
-              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{idx}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-xs">{idx}</span>
               <span class="flex-1 whitespace-pre-wrap">{line}</span>
             </div>
           <% end %>
