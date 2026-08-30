@@ -130,7 +130,7 @@ def main():
         if status == "ok" and return_content:
             content = b"".join(chunks)
     except Exception:
-        status = "changed"
+        status = "reader_failed" if final_fd is not None else "changed"
     finally:
         if final_fd is not None:
             os.close(final_fd)

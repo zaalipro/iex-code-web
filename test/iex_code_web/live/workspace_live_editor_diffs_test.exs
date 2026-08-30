@@ -265,8 +265,24 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       workspace_write_file(path, "lib/stopped.ex", "stopped target\n")
       timeout_reader = Path.join(path, "timeout_reader.py")
       stopped_reader = Path.join(path, "stopped_reader.py")
+      malformed_reader = Path.join(path, "malformed_reader.py")
       File.write!(timeout_reader, "import time\ntime.sleep(2)\n")
       File.write!(stopped_reader, "raise SystemExit(2)\n")
+
+      File.write!(malformed_reader, """
+      import json, os, struct, sys
+      root, relative = sys.argv[1:3]
+      info = os.stat(os.path.join(root, relative))
+      def send(value):
+          data = json.dumps(value, separators=(",", ":")).encode()
+          sys.stdout.buffer.write(struct.pack(">I", len(data)) + data)
+          sys.stdout.buffer.flush()
+      send({"event": "opened", "mode": info.st_mode, "size": info.st_size, "inode": info.st_ino, "device": info.st_dev})
+      head = sys.stdin.buffer.read(4)
+      if len(head) == 4:
+          sys.stdin.buffer.read(struct.unpack(">I", head)[0])
+      send({"event": "result", "status": "ok", "digest": "0" * 64, "bytes_read": 0, "closed": False, "content": ""})
+      """)
 
       previous = Application.get_env(:iex_code, :editor_identity_reader_opts)
 
@@ -283,7 +299,8 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
 
       for {relative, reader, expected} <- [
             {"lib/timeout.ex", timeout_reader, "read timed out"},
-            {"lib/stopped.ex", stopped_reader, "safe reader failed"}
+            {"lib/stopped.ex", stopped_reader, "safe reader failed"},
+            {"lib/stopped.ex", malformed_reader, "safe reader failed"}
           ] do
         Application.put_env(:iex_code, :editor_identity_reader_opts,
           reader_path: reader,

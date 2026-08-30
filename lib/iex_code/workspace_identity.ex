@@ -114,24 +114,28 @@ defmodule IexCode.WorkspaceIdentity do
             observe(opts, {:bytes_read, result["bytes_read"]})
             observe(opts, :after_close)
 
-            with true <- result["closed"] == true,
-                 {:ok, {content_digest, content}} <-
-                   decode_reader_result(result, max_bytes, return_content?),
-                 {:ok, final_path_stat} <- File.lstat(full),
-                 true <- same_stat?(stat, final_path_stat) do
-              identity =
-                final_path_stat
-                |> stat_identity(path, canonical)
-                |> Map.put(:content_digest, content_digest)
+            if result["closed"] == true do
+              with {:ok, {content_digest, content}} <-
+                     decode_reader_result(result, max_bytes, return_content?),
+                   {:ok, final_path_stat} <- File.lstat(full),
+                   true <- same_stat?(stat, final_path_stat) do
+                identity =
+                  final_path_stat
+                  |> stat_identity(path, canonical)
+                  |> Map.put(:content_digest, content_digest)
 
-              identity =
-                if return_content?, do: Map.put(identity, :content, content), else: identity
+                identity =
+                  if return_content?, do: Map.put(identity, :content, content), else: identity
 
-              {:ok, identity}
+                {:ok, identity}
+              else
+                {:error, :identity_too_large} -> {:error, :identity_too_large}
+                {:error, :reader_failed} -> {:error, :reader_failed}
+                {:error, :invalid_reader_response} -> {:error, :reader_failed}
+                _ -> {:error, :identity_changed}
+              end
             else
-              {:error, :identity_too_large} -> {:error, :identity_too_large}
-              {:error, :invalid_reader_response} -> {:error, :reader_failed}
-              _ -> {:error, :identity_changed}
+              {:error, :reader_failed}
             end
           else
             {:error, :reader_timeout} ->
@@ -274,6 +278,9 @@ defmodule IexCode.WorkspaceIdentity do
 
   defp decode_reader_result(%{"status" => "changed"}, _max, _return?),
     do: {:error, :identity_changed}
+
+  defp decode_reader_result(%{"status" => "reader_failed"}, _max, _return?),
+    do: {:error, :reader_failed}
 
   defp decode_reader_result(_result, _max, _return?),
     do: {:error, :invalid_reader_response}
