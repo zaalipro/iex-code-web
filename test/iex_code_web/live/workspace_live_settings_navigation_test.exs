@@ -26,6 +26,23 @@ defmodule IexCodeWeb.WorkspaceLiveSettingsNavigationTest do
            )
   end
 
+  test "research settings shim ignores forged targets and uses session context", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+    render_click(view, "open_research_settings", %{
+      "id" => "forged",
+      "anchor" => "runtime",
+      "to" => "/settings#models"
+    })
+
+    assert_redirect(view, "/sessions/#{session.id}/settings#providers")
+  end
+
   test "root settings links use root context", %{conn: conn, workspace_path: path} do
     project = create_project_fixture(%{root_path: path})
     _session = create_session_fixture(project)

@@ -4514,6 +4514,12 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("open_research_settings", _params, socket) do
+    {:noreply,
+     push_navigate(socket, to: settings_path(socket.assigns.workspace_route, "providers"))}
+  end
+
+  @impl true
   def handle_event("toggle_project_modal", _params, socket) do
     opening? = !socket.assigns.show_project_modal
 

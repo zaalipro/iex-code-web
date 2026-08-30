@@ -108,6 +108,90 @@ defmodule IexCodeWeb.SettingsLiveTest do
            )
   end
 
+  test "calibration bench exposes shared chassis geometry and explicit theme controls", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/settings")
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    assert has_element?(view, "#settings-page.settings-page.sf-ambient-field")
+    assert has_element?(view, "#settings-calibration-bench.sf-chassis")
+
+    assert has_element?(
+             view,
+             "form#settings-form[phx-change='validate_settings'][phx-submit='save_settings']"
+           )
+
+    assert Enum.count(LazyHTML.query(document, "#settings-calibration-bench.sf-chassis")) == 1
+    assert Enum.count(LazyHTML.query(document, "form#settings-form")) == 1
+
+    assert Enum.count(
+             LazyHTML.query(
+               document,
+               "form#settings-logout-form[action='/logout'][method='post']"
+             )
+           ) == 1
+
+    assert Enum.count(LazyHTML.query(document, "#settings-form #settings-save-bar")) == 1
+
+    for section <-
+          ~w(models execution goals swarm research providers editor usage resources runtime) do
+      assert Enum.count(
+               LazyHTML.query(document, "section##{section}[aria-labelledby='#{section}-title']")
+             ) == 1
+
+      assert Enum.count(LazyHTML.query(document, "##{section}-title")) == 1
+
+      assert Enum.count(LazyHTML.query(document, "#settings-nav-#{section}[href='##{section}']")) ==
+               1
+
+      assert Enum.count(
+               LazyHTML.query(document, "#settings-mobile-section-nav a[href='##{section}']")
+             ) == 1
+    end
+
+    for {id, value, label} <- [
+          {"settings-theme-dark", "dark", "Dark"},
+          {"settings-theme-light", "light", "Light"},
+          {"settings-theme-system", "system", "System"}
+        ] do
+      assert has_element?(
+               view,
+               "#settings-theme-controls ##{id}[type='button'][data-phx-theme='#{value}'][aria-pressed='false']",
+               label
+             )
+
+      assert document
+             |> LazyHTML.query("##{id}")
+             |> LazyHTML.attribute("phx-click")
+             |> List.first() == ~s([["dispatch",{"event":"phx:set-theme"}]])
+
+      refute has_element?(view, "#settings-form ##{id}")
+      refute has_element?(view, "##{id}[name]")
+      refute has_element?(view, "##{id}[phx-value-theme]")
+    end
+
+    assert has_element?(
+             view,
+             "#settings-theme-controls[role='group'][aria-label='Theme preference']"
+           )
+
+    refute has_element?(view, "#settings-modal")
+
+    view
+    |> form("#settings-form", %{"settings" => %{"default_model" => "theme-safe-draft"}})
+    |> render_change()
+
+    assert has_element?(view, "#settings-default-model[value='theme-safe-draft']")
+    assert has_element?(view, "#settings-client-behaviors[data-dirty='true']")
+    assert has_element?(view, "#settings-save:not([disabled])")
+    assert has_element?(view, "#settings-discard:not([disabled])")
+
+    for id <- ~w(settings-theme-dark settings-theme-light settings-theme-system) do
+      assert has_element?(view, "##{id}[type='button']")
+    end
+  end
+
   test "resource policy is editable with guarded advanced controls and read-only deployment facts",
        %{
          conn: conn

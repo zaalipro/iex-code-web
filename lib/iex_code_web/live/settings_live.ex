@@ -238,17 +238,20 @@ defmodule IexCodeWeb.SettingsLive do
 
   def settings_section_header(assigns) do
     ~H"""
-    <header class="mb-6 border-b border-[#29313a] pb-5">
+    <header class="settings-section-header mb-6 border-b pb-5">
       <p class={[
-        "font-mono text-[11px] font-semibold uppercase tracking-[0.16em]",
-        if(@tone == "research", do: "text-violet-300", else: "text-[#ff8a68]")
+        "font-mono text-xs font-semibold uppercase tracking-[0.16em]",
+        if(@tone == "research", do: "settings-topology-text", else: "settings-live-text")
       ]}>
         {@eyebrow}
       </p>
-      <h2 id={@id} class="mt-2 text-xl font-semibold tracking-[-0.02em] text-white sm:text-2xl">
+      <h2
+        id={@id}
+        class="settings-text-primary mt-2 text-xl font-semibold tracking-[-0.02em] sm:text-2xl"
+      >
         {@title}
       </h2>
-      <p class="mt-2 max-w-[68ch] text-sm leading-6 text-gray-400">{@description}</p>
+      <p class="settings-text-secondary mt-2 max-w-[68ch] text-sm leading-6">{@description}</p>
     </header>
     """
   end
@@ -258,10 +261,10 @@ defmodule IexCodeWeb.SettingsLive do
   def credential_badge(assigns) do
     ~H"""
     <span class={[
-      "shrink-0 border px-2 py-1 font-mono text-[11px] font-semibold uppercase tracking-wider",
+      "settings-credential-badge shrink-0 border px-2 py-1 font-mono text-xs font-semibold uppercase tracking-wider",
       if(@configured,
-        do: "border-emerald-400/25 bg-emerald-400/[0.06] text-emerald-300",
-        else: "border-[#3a424c] bg-[#0b0f14] text-gray-500"
+        do: "settings-success-badge",
+        else: "settings-muted-badge"
       )
     ]}>
       {if @configured, do: "Configured", else: "Not configured"}
@@ -285,11 +288,11 @@ defmodule IexCodeWeb.SettingsLive do
         name={@name}
         value="true"
         checked={@checked}
-        class="mt-0.5 h-4 w-4 shrink-0 accent-[#ff8a68]"
+        class="settings-checkbox mt-0.5 h-4 w-4 shrink-0"
       />
       <span>
-        <span class="block text-sm font-semibold text-gray-200">{@label}</span>
-        <span class="mt-1 block text-xs leading-5 text-gray-500">{@description}</span>
+        <span class="settings-text-primary block text-sm font-semibold">{@label}</span>
+        <span class="settings-text-secondary mt-1 block text-sm leading-5">{@description}</span>
       </span>
     </label>
     """
@@ -578,10 +581,10 @@ defmodule IexCodeWeb.SettingsLive do
   def status_title(:saving), do: "Saving"
   def status_title(_status), do: "Up to date"
 
-  def status_text_class(:dirty), do: "text-amber-300"
-  def status_text_class(:saved), do: "text-emerald-300"
-  def status_text_class(:error), do: "text-rose-300"
-  def status_text_class(_status), do: "text-gray-200"
+  def status_text_class(:dirty), do: "settings-topology-text"
+  def status_text_class(:saved), do: "settings-success-text"
+  def status_text_class(:error), do: "settings-live-text"
+  def status_text_class(_status), do: "settings-text-primary"
 
   def usage_dom_id(row) do
     case usage_value(row, :id) do

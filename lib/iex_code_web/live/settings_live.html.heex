@@ -1,9 +1,10 @@
 <Layouts.app flash={@flash} current_scope={@current_scope}>
   <main
     id="settings-page"
-    class="settings-page min-h-dvh overflow-x-hidden bg-[#0a0d12] text-gray-100"
+    class="settings-page sf-ambient-field min-h-dvh"
   >
-    <header class="border-b border-[#252c35] bg-[#0d1117]">
+    <div id="settings-calibration-bench" class="sf-chassis">
+    <header class="settings-page-header">
       <div class="mx-auto flex max-w-[90rem] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <div class="flex items-center justify-between gap-4">
           <.link
@@ -14,22 +15,22 @@
               @settings_status in [:dirty, :error] &&
                 "Discard your unsaved settings and return to the workspace?"
             }
-            class="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-2 text-sm font-medium text-gray-400 transition-colors hover:bg-[#161b22] hover:text-white active:translate-y-px focus-visible:ring-2 focus-visible:ring-[#ff8a68]/70"
+            class="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-2 text-sm font-medium settings-text-secondary transition-colors active:translate-y-px settings-focusable"
           >
             <.icon name="hero-arrow-left" class="h-4 w-4" /> Return to workspace
           </.link>
           <Layouts.logout_button id="settings-logout-form" />
         </div>
 
-        <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div class="flex flex-col gap-5 lg:flex-row lg:flex-wrap lg:items-end lg:justify-between xl:flex-nowrap">
           <div class="max-w-3xl">
-            <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[#ff8a68]">
+            <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] settings-live-text">
               Local application control
             </p>
-            <h1 class="mt-2 text-3xl font-semibold tracking-[-0.035em] text-white sm:text-4xl">
+            <h1 class="mt-2 text-3xl font-semibold tracking-[-0.035em] settings-text-primary sm:text-4xl">
               Settings
             </h1>
-            <p class="mt-3 max-w-[68ch] text-sm leading-6 text-gray-400">
+            <p class="mt-3 max-w-[68ch] text-sm leading-6 settings-text-secondary">
               These global defaults seed run setup when a workspace loads and apply to newly
               launched work. Existing sessions retain only their session-level provider, model,
               and temperature overrides.
@@ -39,40 +40,50 @@
           <section
             id="settings-scope-summary"
             aria-labelledby="settings-scope-title"
-            class="w-full border border-[#303844] bg-[#11161d] p-4 lg:max-w-md"
+            class="w-full border settings-token-border settings-token-surface p-4 lg:max-w-md"
           >
             <div class="flex items-start gap-3">
-              <span class="mt-1 h-2 w-2 shrink-0 bg-[#ff8a68]"></span>
+              <span class="mt-1 h-2 w-2 shrink-0 settings-live-mark"></span>
               <div class="min-w-0">
-                <h2 id="settings-scope-title" class="text-sm font-semibold text-white">
+                <h2 id="settings-scope-title" class="text-sm font-semibold settings-text-primary">
                   Global defaults
                 </h2>
-                <p class="mt-1 text-sm leading-5 text-gray-400">
+                <p class="mt-1 text-sm leading-5 settings-text-secondary">
                   Stored in local SQLite and shared by every workspace on this machine.
                 </p>
                 <div
                   :if={@context_session}
                   id="settings-session-context"
-                  class="mt-3 border-t border-[#252c35] pt-3"
+                  class="mt-3 border-t settings-token-border pt-3"
                 >
-                  <p class="font-mono text-[11px] uppercase tracking-wider text-gray-500">
+                  <p class="font-mono text-[11px] uppercase tracking-wider settings-text-secondary">
                     Current session context
                   </p>
-                  <p class="mt-1 truncate text-sm font-medium text-gray-200">
+                  <p class="mt-1 truncate text-sm font-medium settings-text-primary">
                     {@context_session.title}
                   </p>
-                  <p class="mt-1 truncate font-mono text-xs text-gray-500">
+                  <p class="mt-1 truncate font-mono text-xs settings-text-secondary">
                     {@context_session.model_provider} · {@context_session.model_name}
                   </p>
                 </div>
               </div>
             </div>
           </section>
+
+          <div id="settings-theme-controls" role="group" aria-label="Theme preference">
+            <span class="settings-theme-label">Theme</span>
+            <button id="settings-theme-dark" type="button" data-phx-theme="dark"
+              phx-click={JS.dispatch("phx:set-theme")} aria-pressed="false">Dark</button>
+            <button id="settings-theme-light" type="button" data-phx-theme="light"
+              phx-click={JS.dispatch("phx:set-theme")} aria-pressed="false">Light</button>
+            <button id="settings-theme-system" type="button" data-phx-theme="system"
+              phx-click={JS.dispatch("phx:set-theme")} aria-pressed="false">System</button>
+          </div>
         </div>
       </div>
     </header>
 
-    <div class="settings-mobile-nav border-b border-[#252c35] bg-[#0d1117] lg:hidden">
+    <div class="settings-mobile-nav lg:hidden">
       <nav
         id="settings-mobile-section-nav"
         aria-label="Settings sections"
@@ -95,7 +106,7 @@
           aria-label="Settings sections"
           class="settings-section-rail"
         >
-          <p class="px-3 pb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+          <p class="px-3 pb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] settings-text-secondary">
             Sections
           </p>
           <a
@@ -114,7 +125,7 @@
           :if={@invalid_session_context?}
           id="settings-session-context-error"
           role="status"
-          class="mb-6 flex items-start gap-3 border border-amber-400/30 bg-amber-400/[0.06] p-4 text-sm text-amber-100"
+          class="mb-6 flex items-start gap-3 border settings-warning-border settings-warning-bg p-4 text-sm settings-warning-text"
         >
           <.icon name="hero-information-circle" class="mt-0.5 h-5 w-5 shrink-0" />
           <span>The requested session is unavailable. Showing safe global settings instead.</span>
@@ -124,13 +135,13 @@
           :if={@external_update?}
           id="settings-external-update"
           role="alert"
-          class="mb-6 flex flex-col gap-3 border border-amber-400/30 bg-amber-400/[0.06] p-4 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between"
+          class="mb-6 flex flex-col gap-3 border settings-warning-border settings-warning-bg p-4 text-sm settings-warning-text sm:flex-row sm:items-center sm:justify-between"
         >
           <span>Settings changed elsewhere while you were editing. Discard to load the newer version.</span>
           <button
             type="button"
             phx-click="discard_settings"
-            class="settings-text-action text-amber-200"
+            class="settings-text-action settings-warning-text"
           >
             Load saved version
           </button>
@@ -141,16 +152,16 @@
           id="settings-error-summary"
           role="alert"
           tabindex="-1"
-          class="mb-6 border border-rose-400/35 bg-rose-400/[0.06] p-4"
+          class="mb-6 border settings-danger-border settings-danger-bg p-4"
         >
           <div class="flex items-start gap-3">
-            <.icon name="hero-exclamation-triangle" class="mt-0.5 h-5 w-5 shrink-0 text-rose-300" />
+            <.icon name="hero-exclamation-triangle" class="mt-0.5 h-5 w-5 shrink-0 settings-danger-text" />
             <div>
-              <h2 class="text-sm font-semibold text-rose-100">Settings were not saved</h2>
-              <p class="mt-1 text-sm leading-5 text-rose-200/80">{@settings_message}</p>
+              <h2 class="text-sm font-semibold settings-danger-text">Settings were not saved</h2>
+              <p class="mt-1 text-sm leading-5 settings-danger-text">{@settings_message}</p>
               <p
                 :if={form_error_count(@settings_form) > 0}
-                class="mt-2 font-mono text-xs text-rose-300"
+                class="mt-2 font-mono text-xs settings-danger-text"
               >
                 {form_error_count(@settings_form)} field {if form_error_count(@settings_form) ==
                                                                1,
@@ -212,10 +223,10 @@
               <article id="settings-openai-card" class="settings-credential-card">
                 <div class="flex items-start justify-between gap-4">
                   <div>
-                    <h3 class="text-base font-semibold text-white">
+                    <h3 class="text-base font-semibold settings-text-primary">
                       OpenAI / compatible endpoint
                     </h3>
-                    <p class="mt-1 text-sm text-gray-400">
+                    <p class="mt-1 text-sm settings-text-secondary">
                       Used whenever OpenAI or compatible is selected, including proxy-hosted models.
                     </p>
                   </div>
@@ -257,8 +268,8 @@
               <article id="settings-anthropic-card" class="settings-credential-card">
                 <div class="flex items-start justify-between gap-4">
                   <div>
-                    <h3 class="text-base font-semibold text-white">Anthropic</h3>
-                    <p class="mt-1 text-sm text-gray-400">
+                    <h3 class="text-base font-semibold settings-text-primary">Anthropic</h3>
+                    <p class="mt-1 text-sm settings-text-secondary">
                       Used whenever Anthropic is explicitly selected.
                     </p>
                   </div>
@@ -425,15 +436,15 @@
             </div>
             <div
               id="settings-run-attempt-policy"
-              class="mt-5 flex items-start gap-3 border border-[#303844] bg-[#0b0f14] p-4"
+              class="mt-5 flex items-start gap-3 border settings-token-border settings-token-surface p-4"
             >
               <.icon
                 name="hero-information-circle"
-                class="mt-0.5 h-5 w-5 shrink-0 text-[#ff9d82]"
+                class="mt-0.5 h-5 w-5 shrink-0 settings-live-text"
               />
-              <p class="text-sm leading-6 text-gray-400">
+              <p class="text-sm leading-6 settings-text-secondary">
                 The ceiling counts the initial execution. A value of
-                <strong class="font-semibold text-gray-200">3</strong>
+                <strong class="font-semibold settings-text-primary">3</strong>
                 allows the first run plus up to two user-requested retries. Eligible failed,
                 cancelled, or interrupted runs are never requeued automatically. Exact deep-research
                 DAGs keep their fixed one-run contract; individual DAG steps own separate bounded retries.
@@ -443,7 +454,7 @@
             </div>
             <fieldset id="settings-default-tools" class="settings-fieldset mt-5">
               <legend>Optional tools for new runs</legend>
-              <p id="settings-core-tools-note" class="mt-2 text-xs leading-5 text-gray-500">
+              <p id="settings-core-tools-note" class="mt-2 text-xs leading-5 settings-text-secondary">
                 Core workspace read, edit, terminal, and Git tools are governed separately by the
                 execution engine and safety policy.
               </p>
@@ -483,9 +494,9 @@
                 id="settings-goal-auto-start"
                 type="checkbox"
                 label="Queue new goals immediately"
-                class="h-4 w-4 accent-[#ff8a68]"
+                class="h-4 w-4 settings-checkbox"
               />
-              <p class="text-sm leading-5 text-gray-400">
+              <p class="text-sm leading-5 settings-text-secondary">
                 Turn this off to save newly created goals as durable drafts for review.
               </p>
             </div>
@@ -548,30 +559,30 @@
               research_effort_value(@settings_form[:research_level].value) %>
             <div
               id="settings-research-effort-summary"
-              class="mb-5 border border-violet-400/25 bg-violet-400/[0.05] p-4"
+              class="mb-5 border settings-topology-border settings-topology-bg p-4"
             >
-              <p class="font-mono text-xs font-semibold uppercase tracking-wider text-violet-300">
+              <p class="font-mono text-xs font-semibold uppercase tracking-wider settings-topology-text">
                 {effort_name} effort
               </p>
-              <p class="mt-1 text-sm leading-5 text-gray-300">{effort_copy}</p>
+              <p class="mt-1 text-sm leading-5 settings-text-primary">{effort_copy}</p>
               <dl class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div>
-                  <dt class="text-gray-500">Sources</dt><dd class="mt-1 font-mono text-gray-200">
+                  <dt class="settings-text-secondary">Sources</dt><dd class="mt-1 font-mono settings-text-primary">
                     up to {@settings_form[:research_max_sources].value}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-gray-500">Fetch workers</dt><dd class="mt-1 font-mono text-gray-200">
+                  <dt class="settings-text-secondary">Fetch workers</dt><dd class="mt-1 font-mono settings-text-primary">
                     {@settings_form[:research_parallelism].value}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-gray-500">Token cap</dt><dd class="mt-1 font-mono text-gray-200">
+                  <dt class="settings-text-secondary">Token cap</dt><dd class="mt-1 font-mono settings-text-primary">
                     {optional_limit(@settings_form[:research_max_tokens].value, "tokens")}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-gray-500">Time cap</dt><dd class="mt-1 font-mono text-gray-200">
+                  <dt class="settings-text-secondary">Time cap</dt><dd class="mt-1 font-mono settings-text-primary">
                     {optional_limit(
                       @settings_form[:research_time_budget_minutes].value,
                       "minutes"
@@ -660,11 +671,11 @@
                   id="settings-research-conflict-audit"
                   type="checkbox"
                   label="Require conflict audit"
-                  class="h-4 w-4 accent-violet-400"
+                  class="h-4 w-4 settings-checkbox"
                 />
               </div>
             </div>
-            <p id="settings-research-zero-cap-note" class="mt-4 text-xs leading-5 text-gray-500">
+            <p id="settings-research-zero-cap-note" class="mt-4 text-xs leading-5 settings-text-secondary">
               Token and reported-cost caps are hard admission limits. Entering 0 blocks any
               research manifest that reserves that resource; leave a cap blank to use the bounded
               effort-preset ceiling.
@@ -687,7 +698,7 @@
             <div class="relative mb-4">
               <.icon
                 name="hero-magnifying-glass"
-                class="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-gray-500"
+                class="pointer-events-none absolute left-3 top-3.5 h-4 w-4 settings-text-secondary"
               />
               <input
                 id="settings-provider-filter"
@@ -716,12 +727,12 @@
                 <% {status_label, status_tone} = provider_status(descriptor, config) %>
                 <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
                   <div class="flex min-w-0 flex-1 items-start gap-3">
-                    <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center border border-[#303844] bg-[#0b0f14] font-mono text-xs font-bold text-gray-300">
+                    <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center border settings-token-border settings-token-surface font-mono text-xs font-bold settings-text-primary">
                       {provider |> String.first() |> String.upcase()}
                     </div>
                     <div class="min-w-0">
                       <div class="flex flex-wrap items-center gap-2">
-                        <h3 class="text-sm font-semibold text-white">
+                        <h3 class="text-sm font-semibold settings-text-primary">
                           {provider_name(descriptor)}
                         </h3>
                         <span
@@ -731,11 +742,11 @@
                         >
                           {status_label}
                         </span>
-                        <span class="font-mono text-[11px] uppercase tracking-wider text-gray-400">
+                        <span class="font-mono text-[11px] uppercase tracking-wider settings-text-secondary">
                           {descriptor.lifecycle}
                         </span>
                       </div>
-                      <p class="mt-1 text-sm leading-5 text-gray-400">
+                      <p class="mt-1 text-sm leading-5 settings-text-secondary">
                         {Enum.map_join(
                           descriptor.capabilities,
                           " · ",
@@ -744,7 +755,7 @@
                       </p>
                       <p
                         :if={provider_lifecycle_note(descriptor)}
-                        class="mt-1 text-xs leading-5 text-gray-500"
+                        class="mt-1 text-xs leading-5 settings-text-secondary"
                       >
                         {provider_lifecycle_note(descriptor)}
                       </p>
@@ -768,7 +779,7 @@
                         value="true"
                         checked={provider_enabled?(config)}
                         disabled={descriptor.lifecycle == :retired}
-                        class="h-4 w-4 accent-violet-400"
+                        class="h-4 w-4 settings-checkbox"
                       /> Enabled
                     </label>
                     <div
@@ -815,7 +826,7 @@
                 <div
                   :if={MapSet.member?(@expanded_providers, provider)}
                   id={"settings-provider-panel-#{provider}"}
-                  class="mt-4 grid gap-4 border-t border-[#29313a] pt-4 sm:grid-cols-2"
+                  class="mt-4 grid gap-4 border-t settings-token-border pt-4 sm:grid-cols-2"
                 >
                   <div :if={:api_key in descriptor.config_fields}>
                     <.input
@@ -848,7 +859,7 @@
                     }
                     value={config["base_url"] || ""}
                     readonly={descriptor.id != :searxng}
-                    class="settings-control font-mono read-only:cursor-not-allowed read-only:text-gray-500"
+                    class="settings-control font-mono read-only:cursor-not-allowed read-only:settings-text-secondary"
                   />
                   <.input
                     :if={descriptor.id == :google}
@@ -904,9 +915,9 @@
                 id="settings-auto-save"
                 type="checkbox"
                 label="Automatically save file edits"
-                class="h-4 w-4 accent-[#ff8a68]"
+                class="h-4 w-4 settings-checkbox"
               />
-              <p class="text-sm leading-5 text-gray-400">
+              <p class="text-sm leading-5 settings-text-secondary">
                 When disabled, edited buffers remain marked as unsaved until you confirm them.
               </p>
             </div>
@@ -936,7 +947,7 @@
               </dl>
               <div
                 id="settings-usage-rows"
-                class="divide-y divide-[#29313a] border-y border-[#29313a]"
+                class="divide-y settings-token-border border-y settings-token-border"
               >
                 <article
                   :for={row <- Enum.take(@usage_rows, 20)}
@@ -944,16 +955,16 @@
                   class="grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-5"
                 >
                   <div class="min-w-0">
-                    <p class="truncate font-medium text-gray-200">
+                    <p class="truncate font-medium settings-text-primary">
                       {usage_value(row, :model, "Unknown model")}
-                    </p><p class="mt-0.5 font-mono text-xs text-gray-500">
+                    </p><p class="mt-0.5 font-mono text-xs settings-text-secondary">
                       {format_usage_date(usage_value(row, :date))}
                     </p>
                   </div>
-                  <p class="font-mono text-xs text-gray-400">
+                  <p class="font-mono text-xs settings-text-secondary">
                     {usage_value(row, :provider, "unknown")}
                   </p>
-                  <p class="font-mono text-sm font-semibold tabular-nums text-gray-200">
+                  <p class="font-mono text-sm font-semibold tabular-nums settings-text-primary">
                     {usage_value(row, :tokens, 0)} tokens
                   </p>
                 </article>
@@ -964,7 +975,7 @@
               id="settings-usage-empty"
               class="settings-empty-state"
             >
-              <.icon name="hero-chart-bar" class="mx-auto mb-3 h-6 w-6 text-gray-600" />{@usage_message}
+              <.icon name="hero-chart-bar" class="mx-auto mb-3 h-6 w-6 settings-text-secondary" />{@usage_message}
             </div>
             <div
               :if={@usage_status == :error}
@@ -1038,7 +1049,7 @@
                 <span><strong>Advanced resource controls</strong><small>Guardrails prevent unsafe or contradictory values.</small></span>
                 <.icon name="hero-chevron-down" class="h-4 w-4" />
               </summary>
-              <div class="grid gap-4 border-t border-[#29313a] p-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div class="grid gap-4 border-t settings-token-border p-4 sm:grid-cols-2 lg:grid-cols-4">
                 <.input
                   field={@settings_form[:session_idle_timeout_minutes]}
                   id="settings-session-idle-timeout"
@@ -1082,7 +1093,7 @@
               </div>
               <p
                 id="settings-resource-advanced-note"
-                class="border-t border-[#29313a] px-4 py-3 text-xs leading-5 text-gray-500"
+                class="border-t settings-token-border px-4 py-3 text-xs leading-5 settings-text-secondary"
               >
                 Defaults: 30-minute session passivation, 256 MiB per producer, 2 GiB total spool, and 7-day retention. Output and session changes apply to new work; admission thresholds and terminal cleanup apply live.
               </p>
@@ -1091,17 +1102,17 @@
             <% deployment = runtime_group(@runtime_status, :deployment) %>
             <div
               id="settings-deployment-limits"
-              class="mt-5 border border-[#29313a] bg-[#0c1015] p-4"
+              class="mt-5 border settings-token-border settings-token-surface p-4"
             >
               <div class="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <h3 class="text-sm font-semibold text-white">Container envelope</h3><p class="mt-1 text-xs text-gray-500">
+                  <h3 class="text-sm font-semibold settings-text-primary">Container envelope</h3><p class="mt-1 text-xs settings-text-secondary">
                     Read-only · change with the VPS installer or manager, then restart.
                   </p>
                 </div>
                 <span class="settings-restart-badge">Restart required</span>
               </div>
-              <dl class="grid gap-px overflow-hidden border border-[#29313a] bg-[#29313a] sm:grid-cols-2 lg:grid-cols-5">
+              <dl class="grid gap-px overflow-hidden border settings-token-border settings-token-border-bg sm:grid-cols-2 lg:grid-cols-5">
                 <div>
                   <dt>Profile</dt><dd id="settings-resource-profile">
                     {deployment_value(deployment, :profile)}
@@ -1150,7 +1161,7 @@
             >
               <div class="settings-runtime-overview">
                 <div class="min-w-0">
-                  <p class="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+                  <p class="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] settings-text-secondary">
                     Work state
                   </p>
                   <div class="mt-2 flex flex-wrap items-center gap-3">
@@ -1164,13 +1175,13 @@
                       <span class="settings-runtime-state-dot"></span>
                       {runtime_state_label(@runtime_status)}
                     </span>
-                    <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-gray-600">
+                    <span class="font-mono text-[11px] uppercase tracking-[0.1em] settings-text-secondary">
                       Auto-refresh · 5s
                     </span>
                   </div>
                   <p
                     id="settings-runtime-state-note"
-                    class="mt-3 max-w-[66ch] text-sm leading-6 text-gray-400"
+                    class="mt-3 max-w-[66ch] text-sm leading-6 settings-text-secondary"
                   >
                     {runtime_state_note(@runtime_status)}
                   </p>
@@ -1236,7 +1247,7 @@
                 </div>
               </dl>
             </div>
-            <div class="mt-4 flex items-start gap-2 text-xs leading-5 text-gray-500">
+            <div class="mt-4 flex items-start gap-2 text-xs leading-5 settings-text-secondary">
               <.icon name="hero-information-circle" class="mt-0.5 h-4 w-4 shrink-0" />
               A dormant session or terminal can remain open while the application is idle. Only queued or executing work makes the runtime active.
             </div>
@@ -1248,7 +1259,7 @@
                 <p class={["text-sm font-semibold", status_text_class(@settings_status)]}>
                   {status_title(@settings_status)}
                 </p>
-                <p class="mt-0.5 text-xs leading-5 text-gray-500">
+                <p class="mt-0.5 text-xs leading-5 settings-text-secondary">
                   {@settings_message}
                   <%= if @saved_at && @settings_status == :saved do %>
                     · {Calendar.strftime(@saved_at, "%H:%M:%S UTC")}
@@ -1256,8 +1267,8 @@
                 </p>
               </div>
               <div class="hidden phx-submit-loading:block">
-                <p class="text-sm font-semibold text-[#ff9d82]">Saving</p>
-                <p class="mt-0.5 text-xs text-gray-500">
+                <p class="text-sm font-semibold settings-live-text">Saving</p>
+                <p class="mt-0.5 text-xs settings-text-secondary">
                   Writing validated defaults to local storage…
                 </p>
               </div>
@@ -1287,6 +1298,7 @@
           </div>
         </.form>
       </div>
+    </div>
     </div>
   </main>
   <div
@@ -1351,6 +1363,9 @@
         window.addEventListener("beforeunload", this.beforeUnload)
         window.addEventListener("popstate", this.handleHistoryBack)
         document.addEventListener("click", this.guardNavigation, true)
+        this.handleThemeChange = () => this.syncThemeButtons()
+        window.addEventListener("iexcode:theme-changed", this.handleThemeChange)
+        this.syncThemeButtons()
         this.syncDirtyGuard()
 
         this.handleEvent("settings_clear_secrets", () => {
@@ -1362,13 +1377,23 @@
 
       updated() {
         this.dirty = this.el.dataset.dirty === "true"
+        this.syncThemeButtons()
         this.syncDirtyGuard()
       },
 
       destroyed() {
         window.removeEventListener("beforeunload", this.beforeUnload)
         window.removeEventListener("popstate", this.handleHistoryBack)
+        window.removeEventListener("iexcode:theme-changed", this.handleThemeChange)
         document.removeEventListener("click", this.guardNavigation, true)
+      },
+
+      syncThemeButtons() {
+        const preference = document.documentElement.dataset.theme || "system"
+
+        document.querySelectorAll("#settings-theme-controls [data-phx-theme]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.phxTheme === preference))
+        })
       },
 
       syncDirtyGuard() {
