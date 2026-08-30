@@ -1442,6 +1442,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
   attr :output, :string, default: ""
   attr :form, :any, default: nil
   attr :workspace_locks, :list, default: []
+  attr :can_clear?, :boolean, default: false
+  attr :can_interrupt?, :boolean, default: false
 
   def terminal_session(assigns) do
     session_id =
@@ -1463,154 +1465,119 @@ defmodule IexCodeWeb.WorkspaceComponents do
       assigns
       |> assign(:session_id, session_id)
       |> assign(:monitor_only, not is_nil(foreign_lock))
+      |> assign(
+        :input_locked,
+        not is_nil(foreign_lock) or match?({:agent, _, _}, assigns.occupant) or
+          match?({:agent, _}, assigns.occupant)
+      )
       |> assign(:foreign_lock, foreign_lock)
 
     ~H"""
     <div
       id="terminal-session-container"
-      class="flex-1 flex flex-col h-full bg-[#0a0d12] p-4 gap-3 select-none overflow-hidden"
+      data-input-locked={to_string(@input_locked)}
+      class="sf-terminal-session flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden"
     >
-      <!-- Top Toolbar: Badges, Quick Actions, Controls -->
-      <div class="flex items-center justify-between shrink-0 font-mono text-xs flex-wrap gap-2">
-        <!-- Left: Shell Info, Dimensions, Quick Action Launchers -->
-        <div class="flex items-center gap-2 flex-wrap">
-          <!-- Shell Info Badge -->
-          <div
-            id="terminal-shell-badge"
-            class="flex items-center gap-1.5 px-2.5 py-1 bg-[#161b22] border border-[#30363d] rounded-lg text-gray-300 font-mono text-xs shadow-sm"
-          >
-            <span class={[
-              "w-2 h-2 rounded-full",
-              @status in [:running, :ready] &&
-                "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)] animate-pulse",
-              @status == :restarting &&
-                "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)] animate-spin",
-              @status in [:stopped, :idle] && "bg-gray-500"
-            ]}></span>
-            <span class="font-semibold text-gray-200">{@shell || "zsh"}</span>
-            <span class="text-gray-500 text-[10px]">PTY</span>
+      <div class="sf-terminal-toolbar flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <div class="sf-terminal-toolbar-group flex min-w-0 flex-wrap items-center gap-2">
+          <div id="terminal-shell-badge" class="sf-terminal-badge">
+            <span
+              class={[
+                "sf-terminal-state-mark",
+                @status in [:running, :ready] && "is-active",
+                @status == :restarting && "is-restarting",
+                @status in [:stopped, :idle] && "is-stopped"
+              ]}
+              aria-hidden="true"
+            ></span>
+            <span class="font-semibold">{@shell || "zsh"}</span>
+            <span class="sf-metadata">PTY</span>
           </div>
-
-          <!-- Dimensions Badge -->
-          <div
-            id="terminal-dimensions-badge"
-            class="px-2 py-1 bg-[#161b22]/70 border border-[#30363d]/70 rounded-lg text-gray-400 font-mono text-[11px] shadow-sm"
-          >
+          <div id="terminal-dimensions-badge" class="sf-terminal-badge sf-terminal-dimensions">
             {@cols}x{@rows}
           </div>
-
-          <div class="h-4 w-px bg-[#30363d] mx-1"></div>
-
-          <!-- Quick Action Buttons -->
-          <button
-            id="btn-quick-iex"
-            phx-click="run_terminal_quick_action"
-            phx-value-cmd="iex -S mix"
-            disabled={!@running or @monitor_only}
-            class="px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] active:bg-[#30363d] border border-[#30363d] rounded-lg text-purple-300 hover:text-purple-200 transition-smooth font-mono text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none group shadow-sm"
-            title="Start Interactive Elixir Shell"
+          <div
+            class="sf-terminal-quick-actions flex min-w-0 flex-wrap gap-1.5"
+            aria-label="Quick terminal actions"
           >
-            <.icon
-              name="hero-bolt"
-              class="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform"
-            />
-            <span>iex -S mix</span>
-          </button>
-
-          <button
-            id="btn-quick-test"
-            phx-click="run_terminal_quick_action"
-            phx-value-cmd="mix test"
-            disabled={!@running or @monitor_only}
-            class="px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] active:bg-[#30363d] border border-[#30363d] rounded-lg text-emerald-300 hover:text-emerald-200 transition-smooth font-mono text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none group shadow-sm"
-            title="Run Mix Test Suite"
-          >
-            <.icon
-              name="hero-play"
-              class="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform"
-            />
-            <span>mix test</span>
-          </button>
-
-          <button
-            id="btn-quick-precommit"
-            phx-click="run_terminal_quick_action"
-            phx-value-cmd="mix precommit"
-            disabled={!@running or @monitor_only}
-            class="px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] active:bg-[#30363d] border border-[#30363d] rounded-lg text-cyan-300 hover:text-cyan-200 transition-smooth font-mono text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none group shadow-sm"
-            title="Run Precommit Quality Checks"
-          >
-            <.icon
-              name="hero-check-badge"
-              class="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform"
-            />
-            <span>mix precommit</span>
-          </button>
-
-          <button
-            id="btn-quick-git-status"
-            phx-click="run_terminal_quick_action"
-            phx-value-cmd="git status"
-            disabled={!@running or @monitor_only}
-            class="px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] active:bg-[#30363d] border border-[#30363d] rounded-lg text-amber-300 hover:text-amber-200 transition-smooth font-mono text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none group shadow-sm"
-            title="Check Git Working Directory Status"
-          >
-            <.icon
-              name="hero-document-text"
-              class="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform"
-            />
-            <span>git status</span>
-          </button>
-
-          <button
-            id="btn-quick-git-diff"
-            phx-click="run_terminal_quick_action"
-            phx-value-cmd="git diff"
-            disabled={!@running or @monitor_only}
-            class="px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] active:bg-[#30363d] border border-[#30363d] rounded-lg text-amber-300 hover:text-amber-200 transition-smooth font-mono text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none group shadow-sm"
-            title="Show Git Diff of Unstaged Changes"
-          >
-            <.icon
-              name="hero-code-bracket"
-              class="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform"
-            />
-            <span>git diff</span>
-          </button>
+            <button
+              id="btn-quick-iex"
+              type="button"
+              phx-click="run_terminal_quick_action"
+              phx-value-cmd="iex -S mix"
+              disabled={!@running or @input_locked}
+              class="sf-terminal-control"
+              title="Start Interactive Elixir Shell"
+            ><.icon name="hero-bolt" class="size-4" /><span>iex -S mix</span></button>
+            <button
+              id="btn-quick-test"
+              type="button"
+              phx-click="run_terminal_quick_action"
+              phx-value-cmd="mix test"
+              disabled={!@running or @input_locked}
+              class="sf-terminal-control"
+              title="Run Mix Test Suite"
+            ><.icon name="hero-play" class="size-4" /><span>mix test</span></button>
+            <button
+              id="btn-quick-precommit"
+              type="button"
+              phx-click="run_terminal_quick_action"
+              phx-value-cmd="mix precommit"
+              disabled={!@running or @input_locked}
+              class="sf-terminal-control"
+              title="Run Precommit Quality Checks"
+            ><.icon name="hero-check-badge" class="size-4" /><span>mix precommit</span></button>
+            <button
+              id="btn-quick-git-status"
+              type="button"
+              phx-click="run_terminal_quick_action"
+              phx-value-cmd="git status"
+              disabled={!@running or @input_locked}
+              class="sf-terminal-control"
+              title="Check Git Working Directory Status"
+            ><.icon name="hero-document-text" class="size-4" /><span>git status</span></button>
+            <button
+              id="btn-quick-git-diff"
+              type="button"
+              phx-click="run_terminal_quick_action"
+              phx-value-cmd="git diff"
+              disabled={!@running or @input_locked}
+              class="sf-terminal-control"
+              title="Show Git Diff of Unstaged Changes"
+            ><.icon name="hero-code-bracket" class="size-4" /><span>git diff</span></button>
+          </div>
         </div>
-
-        <!-- Right: Terminal Controls (Clear, Restart, Kill) -->
-        <div class="flex items-center gap-2">
+        <div
+          class="sf-terminal-lifecycle flex shrink-0 flex-wrap gap-1.5"
+          aria-label="Terminal lifecycle"
+        >
           <button
             id="btn-terminal-clear"
+            type="button"
             phx-click="clear_terminal"
-            class="px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] active:bg-[#30363d] border border-[#30363d] rounded-lg text-gray-400 hover:text-gray-200 transition-smooth font-mono text-xs flex items-center gap-1.5 shadow-sm"
+            disabled={@input_locked or not @can_clear?}
+            class="sf-terminal-control"
             title="Clear Terminal Screen & Buffer"
-          >
-            <.icon name="hero-trash" class="w-3.5 h-3.5" />
-            <span>Clear</span>
-          </button>
-
+          ><.icon name="hero-trash" class="size-4" /><span>Clear history</span></button>
           <button
             id="btn-terminal-restart"
+            type="button"
             phx-click="restart_terminal_session"
-            disabled={@monitor_only}
-            class="px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] active:bg-[#30363d] border border-[#30363d] rounded-lg text-sky-400 hover:text-sky-300 transition-smooth font-mono text-xs flex items-center gap-1.5 shadow-sm"
+            disabled={@input_locked}
+            class="sf-terminal-control"
             title="Restart PTY Shell Process"
-          >
-            <.icon name="hero-arrow-path" class="w-3.5 h-3.5" />
-            <span>Restart</span>
-          </button>
-
+          ><.icon name="hero-arrow-path" class="size-4" /><span>{if(@running,
+            do: "Restart PTY",
+            else: "Start terminal"
+          )}</span></button>
           <button
             id="btn-terminal-kill"
+            type="button"
             phx-click="kill_terminal_session"
-            disabled={@monitor_only}
-            class="px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/50 active:bg-rose-800/60 border border-rose-800/60 rounded-lg text-rose-300 hover:text-rose-200 transition-smooth font-mono text-xs flex items-center gap-1.5 shadow-sm"
+            disabled={@input_locked or not @can_interrupt?}
+            class="sf-terminal-control sf-terminal-control-danger"
             title="Send SIGINT / Interrupt Shell"
-          >
-            <.icon name="hero-stop" class="w-3.5 h-3.5 text-rose-400" />
-            <span>Kill</span>
-          </button>
+          ><.icon name="hero-stop" class="size-4" /><span>Interrupt</span></button>
         </div>
       </div>
 
@@ -1619,73 +1586,33 @@ defmodule IexCodeWeb.WorkspaceComponents do
           id="terminal-workspace-lock-banner"
           role="status"
           data-lock-state="foreign"
-          class="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-sky-400/25 bg-sky-400/10 px-3.5 py-2 font-mono text-xs text-sky-100"
+          class="sf-terminal-lock-banner"
         >
-          <div class="flex items-center gap-2.5">
-            <.icon name="hero-eye" class="size-4 text-sky-300" />
-            <span class="font-semibold">Monitor-only terminal</span>
-            <span class="text-sky-200/70">
-              Workspace changes are locked by {workspace_lock_label(@foreign_lock)}.
-            </span>
+          <div class="flex min-w-0 items-center gap-2">
+            <span aria-hidden="true"><.icon name="hero-eye" class="size-4" /></span><span class="font-semibold">Monitor only</span><span>Input disabled during {workspace_lock_label(
+              @foreign_lock
+            )}.</span>
           </div>
-          <span class="rounded-md border border-sky-300/20 bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-sky-200/70">
-            Input disabled
-          </span>
+          <span class="sf-metadata">Input disabled</span>
         </div>
       <% end %>
 
-      <!-- Visual Active Agent Banner -->
       <%= if match?({:agent, _, _}, @occupant) or match?({:agent, _}, @occupant) do %>
-        <% {agent_name, op_id} =
+        <% agent_name =
           case @occupant do
-            {:agent, name, id} -> {name, id}
-            {:agent, name} -> {name, nil}
-            _ -> {"Agent", nil}
+            {:agent, name, _id} -> bounded_terminal_owner(name)
+            {:agent, name} -> bounded_terminal_owner(name)
+            _ -> "Agent"
           end %>
-        <div
-          id="terminal-agent-banner"
-          class="flex items-center justify-between px-3.5 py-2 bg-gradient-to-r from-amber-500/15 via-purple-500/15 to-indigo-500/15 border border-amber-500/30 rounded-xl text-xs font-mono text-amber-200 shadow-lg animate-in fade-in slide-in-from-top-1 shrink-0"
-        >
-          <div class="flex items-center gap-2.5 flex-wrap">
-            <span class="flex h-2.5 w-2.5 relative">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
-            </span>
-            <span class="font-bold text-amber-300">🤖 Agent Active:</span>
-            <span class="px-2 py-0.5 bg-amber-400/20 text-amber-200 rounded font-semibold text-[11px] border border-amber-400/30">
-              {agent_name}
-            </span>
-            <%= if @active_cmd do %>
-              <span class="text-gray-400 text-[11px]">Executing:</span>
-              <code class="px-2 py-0.5 bg-black/40 text-emerald-300 rounded font-mono text-[11px] border border-emerald-500/20">
-                {@active_cmd}
-              </code>
-            <% end %>
-            <%= if op_id do %>
-              <span class="text-gray-500 text-[10px]">({op_id})</span>
-            <% end %>
-          </div>
-
-          <div class="flex items-center gap-2 text-[11px] text-amber-300/80">
-            <svg
-              class="animate-spin h-3.5 w-3.5 text-amber-400"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
-              </circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-            </svg>
-            <span class="italic text-[10px]">User input locked during autonomous execution</span>
-          </div>
+        <div id="terminal-agent-banner" role="status" class="sf-terminal-agent-banner">
+          <span class="font-semibold">Agent control · {agent_name}</span>
+          <span>User input is paused during autonomous execution</span>
         </div>
       <% end %>
 
-      <!-- xterm Container Viewport -->
       <div
         id="terminal-xterm-wrapper"
-        class="flex-1 min-h-0 bg-[#0d1117] border border-[#21262d] rounded-2xl overflow-hidden shadow-2xl relative flex flex-col"
+        class="sf-terminal-viewport flex min-h-[16rem] min-w-0 flex-1 overflow-hidden rounded-2xl"
       >
         <div
           id="terminal-xterm-container"
@@ -1693,44 +1620,46 @@ defmodule IexCodeWeb.WorkspaceComponents do
           phx-update="ignore"
           data-session-id={@session_id}
           data-monitor-only={to_string(@monitor_only)}
-          aria-disabled={to_string(@monitor_only)}
-          class="flex-1 w-full h-full p-2 bg-[#0d1117]"
+          data-input-locked={to_string(@input_locked)}
+          aria-disabled={to_string(@input_locked)}
+          aria-label="Interactive terminal session"
+          class="sf-terminal-xterm h-full min-h-0 w-full"
         >
         </div>
-        <div id="terminal-rendered-output" class="hidden">
-          {@output}
-        </div>
+        <div id="terminal-rendered-output" class="hidden">{@output}</div>
       </div>
 
-      <!-- Quick Command Input Form -->
       <%= if @form do %>
         <.form
           for={@form}
           id="terminal-form"
           phx-submit="run_terminal_command"
-          class="flex gap-2 shrink-0"
+          class="sf-terminal-form flex shrink-0 gap-2"
         >
-          <div class="relative flex-1">
-            <span class="absolute left-3 top-2.5 text-emerald-400 font-mono text-xs font-bold">$</span>
+          <label for="terminal-command-input" class="sr-only">Terminal command</label>
+          <div class="sf-terminal-input-shell relative min-w-0 flex-1">
+            <span aria-hidden="true" class="sf-terminal-prompt-mark">$</span>
             <input
+              id="terminal-command-input"
               type="text"
               name="command"
               value={Phoenix.HTML.Form.input_value(@form, :command)}
-              placeholder="Enter shell command..."
-              disabled={!@running or @monitor_only}
-              class="w-full bg-[#11151c] border border-[#21262d] rounded-xl pl-7 pr-4 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+              placeholder="Enter shell command…"
+              autocomplete="off"
+              disabled={!@running or @input_locked}
+              class="sf-terminal-command-input"
             />
             <%= if @active_cmd do %>
               <span id="terminal-active-cmd" class="hidden">{@active_cmd}</span>
             <% end %>
           </div>
           <button
+            id="terminal-command-submit"
             type="submit"
-            disabled={!@running or @monitor_only}
-            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-mono font-medium transition-smooth disabled:opacity-50 disabled:pointer-events-none"
-          >
-            Run
-          </button>
+            disabled={!@running or @input_locked}
+            phx-disable-with="Running…"
+            class="sf-terminal-submit"
+          >Run</button>
         </.form>
       <% end %>
     </div>
@@ -1746,6 +1675,19 @@ defmodule IexCodeWeb.WorkspaceComponents do
   defp workspace_lock_value(lock, key) when is_map(lock) do
     Map.get(lock, key) || Map.get(lock, Atom.to_string(key))
   end
+
+  defp bounded_terminal_owner(name) when is_binary(name) do
+    name
+    |> String.replace_invalid()
+    |> String.trim()
+    |> String.slice(0, 64)
+    |> case do
+      "" -> "Agent"
+      bounded -> bounded
+    end
+  end
+
+  defp bounded_terminal_owner(_), do: "Agent"
 
   defp workspace_lock_label(lock) do
     cond do
@@ -1992,6 +1934,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
   attr :status, :string, required: true
   attr :return_to, :string, required: true
   attr :return_instrument_id, :string, required: true
+  attr :hidden, :boolean, default: false
   slot :primary_action
   slot :local_modes
   slot :primary_field, required: true
@@ -2004,6 +1947,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
       id={@id}
       data-workbench-surface={@surface}
       aria-labelledby={"#{@id}-title"}
+      hidden={@hidden}
       class="sf-chassis sf-workbench-enter"
     >
       <header class="sf-workbench-header">

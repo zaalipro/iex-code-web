@@ -23,6 +23,7 @@ export const TerminalHook = {
       prefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches
     })
     this.handleThemeChanged = (event) => this.applyTheme(event.detail?.theme)
+    this.sessionId = this.el.dataset.sessionId || null
     this.initTerminal(theme)
     window.addEventListener("iexcode:theme-changed", this.handleThemeChanged)
   },
@@ -155,19 +156,19 @@ export const TerminalHook = {
     })
 
     // 6. Keystroke Listener -> Push to Backend PTY
+    this.inputLocked = () =>
+      this.el?.dataset.inputLocked === "true" || this.el?.dataset.monitorOnly === "true"
+
     this.term.onData((data) => {
-      if (this.el.dataset.monitorOnly !== "true") {
-        this.pushEvent("terminal_input", { data })
-      }
+      if (!this.inputLocked()) this.pushEvent("terminal_input", { data })
     })
 
     // 7. Clipboard Paste Listener on Container
     this.handlePaste = (e) => {
       e.preventDefault()
+      if (this.inputLocked()) return
       const text = (e.clipboardData || window.clipboardData).getData("text")
-      if (text && text.length > 0) {
-        this.term.paste(text)
-      }
+      if (text && text.length > 0) this.term.paste(text)
     }
     this.el.addEventListener("paste", this.handlePaste)
 
@@ -264,21 +265,22 @@ export const TerminalHook = {
     }
 
     // Initial fit with small delay to ensure CSS layout settlement
-    setTimeout(() => {
+    this.initialHandshakeTimer = setTimeout(() => {
+      this.initialHandshakeTimer = null
       this.fitTerminal()
-      if (this.term) {
-        this.term.focus()
-      }
-      // 10. Request History Handshake
+      if (this.term) this.term.focus()
       this.pushEvent("request_terminal_history", {})
     }, 50)
   },
 
   updated() {
-    // Re-fit in case container visibility or tab changed
-    if (this.fitTerminal) {
-      this.fitTerminal()
+    const nextSessionId = this.el.dataset.sessionId || null
+    if (nextSessionId !== this.sessionId) {
+      this.sessionId = nextSessionId
+      if (this.term) this.term.reset()
+      this.pushEvent("request_terminal_history", {})
     }
+    if (this.fitTerminal) this.fitTerminal()
   },
 
   destroyed() {
@@ -286,6 +288,11 @@ export const TerminalHook = {
     if (this.handleThemeChanged) {
       window.removeEventListener("iexcode:theme-changed", this.handleThemeChanged)
       this.handleThemeChanged = null
+    }
+
+    if (this.initialHandshakeTimer) {
+      clearTimeout(this.initialHandshakeTimer)
+      this.initialHandshakeTimer = null
     }
 
     if (this.resizeRaf) {

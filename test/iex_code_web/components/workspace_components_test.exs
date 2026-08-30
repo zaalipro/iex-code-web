@@ -352,9 +352,9 @@ defmodule IexCodeWeb.WorkspaceComponentsTest do
       assert html =~ "btn-quick-precommit"
       assert html =~ "btn-quick-git-status"
       assert html =~ "btn-quick-git-diff"
-      assert html =~ "Clear"
-      assert html =~ "Restart"
-      assert html =~ "Kill"
+      assert html =~ "Clear history"
+      assert html =~ "Restart PTY"
+      assert html =~ "Interrupt"
       document = LazyHTML.from_fragment(html)
 
       assert LazyHTML.query(

@@ -612,6 +612,9 @@ defmodule IexCodeWeb.InstrumentSummary do
   defp owner_label({:agent, name, _operation_id}),
     do: if(bounded_nonblank(name), do: "Agent · #{bounded_nonblank(name)}", else: "Agent")
 
+  defp owner_label({:agent, name}),
+    do: if(bounded_nonblank(name), do: "Agent · #{bounded_nonblank(name)}", else: "Agent")
+
   defp owner_label(_owner), do: "Unknown"
 
   defp iso8601(%DateTime{} = value),

@@ -119,6 +119,30 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       assert has_element?(view, "#terminal-xterm-container[data-session-id='#{session.id}']")
     end
 
+    test "renders one Terminal Scope chassis, one command dock, and factual idle signals", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+      view |> element("#instrument-card-terminal") |> render_click()
+
+      assert has_element?(
+               view,
+               "#instrument-workbench-terminal[data-workbench-surface='terminal']"
+             )
+
+      assert has_element?(view, "#instrument-workbench-terminal-title", "Terminal Scope")
+      assert has_element?(view, "#instrument-workbench-terminal-status[role='status']")
+      assert has_element?(view, "#terminal-signal-panel", "Idle · no active command")
+      assert has_element?(view, "#terminal-signal-panel", "No command yet")
+      assert has_element?(view, "#instrument-workbench-terminal #prompt-composer")
+      refute has_element?(view, "#workspace-views ~ #prompt-composer")
+      assert has_element?(view, "#btn-terminal-replay", "Replay last command")
+    end
+
     test "renders shell badge, dimensions badge, and quick action toolbar buttons", %{
       conn: conn,
       workspace_path: path
@@ -236,6 +260,41 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       assert Process.alive?(view.pid)
     end
 
+    test "clear uses the server-owned confirmation sheet and removes replayable history", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+      view |> element("#instrument-card-terminal") |> render_click()
+      render_click(view, "run_terminal_quick_action", %{"cmd" => "echo retained-command"})
+
+      view |> element("#btn-terminal-clear") |> render_click()
+
+      assert has_element?(
+               view,
+               "#terminal-clear-confirmation[phx-hook='ResponsiveSheet'][data-sheet-return-id='btn-terminal-clear']"
+             )
+
+      assert has_element?(
+               view,
+               "#terminal-clear-confirmation-dialog[phx-hook='ModalFocus'][role='dialog'][aria-modal='true']"
+             )
+
+      view |> element("#cancel-terminal-confirmation") |> render_click()
+      refute has_element?(view, "#terminal-clear-confirmation")
+
+      view |> element("#btn-terminal-clear") |> render_click()
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+      _ = :sys.get_state(view.pid)
+
+      refute has_element?(view, "[id^='terminal-command-trace-']")
+      assert has_element?(view, "#instrument-workbench-terminal-status", "No command yet")
+      assert has_element?(view, "#btn-terminal-replay[disabled]")
+    end
+
     test "handles restart_terminal_session and respawns PTY shell", %{
       conn: conn,
       workspace_path: path
@@ -265,8 +324,8 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       |> element("#instrument-card-terminal")
       |> render_click()
 
-      # Click kill button
-      view |> element("#btn-terminal-kill") |> render_click()
+      # Forged lifecycle event is a no-op when no foreground process is active.
+      render_click(view, "kill_terminal_session", %{})
       assert Process.alive?(view.pid)
     end
 
@@ -379,7 +438,7 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       # Banner must now be visible with agent details
       assert has_element?(view, "#terminal-agent-banner")
       assert render(view) =~ "ExplorerAgent"
-      assert render(view) =~ "Agent Active"
+      assert render(view) =~ "Agent control"
 
       # Send occupant change back to :user
       send(view.pid, {:terminal_occupant, %{session_id: session.id, occupant: :user}})

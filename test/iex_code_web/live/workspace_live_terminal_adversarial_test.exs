@@ -261,8 +261,8 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalAdversarialTest do
       assert has_element?(view, "#terminal-agent-banner")
       html = render(view)
       assert html =~ "TestAutonomousAgent"
-      assert html =~ "op-999"
-      assert html =~ "User input locked during autonomous execution"
+      refute html =~ "op-999"
+      assert html =~ "User input is paused during autonomous execution"
 
       # 3. Occupant transition to 2-tuple
       send(

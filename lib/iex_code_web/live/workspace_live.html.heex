@@ -2207,25 +2207,85 @@
           </.workbench_chassis>
         <% end %>
 
-        <!-- TAB 7: TERMINAL SESSION RUNNER -->
-        <div class={[
-          "flex-1 flex flex-col h-full bg-[#0a0d12] overflow-hidden",
-          @active_tab != "terminal" && "hidden"
-        ]}>
-          <.terminal_session
-            session={@session}
-            running={@terminal_running?}
-            status={@terminal_status}
-            shell={@terminal_shell}
-            cols={@terminal_cols}
-            rows={@terminal_rows}
-            occupant={@terminal_occupant}
-            active_cmd={@terminal_active_cmd}
-            output={@terminal_output}
-            form={@terminal_form}
-            workspace_locks={@workspace_locks}
-          />
-        </div>
+          <%!-- Instrument 08: Terminal Scope --%>
+        <%= if @active_view != "deck" do %>
+            <% terminal_summary = @instrument_summaries["terminal"] %>
+            <.workbench_chassis
+              id="instrument-workbench-terminal"
+              surface="terminal"
+              index="08"
+              title="Terminal Scope"
+              status={terminal_summary.primary}
+            return_to={workspace_path(@workspace_route, "deck")}
+            return_instrument_id="instrument-card-terminal"
+            hidden={@active_view != "terminal"}
+            >
+              <:primary_action>
+                <button
+                  id="btn-terminal-replay"
+                  type="button"
+                  phx-click="replay_terminal_command"
+                disabled={
+                  @terminal_history == [] or not @terminal_available? or
+                    not @terminal_running? or terminal_input_locked?(assigns)
+                }
+                  class="sf-control min-h-11 px-4 text-sm font-semibold"
+                >
+                  <.icon name="hero-arrow-uturn-left" class="size-4" /> Replay last command
+                </button>
+              </:primary_action>
+              <:primary_field>
+                <.terminal_session
+                  session={@session}
+                  running={@terminal_running?}
+                  status={@terminal_status}
+                  shell={@terminal_shell}
+                  cols={@terminal_cols}
+                  rows={@terminal_rows}
+                  occupant={@terminal_occupant}
+                  active_cmd={@terminal_active_cmd}
+                output={@terminal_output}
+                form={@terminal_form}
+                workspace_locks={@workspace_locks}
+                can_clear?={@terminal_history != [] or @terminal_output != ""}
+                can_interrupt?={is_binary(@terminal_active_cmd) and @terminal_active_cmd != ""}
+              />
+              </:primary_field>
+              <:signal_panel>
+                <div id="terminal-signal-panel" class="sf-terminal-signal-panel">
+                  <p class="sf-metadata">Session signal</p>
+                  <p class="sf-terminal-signal-primary">{terminal_summary.primary}</p>
+                  <p :if={terminal_summary.detail} class="sf-terminal-signal-detail">
+                    {terminal_summary.detail}
+                  </p>
+                  <dl class="sf-terminal-facts">
+                    <%= for fact <- terminal_summary.secondary do %>
+                      <div class="sf-terminal-fact">
+                        <dt>{fact.label}</dt>
+                        <dd>{fact.value}</dd>
+                      </div>
+                    <% end %>
+                  </dl>
+                  <div :if={@terminal_history != []} class="sf-terminal-trace">
+                    <p class="sf-metadata">Recent command trace</p>
+                    <ol class="sf-terminal-trace-list">
+                      <%= for {command, index} <- @terminal_history |> Enum.take(8) |> Enum.with_index() do %>
+                        <li id={"terminal-command-trace-#{index}"} class="sf-terminal-trace-row">
+                          <span aria-hidden="true">{String.pad_leading(
+                            Integer.to_string(index + 1),
+                            2,
+                            "0"
+                          )}</span>
+                          <code>{command}</code>
+                        </li>
+                      <% end %>
+                    </ol>
+                  </div>
+                </div>
+              </:signal_panel>
+            <:command_dock :if={@active_view == "terminal"}><.shared_command_dock workspace_assigns={assigns} /></:command_dock>
+            </.workbench_chassis>
+          <% end %>
 
         <%!-- RIGHT TASK DETAIL DRAWER / INSPECTOR --%>
         <%= if @show_task_drawer and @selected_task do %>
@@ -2575,12 +2635,59 @@
       </div>
 
       <%!-- Shared command dock --%>
-      <%= if @active_view not in ["kanban", "calendar", "swarm", "research", "changes", "chat", "files"] do %>
+      <%= if @active_view not in ["kanban", "calendar", "swarm", "research", "changes", "chat", "files", "terminal"] do %>
         <.shared_command_dock workspace_assigns={assigns} />
       <% end %>
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>
     </main>
   </div>
+
+  <%= if @pending_terminal_confirmation do %>
+    <% pending_terminal = @pending_terminal_confirmation %>
+    <% {host_id, title, copy} =
+      case pending_terminal.kind do
+        :clear_terminal_history ->
+          {"terminal-clear-confirmation", "Clear terminal history?", "Clear terminal scrollback and command history? This cannot be undone."}
+
+        :restart_terminal_session ->
+          {"terminal-restart-confirmation", "Restart the PTY shell?", "Active and queued terminal work will stop."}
+
+        :interrupt_terminal ->
+          {"terminal-interrupt-confirmation", "Interrupt the foreground process?", "The PTY session will stay open."}
+      end %>
+    <div
+      id={host_id}
+      phx-hook="ResponsiveSheet"
+      role="presentation"
+      data-sheet-close-event="cancel_terminal_confirmation"
+      data-sheet-return-id={pending_terminal.return_id}
+      data-sheet-background-id="workspace-shell"
+      class="terminal-confirmation-overlay fixed inset-0 z-[70] flex items-end justify-center bg-[var(--sf-shadow)] p-4 sm:items-center"
+    >
+      <div
+        id={"#{host_id}-dialog"}
+        phx-hook="ModalFocus"
+        data-modal-focus
+        data-cancel-event="cancel_terminal_confirmation"
+        data-initial-focus="#cancel-terminal-confirmation"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="terminal-confirmation-title"
+        tabindex="-1"
+        class="sf-chassis w-full max-w-md p-6"
+      >
+        <p class="sf-metadata">Destructive terminal action</p>
+        <h2 id="terminal-confirmation-title" class="mt-2 text-lg font-semibold text-[var(--sf-text-primary)]">
+          {title}
+        </h2>
+        <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">{copy}</p>
+        <div class="mt-6 flex flex-wrap justify-end gap-3 pb-[env(safe-area-inset-bottom)]">
+          <button id="cancel-terminal-confirmation" type="button" phx-click="cancel_terminal_confirmation" class="sf-control min-h-11 px-4 text-sm">Cancel</button>
+          <button id="confirm-terminal-confirmation" type="button" phx-click="confirm_terminal_action" phx-disable-with="Confirming…" class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]">Confirm</button>
+        </div>
+      </div>
+    </div>
+  <% end %>
 
   <%= if @pending_file_confirmation do %>
     <% pending_file = @pending_file_confirmation %>

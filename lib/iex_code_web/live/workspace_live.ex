@@ -33,6 +33,10 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   # Terminal output is capped to the last N lines (ring buffer)
   @terminal_output_max_lines 500
+  @terminal_min_cols 20
+  @terminal_max_cols 240
+  @terminal_min_rows 5
+  @terminal_max_rows 100
   @message_page_size 100
   @message_retained_limit 500
   @message_preview_chars 12_000
@@ -450,6 +454,7 @@ defmodule IexCodeWeb.WorkspaceLive do
       |> assign(:pending_session_delete, nil)
       |> assign(:pending_task_confirmation, nil)
       |> assign(:pending_git_confirmation, nil)
+      |> assign(:pending_terminal_confirmation, nil)
       # Git Branch & Staging Hub assigns
       |> assign(:git_branches, [])
       |> assign(:current_branch, "main")
@@ -692,6 +697,7 @@ defmodule IexCodeWeb.WorkspaceLive do
                 |> assign(:file_filter, "")
                 |> assign(:file_filter_form, to_form(%{"filter" => ""}))
                 |> assign(:pending_file_confirmation, nil)
+                |> assign(:pending_terminal_confirmation, nil)
                 |> assign(
                   :files_focus_mode?,
                   if(project_changed?, do: false, else: socket.assigns.files_focus_mode?)
@@ -4250,7 +4256,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   # ============================================================================
 
   @impl true
-  def handle_event("terminal_input", %{"data" => data}, socket) do
+  def handle_event("terminal_input", %{"data" => data}, socket) when is_binary(data) do
     session_id = socket.assigns.session.id
 
     with {:ok, socket} <- ensure_terminal_attached(socket),
@@ -4260,67 +4266,73 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:error, :agent_occupied} ->
         {:noreply, put_flash(socket, :warning, "Terminal is locked by active agent.")}
 
-      {:error, reason, socket} ->
-        Logger.warning("[WorkspaceLive] Terminal startup error: #{inspect(reason)}")
-        {:noreply, socket}
+      {:error, _reason, failed_socket} ->
+        {:noreply, failed_socket}
 
       {:error, reason} ->
-        Logger.warning("[WorkspaceLive] Terminal input error: #{inspect(reason)}")
+        Logger.warning("[WorkspaceLive] Terminal input rejected: #{inspect(reason)}")
         {:noreply, socket}
     end
   end
 
+  def handle_event("terminal_input", _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("terminal_resize", params, socket) do
-    session_id = socket.assigns.session.id
-    cols = parse_terminal_dimension(params["cols"] || params[:cols], socket.assigns.terminal_cols)
-    rows = parse_terminal_dimension(params["rows"] || params[:rows], socket.assigns.terminal_rows)
-
-    if cols > 0 and rows > 0 do
-      case ensure_terminal_attached(socket) do
-        {:ok, socket} ->
-          _ = TerminalServer.resize(session_id, cols, rows)
-          {:noreply, socket |> assign(:terminal_cols, cols) |> assign(:terminal_rows, rows)}
-
-        {:error, _reason, socket} ->
-          {:noreply, socket}
-      end
+    with "terminal" <- socket.assigns.active_view,
+         {:ok, cols} <-
+           parse_terminal_dimension(
+             params["cols"] || params[:cols],
+             @terminal_min_cols,
+             @terminal_max_cols
+           ),
+         {:ok, rows} <-
+           parse_terminal_dimension(
+             params["rows"] || params[:rows],
+             @terminal_min_rows,
+             @terminal_max_rows
+           ),
+         {:ok, socket} <- ensure_terminal_attached(socket),
+         :ok <- TerminalServer.resize(socket.assigns.session.id, cols, rows) do
+      {:noreply, socket |> assign(:terminal_cols, cols) |> assign(:terminal_rows, rows)}
     else
-      {:noreply, socket}
+      _invalid_or_inactive -> {:noreply, socket}
     end
   end
 
   @impl true
   def handle_event("run_terminal_quick_action", params, socket) do
     cmd = params["cmd"] || params["command"] || ""
-    session_id = socket.assigns.session.id
 
-    if String.trim(cmd) != "" do
-      {command_result, socket} =
-        case ensure_terminal_attached(socket) do
-          {:ok, socket} -> {TerminalServer.run_command_with_id(session_id, cmd), socket}
-          {:error, reason, socket} -> {{:error, reason}, socket}
-        end
-
+    with true <- socket.assigns.active_view == "terminal",
+         true <- is_binary(cmd) and String.trim(cmd) != "",
+         {:ok, socket} <- ensure_terminal_attached(socket),
+         {:ok, _command_id} <- TerminalServer.run_command_with_id(socket.assigns.session.id, cmd) do
       public_cmd = TerminalSession.command_summary(cmd)
 
       updated_history =
         [public_cmd | Enum.reject(socket.assigns.terminal_history, &(&1 == public_cmd))]
         |> Enum.take(25)
 
-      case command_result do
-        {:ok, _command_id} ->
-          {:noreply,
-           socket
-           |> assign(:terminal_history, updated_history)
-           |> assign(:terminal_active_cmd, public_cmd)
-           |> assign(:terminal_form, to_form(%{"command" => ""}))}
-
-        {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "Terminal command failed: #{inspect(reason)}")}
-      end
+      {:noreply,
+       socket
+       |> assign(:terminal_history, updated_history)
+       |> assign(:terminal_active_cmd, public_cmd)
+       |> assign(:terminal_form, to_form(%{"command" => ""}))
+       |> rebuild_instrument_summaries()}
     else
-      {:noreply, socket}
+      {:error, :agent_occupied} ->
+        {:noreply, put_flash(socket, :warning, "Terminal is locked by active agent.")}
+
+      {:error, _reason, failed_socket} ->
+        {:noreply, failed_socket}
+
+      {:error, reason} ->
+        Logger.warning("[WorkspaceLive] Terminal command rejected: #{inspect(reason)}")
+        {:noreply, socket}
+
+      _invalid_or_inactive ->
+        {:noreply, socket}
     end
   end
 
@@ -4344,67 +4356,122 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("clear_terminal", _params, socket) do
-    session_id = socket.assigns.session.id
-    _ = TerminalServer.clear(session_id)
-    {:noreply, socket |> assign(:terminal_output, "") |> push_event("terminal_clear", %{})}
+    if socket.assigns.active_view == "terminal" and terminal_retained_history?(socket) do
+      {:noreply, request_terminal_confirmation(socket, :clear_terminal_history)}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
   def handle_event("restart_terminal_session", _params, socket) do
-    session_id = socket.assigns.session.id
-    root = socket.assigns.project.root_path
-    cols = socket.assigns.terminal_cols
-    rows = socket.assigns.terminal_rows
-
-    case TerminalServer.restart(session_id, workspace_path: root, cols: cols, rows: rows) do
-      {:ok, _pid} ->
-        _ = TerminalSession.attach_viewer(session_id, self())
-
-        {:noreply,
-         socket
-         |> assign(:terminal_running?, true)
-         |> assign(:terminal_status, :running)
-         |> assign(:terminal_occupant, :user)
-         |> assign(:terminal_active_cmd, nil)
-         |> assign(:terminal_output, "")
-         |> push_event("terminal_reset", %{})
-         |> put_flash(:info, "Terminal session restarted")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to restart terminal: #{inspect(reason)}")}
+    if socket.assigns.active_view == "terminal" do
+      {:noreply, request_terminal_confirmation(socket, :restart_terminal_session)}
+    else
+      {:noreply, socket}
     end
   end
 
   @impl true
   def handle_event("kill_terminal_session", _params, socket) do
-    session_id = socket.assigns.session.id
-    _ = TerminalServer.send_signal(session_id, :sigint)
-
-    {:noreply,
-     socket |> assign(:terminal_active_cmd, nil) |> put_flash(:info, "Terminal command stopped")}
+    if socket.assigns.active_view == "terminal" and terminal_foreground_active?(socket) do
+      {:noreply, request_terminal_confirmation(socket, :interrupt_terminal)}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
-  def handle_event("stop_terminal_command", params, socket) do
-    handle_event("kill_terminal_session", params, socket)
+  def handle_event("stop_terminal_command", _params, socket) do
+    handle_event("kill_terminal_session", %{}, socket)
+  end
+
+  @impl true
+  def handle_event("cancel_terminal_confirmation", _params, socket),
+    do: {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
+
+  @impl true
+  def handle_event("confirm_terminal_action", _params, socket) do
+    case authorize_terminal_confirmation(socket) do
+      {:ok, :clear_terminal_history, socket} ->
+        :ok = TerminalServer.clear(socket.assigns.session.id)
+
+        {:noreply,
+         socket
+         |> assign(:pending_terminal_confirmation, nil)
+         |> assign(:terminal_output, "")
+         |> assign(:terminal_history, [])
+         |> assign(:terminal_active_cmd, nil)
+         |> rebuild_instrument_summaries()}
+
+      {:ok, :restart_terminal_session, socket} ->
+        opts = [
+          workspace_path: socket.assigns.project.root_path,
+          cols: socket.assigns.terminal_cols,
+          rows: socket.assigns.terminal_rows
+        ]
+
+        case TerminalServer.restart(socket.assigns.session.id, opts) do
+          {:ok, _pid} ->
+            :ok = TerminalSession.attach_viewer(socket.assigns.session.id, self())
+
+            {:noreply,
+             socket
+             |> assign(:pending_terminal_confirmation, nil)
+             |> assign(:terminal_running?, true)
+             |> assign(:terminal_status, :running)
+             |> assign(:terminal_occupant, :user)
+             |> assign(:terminal_active_cmd, nil)
+             |> assign(:terminal_output, "")
+             |> refresh_terminal_structured_history()
+             |> push_event("terminal_reset", %{})
+             |> rebuild_instrument_summaries()
+             |> put_flash(:info, "PTY shell restarted")}
+
+          {:error, reason} ->
+            Logger.warning("[WorkspaceLive] Terminal restart failed: #{inspect(reason)}")
+            {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
+        end
+
+      {:ok, :interrupt_terminal, socket} ->
+        result = TerminalServer.send_signal(socket.assigns.session.id, :sigint)
+
+        socket =
+          socket
+          |> assign(:pending_terminal_confirmation, nil)
+          |> case do
+            socket when result == :ok ->
+              put_flash(socket, :info, "Foreground process interrupted")
+
+            socket ->
+              socket
+          end
+
+        {:noreply, socket}
+
+      :error ->
+        {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
+    end
   end
 
   @impl true
   def handle_event("replay_terminal_command", _params, socket) do
-    case socket.assigns.terminal_history do
-      [last_cmd | _] -> handle_event("run_terminal_quick_action", %{"cmd" => last_cmd}, socket)
-      [] -> {:noreply, put_flash(socket, :info, "No commands in history")}
+    if socket.assigns.active_view == "terminal" do
+      case socket.assigns.terminal_history do
+        [last_cmd | _] -> handle_event("run_terminal_quick_action", %{"cmd" => last_cmd}, socket)
+        [] -> {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
     end
   end
 
   @impl true
   def handle_event("request_terminal_history", _params, socket) do
-    if socket.assigns.active_tab == "terminal" do
-      session_id = socket.assigns.session.id
-
+    if socket.assigns.active_view == "terminal" do
       case ensure_terminal_attached(socket) do
         {:ok, socket} ->
-          history = TerminalServer.get_history(session_id)
+          history = TerminalServer.get_history(socket.assigns.session.id)
           {:noreply, push_event(socket, "terminal_history", %{history: history})}
 
         {:error, _reason, socket} ->
@@ -4865,6 +4932,7 @@ defmodule IexCodeWeb.WorkspaceLive do
        socket
        |> append_terminal_output(exit_msg)
        |> assign(:terminal_active_cmd, nil)
+       |> refresh_terminal_structured_history()
        |> push_event("terminal_output", %{data: exit_msg})
        |> assign(:terminal_available?, true)
        |> rebuild_instrument_summaries()}
@@ -4878,7 +4946,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     if sid == socket.assigns.session.id do
       {:noreply,
        socket
-       |> assign(:terminal_active_cmd, command)
+       |> assign(:terminal_active_cmd, TerminalSession.command_summary(command))
        |> assign(:terminal_available?, true)
        |> rebuild_instrument_summaries()}
     else
@@ -4911,6 +4979,8 @@ defmodule IexCodeWeb.WorkspaceLive do
       {:noreply,
        socket
        |> assign(:terminal_output, "")
+       |> assign(:terminal_history, [])
+       |> assign(:terminal_active_cmd, nil)
        |> push_event("terminal_clear", %{})
        |> rebuild_instrument_summaries()}
     else
@@ -5926,6 +5996,13 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> refresh_git_state()
   end
 
+  defp activate_workspace_view_change(socket, "terminal", "terminal") do
+    case ensure_terminal_attached(socket) do
+      {:ok, socket} -> socket
+      {:error, _reason, socket} -> socket
+    end
+  end
+
   defp activate_workspace_view_change(socket, view, view), do: socket
 
   defp activate_workspace_view_change(socket, previous_view, view) do
@@ -5953,6 +6030,11 @@ defmodule IexCodeWeb.WorkspaceLive do
     socket =
       if previous_view == "files" and view != "files",
         do: assign(socket, :pending_file_confirmation, nil),
+        else: socket
+
+    socket =
+      if previous_view == "terminal" and view != "terminal",
+        do: assign(socket, :pending_terminal_confirmation, nil),
         else: socket
 
     socket =
@@ -6011,6 +6093,7 @@ defmodule IexCodeWeb.WorkspaceLive do
     |> assign(:pending_session_delete, nil)
     |> assign(:pending_git_confirmation, nil)
     |> assign(:pending_file_confirmation, nil)
+    |> assign(:pending_terminal_confirmation, nil)
   end
 
   defp bounded_confirmation_title(title) when is_binary(title) do
@@ -6110,8 +6193,8 @@ defmodule IexCodeWeb.WorkspaceLive do
               history: TerminalServer.get_history(socket.assigns.session.id)
             })
 
-          {:error, reason, failed_socket} ->
-            put_flash(failed_socket, :error, "Failed to start terminal: #{inspect(reason)}")
+          {:error, _reason, failed_socket} ->
+            put_flash(failed_socket, :error, "Terminal unavailable")
         end
 
       view ->
@@ -6843,6 +6926,120 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp terminal_command(%{active_command_id: id}) when not is_nil(id), do: "Command active"
   defp terminal_command(_state), do: nil
 
+  defp refresh_terminal_structured_history(socket) do
+    case TerminalServer.get_state(socket.assigns.session.id) do
+      {:ok, state} ->
+        history =
+          state
+          |> Map.get(:command_history, [])
+          |> Enum.map(&Map.get(&1, :command))
+          |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+          |> Enum.take(25)
+
+        socket
+        |> assign(:terminal_history, history)
+        |> assign(:terminal_available?, true)
+        |> assign(:terminal_error_reason, nil)
+
+      {:error, reason} ->
+        socket
+        |> assign(:terminal_available?, false)
+        |> assign(:terminal_error_reason, reason)
+    end
+  end
+
+  defp terminal_retained_history?(socket) do
+    socket.assigns.terminal_history != [] or
+      (is_binary(socket.assigns.terminal_output) and socket.assigns.terminal_output != "")
+  end
+
+  defp terminal_foreground_active?(socket) do
+    is_binary(socket.assigns.terminal_active_cmd) and
+      socket.assigns.terminal_active_cmd != "" and socket.assigns.terminal_running?
+  end
+
+  defp request_terminal_confirmation(socket, kind)
+       when kind in [:clear_terminal_history, :restart_terminal_session, :interrupt_terminal] do
+    socket = refresh_workspace_locks(socket)
+
+    with true <- socket.assigns.active_view == "terminal",
+         false <- terminal_foreign_lock?(socket),
+         {:ok, state} <- terminal_confirmation_state(kind, socket.assigns.session.id),
+         :user <- Map.get(state, :occupant, :user) do
+      return_id =
+        case kind do
+          :clear_terminal_history -> "btn-terminal-clear"
+          :restart_terminal_session -> "btn-terminal-restart"
+          :interrupt_terminal -> "btn-terminal-kill"
+        end
+
+      assign(socket, :pending_terminal_confirmation, %{
+        kind: kind,
+        project_id: socket.assigns.project.id,
+        session_id: socket.assigns.session.id,
+        adapter_generation: Map.get(state, :adapter_generation),
+        return_id: return_id
+      })
+    else
+      _ -> assign(socket, :pending_terminal_confirmation, nil)
+    end
+  end
+
+  defp terminal_confirmation_state(:restart_terminal_session, session_id) do
+    case TerminalServer.get_state(session_id) do
+      {:ok, state} -> {:ok, state}
+      {:error, :not_found} -> {:ok, %{occupant: :user, adapter_generation: nil}}
+    end
+  end
+
+  defp terminal_confirmation_state(_kind, session_id), do: TerminalServer.get_state(session_id)
+
+  defp authorize_terminal_confirmation(socket) do
+    socket = refresh_workspace_locks(socket)
+
+    with %{
+           kind: kind,
+           project_id: project_id,
+           session_id: session_id,
+           adapter_generation: generation
+         } <- socket.assigns.pending_terminal_confirmation,
+         true <- socket.assigns.active_view == "terminal",
+         true <- project_id == socket.assigns.project.id,
+         true <- session_id == socket.assigns.session.id,
+         false <- terminal_foreign_lock?(socket),
+         {:ok, state} <- terminal_confirmation_state(kind, session_id),
+         :user <- Map.get(state, :occupant, :user),
+         true <- generation == Map.get(state, :adapter_generation),
+         true <- terminal_confirmation_still_valid?(kind, state, socket) do
+      {:ok, kind, socket}
+    else
+      _ -> :error
+    end
+  end
+
+  defp terminal_confirmation_still_valid?(:clear_terminal_history, _state, socket),
+    do: terminal_retained_history?(socket)
+
+  defp terminal_confirmation_still_valid?(:restart_terminal_session, _state, _socket), do: true
+
+  defp terminal_confirmation_still_valid?(:interrupt_terminal, state, _socket),
+    do: not is_nil(Map.get(state, :active_command_id))
+
+  defp terminal_input_locked?(assigns) do
+    assigns.terminal_occupant != :user or terminal_foreign_lock?(assigns)
+  end
+
+  defp terminal_foreign_lock?(%{assigns: assigns}), do: terminal_foreign_lock?(assigns)
+
+  defp terminal_foreign_lock?(assigns) do
+    owner_id = "terminal-session:#{assigns.session.id}"
+
+    Enum.any?(assigns.workspace_locks, fn lock ->
+      (Map.get(lock, :status) || Map.get(lock, "status")) == "held" and
+        (Map.get(lock, :owner_id) || Map.get(lock, "owner_id")) != owner_id
+    end)
+  end
+
   defp update_terminal_viewer(socket, previous_tab, "terminal")
        when previous_tab != "terminal" do
     case ensure_terminal_attached(socket) do
@@ -6853,8 +7050,8 @@ defmodule IexCodeWeb.WorkspaceLive do
         |> push_event("terminal_history", %{history: history})
         |> push_event("terminal_fit", %{})
 
-      {:error, reason, socket} ->
-        put_flash(socket, :error, "Failed to start terminal: #{inspect(reason)}")
+      {:error, _reason, socket} ->
+        put_flash(socket, :error, "Terminal unavailable")
     end
   end
 
@@ -6868,64 +7065,61 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp ensure_terminal_attached(socket) do
     session_id = socket.assigns.session.id
 
-    starter =
-      if socket.assigns.active_tab == "terminal" do
-        fn opts -> TerminalServer.attach_viewer(session_id, self(), opts) end
-      else
-        fn opts -> TerminalServer.ensure_started(session_id, opts) end
-      end
+    if socket.assigns.active_view != "terminal" do
+      {:error, :inactive_terminal_view, socket}
+    else
+      case TerminalServer.attach_viewer(session_id, self(),
+             workspace_path: socket.assigns.project.root_path,
+             cols: socket.assigns.terminal_cols,
+             rows: socket.assigns.terminal_rows
+           ) do
+        {:ok, _pid} ->
+          {terminal_available?, terminal_error_reason, terminal_state} =
+            case TerminalServer.get_state(session_id) do
+              {:ok, state} -> {true, nil, state}
+              {:error, reason} -> {false, reason, %{}}
+              other -> {false, other, %{}}
+            end
 
-    case starter.(
-           workspace_path: socket.assigns.project.root_path,
-           cols: socket.assigns.terminal_cols,
-           rows: socket.assigns.terminal_rows
-         ) do
-      {:ok, _pid} ->
-        {terminal_available?, terminal_error_reason, terminal_state} =
-          case TerminalServer.get_state(session_id) do
-            {:ok, state} -> {true, nil, state}
-            {:error, reason} -> {false, reason, %{}}
-            other -> {false, other, %{}}
+          if not terminal_available? do
+            Logger.warning(
+              "Terminal state unavailable after attach: #{inspect(terminal_error_reason)}"
+            )
           end
 
-        if not terminal_available? do
-          Logger.warning(
-            "Terminal state unavailable after attach: #{inspect(terminal_error_reason)}"
-          )
-        end
+          command_history =
+            terminal_state
+            |> Map.get(:command_history, [])
+            |> Enum.map(&Map.get(&1, :command))
+            |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
 
-        command_history =
-          terminal_state
-          |> Map.get(:command_history, [])
-          |> Enum.map(&Map.get(&1, :command))
-          |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+          terminal_status = Map.get(terminal_state, :status, :starting)
 
-        terminal_status = Map.get(terminal_state, :status, :starting)
+          {:ok,
+           socket
+           |> assign(:terminal_available?, terminal_available?)
+           |> assign(:terminal_error_reason, terminal_error_reason)
+           |> assign(
+             :terminal_running?,
+             terminal_available? and terminal_status in [:starting, :ready, :running]
+           )
+           |> assign(:terminal_status, terminal_status)
+           |> assign(:terminal_shell, Map.get(terminal_state, :shell, "zsh"))
+           |> assign(:terminal_cols, Map.get(terminal_state, :cols, socket.assigns.terminal_cols))
+           |> assign(:terminal_rows, Map.get(terminal_state, :rows, socket.assigns.terminal_rows))
+           |> assign(:terminal_occupant, Map.get(terminal_state, :occupant, :user))
+           |> assign(:terminal_history, command_history)
+           |> rebuild_instrument_summaries()}
 
-        {:ok,
-         socket
-         |> assign(:terminal_available?, terminal_available?)
-         |> assign(:terminal_error_reason, terminal_error_reason)
-         |> assign(
-           :terminal_running?,
-           terminal_available? and terminal_status in [:starting, :ready, :running]
-         )
-         |> assign(:terminal_status, terminal_status)
-         |> assign(:terminal_shell, Map.get(terminal_state, :shell, "zsh"))
-         |> assign(:terminal_cols, Map.get(terminal_state, :cols, socket.assigns.terminal_cols))
-         |> assign(:terminal_rows, Map.get(terminal_state, :rows, socket.assigns.terminal_rows))
-         |> assign(:terminal_occupant, Map.get(terminal_state, :occupant, :user))
-         |> assign(:terminal_history, command_history)
-         |> rebuild_instrument_summaries()}
+        {:error, reason} ->
+          failed_socket =
+            socket
+            |> assign(:terminal_available?, false)
+            |> assign(:terminal_error_reason, reason)
+            |> rebuild_instrument_summaries()
 
-      {:error, reason} ->
-        failed_socket =
-          socket
-          |> assign(:terminal_available?, false)
-          |> assign(:terminal_error_reason, reason)
-          |> rebuild_instrument_summaries()
-
-        {:error, reason, failed_socket}
+          {:error, reason, failed_socket}
+      end
     end
   end
 
@@ -6948,16 +7142,17 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
-  defp parse_terminal_dimension(val, _default) when is_integer(val) and val > 0, do: val
+  defp parse_terminal_dimension(val, min, max) when is_integer(val) and val >= min and val <= max,
+    do: {:ok, val}
 
-  defp parse_terminal_dimension(val, default) when is_binary(val) do
+  defp parse_terminal_dimension(val, min, max) when is_binary(val) do
     case Integer.parse(val) do
-      {int, _} when int > 0 -> int
-      _ -> default
+      {int, ""} when int >= min and int <= max -> {:ok, int}
+      _ -> :error
     end
   end
 
-  defp parse_terminal_dimension(_val, default), do: default
+  defp parse_terminal_dimension(_val, _min, _max), do: :error
 
   # -- Workspace search --------------------------------------------------------
 
