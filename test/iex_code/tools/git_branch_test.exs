@@ -93,6 +93,18 @@ defmodule IexCode.Tools.GitBranchTest do
 
       assert {:error, :not_a_git_repo} = Git.switch_branch(non_git_dir, "main")
     end
+
+    test "rejects an option-looking ref without forcing dirty files", %{
+      repo_dir: repo_dir
+    } do
+      {_, 0} = System.cmd("git", ["update-ref", "refs/heads/-f", "HEAD"], cd: repo_dir)
+      dirty = Path.join(repo_dir, "README.md")
+      File.write!(dirty, "# Dirty worktree must survive\n")
+
+      assert {:error, :invalid_branch_name} = Git.switch_branch(repo_dir, "-f")
+      assert {:ok, "main"} = Git.current_branch(repo_dir)
+      assert File.read!(dirty) == "# Dirty worktree must survive\n"
+    end
   end
 
   # ============================================================================

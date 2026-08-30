@@ -197,6 +197,10 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
 
       refute has_element?(view, "#changes-signal-panel", "No changes")
       refute has_element?(view, "#changes-signal-panel", "all clean")
+
+      render_click(view, "stage_all", %{})
+      assert {:ok, status} = Git.status(path)
+      assert status.staged == []
     end
 
     test "rejects forged branches, foreign paths, and Git pathspec magic", %{
@@ -224,6 +228,45 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
       assert "safe.ex" in status.untracked
       assert "*.ex" in status.untracked
       assert ":!safe.ex" in status.untracked
+    end
+
+    test "rejects option-looking branches without touching dirty worktree", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "dirty.ex", "clean\n")
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Baseline"], cd: path)
+      {_, 0} = System.cmd("git", ["update-ref", "refs/heads/-f", "HEAD"], cd: path)
+      workspace_write_file(path, "dirty.ex", "do not discard\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+      render_click(view, "create_git_branch", %{"name" => "--detach"})
+      render_click(view, "switch_git_branch", %{"branch" => "-f"})
+
+      assert {:ok, "main"} = Git.current_branch(path)
+      assert File.read!(Path.join(path, "dirty.ex")) == "do not discard\n"
+      assert {:ok, branches} = Git.branches(path)
+      refute Enum.any?(branches, &(&1.name == "--detach"))
+    end
+
+    test "re-lists branches under lock before switching a stale cached name", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      {_, 0} = System.cmd("git", ["branch", "-D", "develop"], cd: path)
+      {_, 0} = System.cmd("git", ["tag", "develop"], cd: path)
+      render_click(view, "switch_git_branch", %{"branch" => "develop"})
+
+      assert {:ok, "main"} = Git.current_branch(path)
     end
 
     test "a synchronous Git error clears the prior accepted detailed snapshot", %{
@@ -323,6 +366,22 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
       # Bulk Unstage All
       render_click(view, "unstage_all")
       assert render(view)
+    end
+
+    test "bulk stage and unstage ignore forged payloads", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "stage_all", %{"file" => "forged.ex"})
+      render_click(view, "unstage_all", %{"file" => "forged.ex"})
+
+      assert {:ok, status} = Git.status(path)
+      assert status.staged == []
     end
   end
 

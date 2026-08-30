@@ -521,6 +521,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
               :if={!@staged}
               phx-click="accept_all_hunks"
               phx-value-file={@file_path}
+              type="button"
+              aria-label={"Stage all changes in #{@file_path}"}
               class="sf-control min-h-11 px-3 text-xs font-mono transition-smooth flex items-center gap-1"
               title="Stage all changes for this file"
             >
@@ -579,7 +581,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
       </div>
 
       <!-- Diff Body with Granular Hunks -->
-      <div class="flex-1 min-h-0 min-w-0 overflow-auto font-mono text-xs leading-relaxed p-2 sm:p-3 space-y-4">
+      <div class="flex-1 min-h-0 min-w-0 overflow-auto font-mono text-[13px] leading-relaxed p-2 sm:p-3 space-y-4">
         <%= if is_nil(@diff_text) or String.trim(@diff_text) == "" do %>
           <div class="p-8 text-center text-[var(--sf-text-secondary)]">
             No patch or diff selected.
@@ -625,16 +627,16 @@ defmodule IexCodeWeb.WorkspaceComponents do
       <!-- Hunk Control Header -->
       <div class="px-3 py-2 border-b flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
         <div class="flex items-center gap-2 truncate">
-          <span class="px-2 py-0.5 text-[var(--sf-code-text)] font-semibold text-[11px] border border-[var(--sf-hairline)]">
+          <span class="px-2 py-0.5 text-[var(--sf-code-text)] font-semibold text-xs border border-[var(--sf-hairline)]">
             {@hunk.header ||
               "@@ -#{@hunk.old_start},#{@hunk.old_count || @hunk.old_lines} +#{@hunk.new_start},#{@hunk.new_count || @hunk.new_lines} @@"}
           </span>
-          <span class="text-[10px] text-[var(--sf-text-secondary)]">
+          <span class="text-xs text-[var(--sf-text-secondary)]">
             Hunk {@hunk.id}
           </span>
         </div>
 
-        <div class="flex items-center gap-1.5">
+        <div class="flex flex-wrap items-center gap-1.5">
           <%= if @staged do %>
             <button
               type="button"
@@ -703,7 +705,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
 
   def hunk_inline_lines(assigns) do
     ~H"""
-    <div class="space-y-0.5 font-mono text-xs">
+    <div class="min-w-max space-y-0.5 font-mono text-[13px]">
       <%= for line <- @lines do %>
         <% {bg, text_color, sign} =
           case line.type do
@@ -728,7 +730,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
           <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-3 text-[10px]">{line.new_num ||
             " "}</span>
           <span class="w-4 text-center select-none font-bold text-[11px] text-[var(--sf-text-secondary)]">{sign}</span>
-          <span class={["flex-1 whitespace-pre-wrap", text_color]}>{line.content}</span>
+          <span class={["min-w-max whitespace-pre", text_color]}>{line.content}</span>
         </div>
       <% end %>
     </div>
@@ -737,7 +739,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
 
   def hunk_split_lines(assigns) do
     ~H"""
-    <div class="grid grid-cols-2 gap-2 font-mono text-xs">
+    <div class="grid min-w-[42rem] grid-cols-2 gap-2 font-mono text-[13px]">
       <div class="space-y-0.5 border-r border-[var(--sf-hairline)] pr-2">
         <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Original
@@ -752,7 +754,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 "text-[var(--sf-code-text)] hover:bg-[var(--sf-raised-control)]"
             ]}>
               <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.old_num}</span>
-              <span class="flex-1 whitespace-pre-wrap">{line.content}</span>
+              <span class="min-w-max whitespace-pre">{line.content}</span>
             </div>
           <% end %>
         <% end %>
@@ -771,7 +773,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 "text-[var(--sf-code-text)] hover:bg-[var(--sf-raised-control)]"
             ]}>
               <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.new_num}</span>
-              <span class="flex-1 whitespace-pre-wrap">{line.content}</span>
+              <span class="min-w-max whitespace-pre">{line.content}</span>
             </div>
           <% end %>
         <% end %>

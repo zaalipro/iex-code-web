@@ -104,16 +104,69 @@ defmodule IexCode.Tools.Git.HunkOps do
   """
   @spec revert_file(Path.t(), Path.t()) :: {:ok, :reverted} | {:error, term()}
   def revert_file(project_root, file_path) do
-    with {:ok, full_path} <- resolve_file_path(project_root, file_path),
-         {:ok, canonical_root} <- resolve_file_path(project_root, "") do
-      git_path = Path.relative_to(full_path, canonical_root)
-      do_revert_file(project_root, git_path, full_path)
+    revert_file(project_root, file_path, :all)
+  end
+
+  @spec revert_file(Path.t(), Path.t(), :staged | :unstaged | :untracked | :all) ::
+          {:ok, :reverted} | {:error, term()}
+  def revert_file(project_root, file_path, scope)
+      when scope in [:staged, :unstaged, :untracked, :all] do
+    if scope == :untracked do
+      with {:ok, _canonical} <- WorkspacePath.resolve(project_root, file_path) do
+        # Remove the lexical final component so a symlink is unlinked rather
+        # than following it to a target file.
+        remove_file(Path.expand(file_path, project_root))
+      else
+        {:error, reason} -> {:error, {:invalid_path, file_path, reason}}
+      end
     else
-      {:error, reason} -> {:error, {:invalid_path, file_path, reason}}
+      with :ok <- reject_final_symlink(project_root, file_path),
+           {:ok, full_path} <- resolve_file_path(project_root, file_path),
+           {:ok, canonical_root} <- resolve_file_path(project_root, "") do
+        git_path = Path.relative_to(full_path, canonical_root)
+        do_revert_file(project_root, git_path, full_path, scope)
+      else
+        {:error, reason} -> {:error, {:invalid_path, file_path, reason}}
+      end
     end
   end
 
-  defp do_revert_file(project_root, file_path, full_path) do
+  defp reject_final_symlink(project_root, file_path) do
+    case File.lstat(Path.expand(file_path, project_root)) do
+      {:ok, %{type: :symlink}} -> {:error, :symlink_not_allowed}
+      {:ok, _stat} -> :ok
+      {:error, :enoent} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp do_revert_file(project_root, file_path, _full_path, :staged) do
+    if local_git_repository?(project_root) do
+      case Git.restore_file(project_root, file_path, staged: true, worktree: false) do
+        {:ok, _} -> {:ok, :reverted}
+        error -> error
+      end
+    else
+      {:error, :not_a_git_repo}
+    end
+  end
+
+  defp do_revert_file(project_root, file_path, full_path, :unstaged) do
+    if local_git_repository?(project_root) do
+      case Git.restore_file(project_root, file_path, staged: false, worktree: true) do
+        {:ok, _} -> {:ok, :reverted}
+        error -> error
+      end
+    else
+      backup_non_git_file(full_path)
+    end
+  end
+
+  defp do_revert_file(_project_root, _file_path, full_path, :untracked) do
+    remove_file(full_path)
+  end
+
+  defp do_revert_file(project_root, file_path, full_path, :all) do
     # A workspace is a Git capability only when its own root contains a real
     # .git directory/file. Never inherit a parent checkout merely because a CI
     # temp directory happens to live below it; that could restore or delete a
@@ -171,7 +224,7 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp remove_file(full_path) do
-    if File.exists?(full_path) do
+    if match?({:ok, _}, File.lstat(full_path)) do
       case File.rm(full_path) do
         :ok -> {:ok, :reverted}
         {:error, reason} -> {:error, {:remove_failed, reason}}

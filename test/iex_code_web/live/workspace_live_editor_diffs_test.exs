@@ -394,7 +394,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert File.read!(Path.join(path, "lib/demo_hunk.ex")) =~ "def val, do: 1"
     end
 
-    test "accepts all hunks and reverts entire file", %{
+    test "accepts all hunks and reverts only the selected staged layer", %{
       conn: conn,
       workspace_path: path
     } do
@@ -433,7 +433,8 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert has_element?(view, "#git-file-revert-confirmation")
       render_click(view, "revert_file", %{})
       assert {:ok, status} = Git.status(path)
-      assert status.clean?
+      assert status.staged == []
+      assert Enum.map(status.unstaged, & &1.path) == ["lib/all_hunks.ex"]
     end
 
     test "file revert confirmation cancels safely and confirms from server-owned state", %{
@@ -559,6 +560,254 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       render_click(view, "revert_file", %{})
       refute File.exists?(Path.join(path, "remove_me.ex"))
       assert File.exists?(Path.join(path, "README.md"))
+    end
+
+    test "stale file confirmation does not discard edits written after opening", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      original = "one\n"
+      opened = "two\n"
+      newer = "three\n"
+      workspace_write_file(path, "stale_file.ex", original)
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "stale_file.ex", opened)
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "stale_file.ex",
+        "source" => "ledger",
+        "scope" => "unstaged"
+      })
+
+      workspace_write_file(path, "stale_file.ex", newer)
+      render_click(view, "revert_file", %{})
+
+      assert File.read!(Path.join(path, "stale_file.ex")) == newer
+      assert has_element?(view, "#git-file-revert-confirmation") == false
+    end
+
+    test "scope-specific file confirmation preserves the untouched layer", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "partial_scope.ex", "head\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "partial_scope.ex", "staged\n")
+      {_, 0} = System.cmd("git", ["add", "--", "partial_scope.ex"], cd: path)
+      workspace_write_file(path, "partial_scope.ex", "unstaged\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "partial_scope.ex",
+        "source" => "ledger",
+        "scope" => "unstaged"
+      })
+
+      render_click(view, "revert_file", %{})
+
+      assert File.read!(Path.join(path, "partial_scope.ex")) == "staged\n"
+      assert {:ok, status} = Git.status(path)
+      assert "partial_scope.ex" in Enum.map(status.staged, & &1.path)
+    end
+
+    test "staged file confirmation preserves newer worktree bytes", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "staged_scope.ex", "head\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "staged_scope.ex", "staged\n")
+      {_, 0} = System.cmd("git", ["add", "--", "staged_scope.ex"], cd: path)
+      workspace_write_file(path, "staged_scope.ex", "worktree\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "staged_scope.ex",
+        "source" => "ledger",
+        "scope" => "staged"
+      })
+
+      render_click(view, "revert_file", %{})
+
+      assert File.read!(Path.join(path, "staged_scope.ex")) == "worktree\n"
+      assert {:ok, status} = Git.status(path)
+      assert status.staged == []
+      assert "staged_scope.ex" in Enum.map(status.unstaged, & &1.path)
+    end
+
+    test "same-id replacement hunk is not discarded after confirmation opens", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      original = Enum.map_join(1..24, "\n", &"line #{&1}") <> "\n"
+      opened = String.replace(original, "line 2\n", "opened hunk\n")
+      replacement = String.replace(original, "line 2\n", "replacement hunk\n")
+      workspace_write_file(path, "hunk_race.ex", original)
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "hunk_race.ex", opened)
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "request_discard_git_hunk", %{
+        "file" => "hunk_race.ex",
+        "hunk_id" => "hunk-1"
+      })
+
+      assert has_element?(view, "#git-hunk-discard-confirmation-hunk-1")
+
+      workspace_write_file(path, "hunk_race.ex", replacement)
+      render_click(view, "reject_hunk", %{})
+
+      assert File.read!(Path.join(path, "hunk_race.ex")) == replacement
+      refute has_element?(view, "#git-hunk-discard-confirmation-hunk-1")
+    end
+
+    test "symlink substitution cannot redirect an untracked-file confirmation", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "target.ex", "head target\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "target.ex", "dirty target\n")
+      workspace_write_file(path, "victim.ex", "temporary\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "victim.ex",
+        "source" => "ledger",
+        "scope" => "untracked"
+      })
+
+      File.rm!(Path.join(path, "victim.ex"))
+      File.ln_s!("target.ex", Path.join(path, "victim.ex"))
+      render_click(view, "revert_file", %{})
+
+      assert File.read!(Path.join(path, "target.ex")) == "dirty target\n"
+      assert {:ok, "target.ex"} = File.read_link(Path.join(path, "victim.ex"))
+    end
+
+    test "accept all rejects a selected diff changed after it was rendered", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "stale_all.ex", "head\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "stale_all.ex", "rendered\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      workspace_write_file(path, "stale_all.ex", "replacement\n")
+      render_click(view, "accept_all_hunks", %{"file" => "stale_all.ex"})
+
+      assert {:ok, status} = Git.status(path)
+      assert status.staged == []
+      assert File.read!(Path.join(path, "stale_all.ex")) == "replacement\n"
+    end
+
+    test "same-project session transition clears pending Git authority", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      init_git_repo!(path)
+      workspace_write_file(path, "README.md", "head\n")
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "pending.ex", "temporary\n")
+
+      project = create_project_fixture(%{root_path: path})
+      first = create_session_fixture(project)
+      second = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{first.id}?view=changes")
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "pending.ex",
+        "source" => "ledger",
+        "scope" => "untracked"
+      })
+
+      assert has_element?(view, "#git-file-revert-confirmation")
+      render_patch(view, ~p"/sessions/#{second.id}?view=changes")
+      refute has_element?(view, "#git-file-revert-confirmation")
+
+      render_click(view, "revert_file", %{})
+      assert File.read!(Path.join(path, "pending.ex")) == "temporary\n"
+    end
+
+    test "diff selection and file confirmation reject incomplete or mismatched input", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "a.ex", "head a\n")
+      workspace_write_file(path, "b.ex", "head b\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "a.ex", "dirty a\n")
+      workspace_write_file(path, "b.ex", "dirty b\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=changes")
+      render_click(view, "select_diff_file", %{"file" => "b.ex", "scope" => "unstaged"})
+      assert has_element?(view, ".changes-file-row--selected [phx-value-file='b.ex']")
+
+      render_click(view, "select_diff_file", %{"file" => "a.ex"})
+      assert has_element?(view, ".changes-file-row--selected [phx-value-file='b.ex']")
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "a.ex",
+        "source" => "viewer",
+        "scope" => "unstaged"
+      })
+
+      refute has_element?(view, "#git-file-revert-confirmation")
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "b.ex",
+        "source" => "forged",
+        "scope" => "unstaged"
+      })
+
+      refute has_element?(view, "#git-file-revert-confirmation")
+
+      render_click(view, "accept_all_hunks", %{"file" => "b.ex", "scope" => "forged"})
+      assert {:ok, status} = Git.status(path)
+      assert status.staged == []
     end
   end
 

@@ -468,6 +468,29 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       refute File.exists?(new_file)
     end
 
+    test "revert_file scope preserves the untouched index or worktree layer", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      staged_content = "staged layer\n"
+      worktree_content = "worktree layer\n"
+      File.write!(file, staged_content)
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      File.write!(file, worktree_content)
+
+      assert {:ok, :reverted} = HunkOps.revert_file(tmp_dir, "lib/sample.txt", :unstaged)
+      assert File.read!(file) == staged_content
+      assert {:ok, status} = Git.status(tmp_dir)
+      assert Enum.map(status.staged, & &1.path) == ["lib/sample.txt"]
+
+      File.write!(file, worktree_content)
+      assert {:ok, :reverted} = HunkOps.revert_file(tmp_dir, "lib/sample.txt", :staged)
+      assert File.read!(file) == worktree_content
+      assert {:ok, status} = Git.status(tmp_dir)
+      assert status.staged == []
+      assert Enum.map(status.unstaged, & &1.path) == ["lib/sample.txt"]
+    end
+
     test "accept_all_hunks stages the entire file", %{tmp_dir: tmp_dir} do
       File.write!(Path.join(tmp_dir, "lib/sample.txt"), "new content\n")
 

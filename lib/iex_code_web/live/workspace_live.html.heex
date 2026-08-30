@@ -1091,7 +1091,7 @@
                         <div
                           :if={@show_branch_menu}
                           id="changes-branch-menu"
-                          role="menu"
+                          role="region"
                           aria-label="Git branches"
                           class="absolute left-0 top-full z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-2 shadow-xl"
                         >
@@ -1102,7 +1102,6 @@
                             <%= for branch <- @git_branches do %>
                               <button
                                 type="button"
-                                role="menuitem"
                                 phx-click="switch_git_branch"
                                 phx-value-branch={branch.name}
                                 class={[
@@ -1176,7 +1175,7 @@
                       <div class="flex items-center justify-between border-b border-[var(--sf-hairline)] pb-3">
                         <div>
                           <p class="sf-metadata">Bounded working tree</p>
-                          <h3 id="changes-staging-title" class="mt-1 font-semibold">
+                          <h3 id="changes-staging-title" tabindex="-1" class="mt-1 font-semibold">
                             Staging ledger
                           </h3>
                         </div>
@@ -1368,6 +1367,7 @@
 
                     <section
                       id="changes-diff-panel"
+                      tabindex="-1"
                       aria-label="Selected diff"
                       class="changes-diff-panel"
                     >
@@ -2539,6 +2539,7 @@
       role="presentation"
       data-sheet-close-event="cancel_git_confirmation"
       data-sheet-return-id={git_confirmation_return_id(pending_git)}
+      data-sheet-fallback-return-id="changes-fetch-action"
       data-sheet-background-id="workspace-shell"
       class="git-confirmation-overlay fixed inset-0 z-[70] flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
     >

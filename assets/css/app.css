@@ -2743,7 +2743,7 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 #instrument-workbench-changes .sf-workbench-primary-field,
@@ -2758,7 +2758,7 @@
 #instrument-workbench-changes .sf-workbench-primary-field {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .changes-primary-field {
@@ -2767,7 +2767,7 @@
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   color: var(--sf-text-primary);
 }
 
@@ -2781,7 +2781,7 @@
 .changes-layout {
   display: grid;
   min-width: 0;
-  min-height: 0;
+  min-height: 36rem;
   flex: 1 1 auto;
   grid-template-columns: minmax(18rem, 21rem) minmax(0, 1fr);
   overflow: hidden;
@@ -2861,6 +2861,19 @@
 #instrument-workbench-changes #diff-mode-split,
 #instrument-workbench-changes #copy-diff-btn { min-height: 2.75rem; }
 
+#instrument-workbench-changes label > span {
+  color: var(--sf-text-secondary);
+}
+
+#instrument-workbench-changes :where(input, textarea)::placeholder {
+  color: var(--sf-text-secondary);
+  opacity: 0.82;
+}
+
+#instrument-workbench-changes .sf-workbench-signal-panel {
+  overflow: visible;
+}
+
 .changes-signal-facts { display: grid; gap: 0; margin-top: 1.25rem; }
 .changes-signal-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--sf-hairline); padding-block: 0.75rem; }
 .changes-signal-facts dt { color: var(--sf-text-secondary); font-size: 0.75rem; }
@@ -2879,7 +2892,7 @@
   padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
 }
 
-@media (max-width: 64rem) {
+@media (max-width: 63.99rem) {
   #instrument-workbench-changes .sf-workbench-fields { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
   #instrument-workbench-changes .sf-workbench-primary-field { overflow: visible; }
   .changes-primary-field { overflow: visible; }

@@ -624,6 +624,7 @@ defmodule IexCodeWeb.WorkspaceLive do
               socket =
                 socket
                 |> assign(:session, new_session)
+                |> assign(:pending_git_confirmation, nil)
                 |> assign(:project, project)
                 |> assign(:projects, projects)
                 |> assign(:all_projects, projects)
@@ -1560,11 +1561,14 @@ defmodule IexCodeWeb.WorkspaceLive do
     socket =
       socket
       |> open_file_buffer(rel_path)
-      |> assign(:active_view, "files")
       |> assign(:active_tab, "files")
       |> rebuild_instrument_summaries()
 
-    {:noreply, socket}
+    if socket.assigns.active_view == "files" do
+      {:noreply, socket}
+    else
+      {:noreply, navigate_workspace_socket(socket, "files")}
+    end
   end
 
   @impl true
@@ -1806,7 +1810,7 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_event("select_diff_file", params, socket) do
     file_path = params["file"] || params["path"]
-    scope = git_scope(params["scope"] || "unstaged")
+    scope = git_scope(params["scope"])
 
     with scope when scope in [:staged, :unstaged] <- scope,
          {:ok, accepted_path} <- authorize_diff_path(socket, file_path, scope) do
@@ -1829,12 +1833,19 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("accept_hunk", %{"file" => file, "hunk_id" => hunk_id}, socket) do
-    with {:ok, accepted_path} <- authorize_hunk(socket, :unstaged, file, hunk_id) do
+    with {:ok, accepted_path} <- authorize_hunk(socket, :unstaged, file, hunk_id),
+         {:ok, expected_fingerprint} <-
+           displayed_hunk_fingerprint(socket, :unstaged, accepted_path, hunk_id) do
       root = socket.assigns.project.root_path
 
       case with_ui_mutation_lock(socket, fn ->
-             with {:ok, fresh_diff} <- fresh_hunk_diff(root, :unstaged, accepted_path, hunk_id) do
+             with {:ok, current_fingerprint} <-
+                    git_hunk_fingerprint(socket, :unstaged, accepted_path, hunk_id),
+                  true <- current_fingerprint == expected_fingerprint,
+                  {:ok, fresh_diff} <- fresh_hunk_diff(root, :unstaged, accepted_path, hunk_id) do
                HunkOps.accept_hunk(root, accepted_path, hunk_id, diff: fresh_diff)
+             else
+               _ -> {:error, :stale_git_snapshot}
              end
            end) do
         {:ok, _} ->
@@ -1865,14 +1876,24 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("revert_hunk", _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_event("accept_all_hunks", %{"file" => file}, socket) do
-    with {:ok, accepted_path} <- authorize_selected_diff(socket, :unstaged, file) do
+  def handle_event("accept_all_hunks", %{"file" => file} = params, socket)
+      when map_size(params) == 1 do
+    with false <- socket.assigns.diff_truncated?,
+         {:ok, accepted_path} <- authorize_selected_diff(socket, :unstaged, file) do
       root = socket.assigns.project.root_path
+      expected_diff = socket.assigns.diff_text
 
       case with_ui_mutation_lock(socket, fn ->
-             if fresh_status_authorizes?(root, :unstaged, accepted_path),
-               do: HunkOps.accept_all_hunks(root, accepted_path),
-               else: {:error, :stale_git_snapshot}
+             if fresh_status_authorizes?(root, :unstaged, accepted_path) do
+               {_hunks, fresh_text, truncated?} =
+                 load_selected_diff(root, accepted_path, :unstaged)
+
+               if truncated? or fresh_text != expected_diff,
+                 do: {:error, :stale_git_snapshot},
+                 else: HunkOps.accept_all_hunks(root, accepted_path)
+             else
+               {:error, :stale_git_snapshot}
+             end
            end) do
         {:ok, _} ->
           {:noreply,
@@ -1889,6 +1910,8 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
+  def handle_event("accept_all_hunks", _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("revert_file", params, socket) when map_size(params) == 0,
     do: confirm_git_file_revert(socket)
@@ -1903,9 +1926,12 @@ defmodule IexCodeWeb.WorkspaceLive do
     scope = git_scope(params["scope"])
 
     with scope when scope in [:staged, :unstaged, :untracked] <- scope,
-         {:ok, accepted_path} <- authorize_status_path(socket, file, [scope]) do
+         source when source in ["viewer", "ledger"] <- params["source"],
+         :ok <- authorize_revert_source(socket, file, scope, source),
+         {:ok, accepted_path} <- authorize_status_path(socket, file, [scope]),
+         {:ok, fingerprint} <- git_file_fingerprint(socket, scope, accepted_path) do
       return_target =
-        if params["source"] == "ledger",
+        if source == "ledger",
           do: {:ledger, git_path_digest(to_string(scope), accepted_path)},
           else: :viewer
 
@@ -1914,7 +1940,15 @@ defmodule IexCodeWeb.WorkspaceLive do
        |> clear_pending_confirmations()
        |> assign(
          :pending_git_confirmation,
-         {:revert_git_file, scope, accepted_path, return_target}
+         %{
+           kind: :revert_git_file,
+           project_id: socket.assigns.project.id,
+           session_id: socket.assigns.session.id,
+           scope: scope,
+           path: accepted_path,
+           return_target: return_target,
+           fingerprint: fingerprint
+         }
        )}
     else
       _ -> {:noreply, assign(socket, :pending_git_confirmation, nil)}
@@ -2080,11 +2114,18 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("switch_git_branch", %{"branch" => branch}, socket) do
-    if socket.assigns.active_view == "changes" and
-         Enum.any?(socket.assigns.git_branches, &(&1.name == branch)) do
+    if socket.assigns.active_view == "changes" and is_binary(branch) and
+         branch != "" and not String.starts_with?(branch, "-") do
       root = socket.assigns.project.root_path
 
-      case with_ui_mutation_lock(socket, fn -> Git.switch_branch(root, branch) end) do
+      case with_ui_mutation_lock(socket, fn ->
+             with {:ok, branches} <- Git.branches(root),
+                  true <- Enum.any?(branches, &(&1.name == branch)) do
+               Git.switch_branch(root, branch)
+             else
+               _ -> {:error, :stale_git_snapshot}
+             end
+           end) do
         {:ok, _} ->
           socket =
             socket
@@ -2108,52 +2149,71 @@ defmodule IexCodeWeb.WorkspaceLive do
     name = params["name"] || params["branch_name"] || ""
     name = String.trim(name)
 
-    if name == "" do
-      {:noreply,
-       socket
-       |> assign(:git_branch_form, to_form(%{"name" => name}))
-       |> put_flash(:error, "Branch name cannot be empty")}
-    else
-      root = socket.assigns.project.root_path
+    cond do
+      name == "" ->
+        {:noreply,
+         socket
+         |> assign(:git_branch_form, to_form(%{"name" => name}))
+         |> put_flash(:error, "Branch name cannot be empty")}
 
-      case with_ui_mutation_lock(socket, fn -> Git.create_branch(root, name) end) do
-        {:ok, _} ->
-          socket =
-            socket
-            |> assign(:show_branch_menu, false)
-            |> assign(:git_branch_form, to_form(%{"name" => ""}))
-            |> refresh_git_state()
-            |> put_flash(:info, "Created and checked out branch #{name}")
+      not valid_git_branch_name?(name) ->
+        {:noreply,
+         socket
+         |> assign(:git_branch_form, to_form(%{"name" => name}))
+         |> put_flash(:error, "Branch name is invalid")}
 
-          {:noreply, socket}
+      true ->
+        root = socket.assigns.project.root_path
 
-        {:error, reason} ->
-          {:noreply,
-           put_flash(socket, :error, "Failed to create branch: #{ui_mutation_error(reason)}")}
-      end
+        case with_ui_mutation_lock(socket, fn -> Git.create_branch(root, name) end) do
+          {:ok, _} ->
+            socket =
+              socket
+              |> assign(:show_branch_menu, false)
+              |> assign(:git_branch_form, to_form(%{"name" => ""}))
+              |> refresh_git_state()
+              |> put_flash(:info, "Created and checked out branch #{name}")
+
+            {:noreply, socket}
+
+          {:error, reason} ->
+            {:noreply,
+             put_flash(socket, :error, "Failed to create branch: #{ui_mutation_error(reason)}")}
+        end
     end
   end
 
   def handle_event("create_git_branch", _params, socket), do: {:noreply, socket}
 
+  defp valid_git_branch_name?(name) when is_binary(name) and name != "" do
+    not String.starts_with?(name, "-") and
+      not String.contains?(name, ["..", "@{", " ", "~", "^", ":", "?", "*", "[", "\\"]) and
+      not String.ends_with?(name, ["/", ".", ".lock"])
+  end
+
+  defp valid_git_branch_name?(_), do: false
+
   @impl true
-  def handle_event("git_fetch", _params, socket) do
-    if socket.assigns.active_view != "changes" do
-      {:noreply, socket}
-    else
-      root = socket.assigns.project.root_path
+  def handle_event("git_fetch", %{"source" => "palette"}, socket), do: perform_git_fetch(socket)
 
-      case with_ui_mutation_lock(socket, fn -> Git.fetch(root) end) do
-        {:ok, _} ->
-          {:noreply,
-           socket |> refresh_git_state() |> put_flash(:info, "Fetched latest remote updates")}
+  def handle_event("git_fetch", _params, %{assigns: %{active_view: "changes"}} = socket),
+    do: perform_git_fetch(socket)
 
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> refresh_git_state()
-           |> put_flash(:error, "Fetch failed: #{ui_mutation_error(reason)}")}
-      end
+  def handle_event("git_fetch", _params, socket), do: {:noreply, socket}
+
+  defp perform_git_fetch(socket) do
+    root = socket.assigns.project.root_path
+
+    case with_ui_mutation_lock(socket, fn -> Git.fetch(root) end) do
+      {:ok, _} ->
+        {:noreply,
+         socket |> refresh_git_state() |> put_flash(:info, "Fetched latest remote updates")}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> refresh_git_state()
+         |> put_flash(:error, "Fetch failed: #{ui_mutation_error(reason)}")}
     end
   end
 
@@ -2226,10 +2286,30 @@ defmodule IexCodeWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("stage_all", _params, %{assigns: %{active_view: "changes"}} = socket) do
+  def handle_event("stage_all", params, %{assigns: %{active_view: "changes"}} = socket)
+      when map_size(params) == 0 do
     root = socket.assigns.project.root_path
+    accepted_authority = git_status_authority(socket.assigns.git_status)
 
-    case with_ui_mutation_lock(socket, fn -> Git.stage(:all, root) end) do
+    case with_ui_mutation_lock(socket, fn ->
+           case Git.status(root, path_limit: 500, output_limit_bytes: 1 * 1_024 * 1_024) do
+             {:ok, %{truncated?: false, unstaged: unstaged, untracked: untracked} = status}
+             when unstaged != [] or untracked != [] ->
+               if git_status_authority(status) == accepted_authority and
+                    accepted_authority != :invalid,
+                  do: Git.stage(:all, root),
+                  else: {:error, :stale_git_snapshot}
+
+             {:ok, %{truncated?: true}} ->
+               {:error, :stale_git_snapshot}
+
+             {:ok, _} ->
+               {:error, :stale_git_snapshot}
+
+             error ->
+               error
+           end
+         end) do
       :ok ->
         {:noreply, refresh_git_state(socket)}
 
@@ -2241,10 +2321,29 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("stage_all", _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_event("unstage_all", _params, %{assigns: %{active_view: "changes"}} = socket) do
+  def handle_event("unstage_all", params, %{assigns: %{active_view: "changes"}} = socket)
+      when map_size(params) == 0 do
     root = socket.assigns.project.root_path
+    accepted_authority = git_status_authority(socket.assigns.git_status)
 
-    case with_ui_mutation_lock(socket, fn -> Git.unstage(:all, root) end) do
+    case with_ui_mutation_lock(socket, fn ->
+           case Git.status(root, path_limit: 500, output_limit_bytes: 1 * 1_024 * 1_024) do
+             {:ok, %{truncated?: false, staged: staged} = status} when staged != [] ->
+               if git_status_authority(status) == accepted_authority and
+                    accepted_authority != :invalid,
+                  do: Git.unstage(:all, root),
+                  else: {:error, :stale_git_snapshot}
+
+             {:ok, %{truncated?: true}} ->
+               {:error, :stale_git_snapshot}
+
+             {:ok, _} ->
+               {:error, :stale_git_snapshot}
+
+             error ->
+               error
+           end
+         end) do
       :ok ->
         {:noreply, refresh_git_state(socket)}
 
@@ -2257,12 +2356,19 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   @impl true
   def handle_event("unstage_hunk", %{"file" => file, "hunk_id" => hunk_id}, socket) do
-    with {:ok, accepted_path} <- authorize_hunk(socket, :staged, file, hunk_id) do
+    with {:ok, accepted_path} <- authorize_hunk(socket, :staged, file, hunk_id),
+         {:ok, expected_fingerprint} <-
+           displayed_hunk_fingerprint(socket, :staged, accepted_path, hunk_id) do
       root = socket.assigns.project.root_path
 
       case with_ui_mutation_lock(socket, fn ->
-             with {:ok, fresh_diff} <- fresh_hunk_diff(root, :staged, accepted_path, hunk_id) do
+             with {:ok, current_fingerprint} <-
+                    git_hunk_fingerprint(socket, :staged, accepted_path, hunk_id),
+                  true <- current_fingerprint == expected_fingerprint,
+                  {:ok, fresh_diff} <- fresh_hunk_diff(root, :staged, accepted_path, hunk_id) do
                HunkOps.unstage_hunk(root, accepted_path, hunk_id, diff: fresh_diff)
+             else
+               _ -> {:error, :stale_git_snapshot}
              end
            end) do
         {:ok, _diff} ->
@@ -6184,10 +6290,22 @@ defmodule IexCodeWeb.WorkspaceLive do
               {"start_goal", "open_goal_modal"},
               {"new_task", "toggle_new_task_modal"},
               {"new-session", "new_session"},
-              {"toggle_swarm", "toggle_swarm"},
-              {"git_fetch", "git_fetch"}
+              {"toggle_swarm", "toggle_swarm"}
             ] do
     handle_event(event, %{}, assign(socket, :show_command_palette, false))
+  end
+
+  defp execute_command_palette_item(socket, %{
+         category: :action,
+         id: "git_fetch",
+         event: "git_fetch",
+         params: %{}
+       }) do
+    handle_event(
+      "git_fetch",
+      %{"source" => "palette"},
+      assign(socket, :show_command_palette, false)
+    )
   end
 
   defp execute_command_palette_item(socket, _item), do: {:noreply, socket}
@@ -6705,14 +6823,34 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp retain_git_confirmation(socket) do
     pending =
       case socket.assigns.pending_git_confirmation do
-        {:revert_git_file, scope, path, _return_target} = pending ->
-          if path in status_paths(socket.assigns.git_status, scope), do: pending
+        %{
+          kind: :revert_git_file,
+          project_id: project_id,
+          session_id: session_id,
+          scope: scope,
+          path: path,
+          fingerprint: fingerprint
+        } = pending
+        when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
+          if path in status_paths(socket.assigns.git_status, scope) and
+               match?({:ok, ^fingerprint}, git_file_fingerprint(socket, scope, path)),
+             do: pending
 
-        {kind, scope, path, hunk_id} = pending
+        %{
+          kind: kind,
+          project_id: project_id,
+          session_id: session_id,
+          scope: scope,
+          path: path,
+          hunk_id: hunk_id,
+          fingerprint: fingerprint
+        } = pending
         when kind in [:discard_git_hunk, :revert_git_hunk] ->
-          if socket.assigns.active_diff_scope == scope and
+          if project_id == socket.assigns.project.id and session_id == socket.assigns.session.id and
+               socket.assigns.active_diff_scope == scope and
                socket.assigns.selected_diff_file == path and
-               Enum.any?(socket.assigns.diff_hunks, &(Map.get(&1, :id) == hunk_id)),
+               Enum.any?(socket.assigns.diff_hunks, &(Map.get(&1, :id) == hunk_id)) and
+               match?({:ok, ^fingerprint}, git_hunk_fingerprint(socket, scope, path, hunk_id)),
              do: pending
 
         _ ->
@@ -6888,13 +7026,196 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
+  defp authorize_revert_source(socket, file, scope, "viewer") do
+    if socket.assigns.active_diff_scope == scope and
+         socket.assigns.selected_diff_file == file and socket.assigns.diff_file_path == file,
+       do: :ok,
+       else: {:error, :unauthorized_source}
+  end
+
+  defp authorize_revert_source(_socket, _file, _scope, "ledger"), do: :ok
+
+  defp authorize_revert_source(_socket, _file, _scope, _source),
+    do: {:error, :unauthorized_source}
+
+  defp git_path_identity(root, path) do
+    with {:ok, canonical} <- WorkspacePath.resolve(root, path),
+         {:ok, stat} <- File.lstat(Path.join(root, path)) do
+      {:ok,
+       %{
+         lexical: path,
+         canonical: canonical,
+         type: stat.type,
+         mode: stat.mode,
+         size: stat.size,
+         mtime: stat.mtime,
+         inode: Map.get(stat, :inode),
+         major_device: Map.get(stat, :major_device),
+         minor_device: Map.get(stat, :minor_device)
+       }}
+    else
+      {:error, :enoent} ->
+        {:ok, %{lexical: path, canonical: Path.expand(Path.join(root, path)), missing?: true}}
+
+      error ->
+        error
+    end
+  end
+
+  defp git_file_fingerprint(socket, scope, path) do
+    root = socket.assigns.project.root_path
+
+    with true <- fresh_status_authorizes?(root, scope, path),
+         {:ok, identity} <- git_path_identity(root, path) do
+      content_hash =
+        case File.lstat(Path.join(root, path)) do
+          {:ok, %{type: :symlink}} ->
+            case File.read_link(Path.join(root, path)) do
+              {:ok, target} -> {:symlink, :crypto.hash(:sha256, target)}
+              _ -> :unreadable
+            end
+
+          {:ok, %{type: :regular}} ->
+            case file_sha256(Path.join(root, path)) do
+              {:ok, digest} -> {:regular, digest}
+              _ -> :unreadable
+            end
+
+          {:ok, %{type: type}} ->
+            {type, nil}
+
+          {:error, :enoent} ->
+            :missing
+
+          _ ->
+            :unreadable
+        end
+
+      diffs =
+        for diff_scope <- [:staged, :unstaged], into: %{} do
+          opts = [paths: [path], unified: 3, max_bytes: @diff_retained_bytes]
+          opts = if diff_scope == :staged, do: Keyword.put(opts, :staged, true), else: opts
+
+          value =
+            case Git.diff_bounded(root, opts) do
+              {:ok, %{content: content, truncated?: truncated?}} ->
+                {content, truncated?}
+
+              _ ->
+                {"", false}
+            end
+
+          {diff_scope, value}
+        end
+
+      if Enum.any?(diffs, fn {_scope, {_content, truncated?}} -> truncated? end) do
+        {:error, :stale_git_confirmation}
+      else
+        index_identity =
+          case Git.run_git(root, ["ls-files", "--stage", "--", path]) do
+            {:ok, output} -> :crypto.hash(:sha256, output)
+            _ -> :unavailable
+          end
+
+        {:ok,
+         %{
+           project_id: socket.assigns.project.id,
+           session_id: socket.assigns.session.id,
+           scope: scope,
+           path: path,
+           identity: identity,
+           content_hash: content_hash,
+           index_identity: index_identity,
+           diffs: diffs
+         }}
+      end
+    else
+      _ -> {:error, :stale_git_confirmation}
+    end
+  end
+
+  defp file_sha256(path) do
+    File.open(path, [:read, :binary], fn io ->
+      digest =
+        io
+        |> IO.binstream(64 * 1_024)
+        |> Enum.reduce(:crypto.hash_init(:sha256), fn chunk, acc ->
+          :crypto.hash_update(acc, chunk)
+        end)
+        |> :crypto.hash_final()
+
+      {:ok, digest}
+    end)
+    |> case do
+      {:ok, {:ok, digest}} -> {:ok, digest}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp git_hunk_fingerprint(socket, scope, path, hunk_id) do
+    root = socket.assigns.project.root_path
+    {_hunks, text, truncated?} = load_selected_diff(root, path, scope)
+
+    with false <- truncated?,
+         {:ok, [file_diff | _]} <- DiffParser.parse(text),
+         hunk when not is_nil(hunk) <- Enum.find(file_diff.hunks, &(Map.get(&1, :id) == hunk_id)),
+         {:ok, identity} <- git_path_identity(root, path) do
+      patch = DiffParser.format_hunk_patch(file_diff, hunk)
+
+      {:ok,
+       %{
+         project_id: socket.assigns.project.id,
+         session_id: socket.assigns.session.id,
+         scope: scope,
+         path: path,
+         hunk_id: hunk_id,
+         identity: identity,
+         patch: patch
+       }}
+    else
+      _ -> {:error, :stale_git_confirmation}
+    end
+  end
+
+  defp displayed_hunk_fingerprint(socket, scope, path, hunk_id) do
+    with true <- socket.assigns.active_diff_scope == scope,
+         true <- socket.assigns.selected_diff_file == path,
+         false <- socket.assigns.diff_truncated?,
+         {:ok, [file_diff | _]} <- DiffParser.parse(socket.assigns.diff_text),
+         hunk when not is_nil(hunk) <- Enum.find(file_diff.hunks, &(Map.get(&1, :id) == hunk_id)),
+         {:ok, identity} <- git_path_identity(socket.assigns.project.root_path, path) do
+      {:ok,
+       %{
+         project_id: socket.assigns.project.id,
+         session_id: socket.assigns.session.id,
+         scope: scope,
+         path: path,
+         hunk_id: hunk_id,
+         identity: identity,
+         patch: DiffParser.format_hunk_patch(file_diff, hunk)
+       }}
+    else
+      _ -> {:error, :stale_git_snapshot}
+    end
+  end
+
   defp open_git_hunk_confirmation(socket, kind, file, hunk_id)
        when kind in [:discard_git_hunk, :revert_git_hunk] do
-    with {:ok, accepted_path} <- authorize_hunk(socket, :unstaged, file, hunk_id) do
+    with {:ok, accepted_path} <- authorize_hunk(socket, :unstaged, file, hunk_id),
+         {:ok, fingerprint} <-
+           displayed_hunk_fingerprint(socket, :unstaged, accepted_path, hunk_id) do
       {:noreply,
        socket
        |> clear_pending_confirmations()
-       |> assign(:pending_git_confirmation, {kind, :unstaged, accepted_path, hunk_id})}
+       |> assign(:pending_git_confirmation, %{
+         kind: kind,
+         project_id: socket.assigns.project.id,
+         session_id: socket.assigns.session.id,
+         scope: :unstaged,
+         path: accepted_path,
+         hunk_id: hunk_id,
+         fingerprint: fingerprint
+       })}
     else
       _ -> {:noreply, assign(socket, :pending_git_confirmation, nil)}
     end
@@ -6902,32 +7223,46 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp confirm_git_hunk(socket, expected_kind) do
     case socket.assigns.pending_git_confirmation do
-      {^expected_kind, scope, path, hunk_id} ->
-        refreshed = refresh_git_state(socket)
+      %{
+        kind: ^expected_kind,
+        project_id: project_id,
+        session_id: session_id,
+        scope: scope,
+        path: path,
+        hunk_id: hunk_id,
+        fingerprint: fingerprint
+      }
+      when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
+        root = socket.assigns.project.root_path
 
-        with {:ok, accepted_path} <- authorize_hunk(refreshed, scope, path, hunk_id) do
-          root = refreshed.assigns.project.root_path
+        result =
+          with_ui_mutation_lock(socket, fn ->
+            with {:ok, accepted_path} <- authorize_status_path(socket, path, [scope]),
+                 {:ok, current_fingerprint} <-
+                   git_hunk_fingerprint(socket, scope, accepted_path, hunk_id),
+                 true <- current_fingerprint == fingerprint,
+                 {:ok, fresh_diff} <- fresh_hunk_diff(root, scope, accepted_path, hunk_id) do
+              HunkOps.reject_hunk(root, accepted_path, hunk_id, diff: fresh_diff)
+            else
+              false -> {:error, :stale_git_confirmation}
+              _ -> {:error, :stale_git_confirmation}
+            end
+          end)
 
-          case with_ui_mutation_lock(refreshed, fn ->
-                 with {:ok, fresh_diff} <- fresh_hunk_diff(root, scope, accepted_path, hunk_id) do
-                   HunkOps.reject_hunk(root, accepted_path, hunk_id, diff: fresh_diff)
-                 end
-               end) do
-            {:ok, _} ->
-              {:noreply,
-               refreshed
-               |> assign(:pending_git_confirmation, nil)
-               |> refresh_git_state()
-               |> put_flash(:info, "Reverted hunk #{hunk_id} in #{accepted_path}")}
+        case result do
+          {:ok, _} ->
+            {:noreply,
+             socket
+             |> assign(:pending_git_confirmation, nil)
+             |> refresh_git_state()
+             |> put_flash(:info, "Reverted hunk #{hunk_id} in #{path}")}
 
-            {:error, reason} ->
-              {:noreply,
-               refreshed
-               |> assign(:pending_git_confirmation, nil)
-               |> put_flash(:error, "Failed to revert hunk: #{ui_mutation_error(reason)}")}
-          end
-        else
-          _ -> {:noreply, assign(refreshed, :pending_git_confirmation, nil)}
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> assign(:pending_git_confirmation, nil)
+             |> refresh_git_state()
+             |> put_flash(:error, "Failed to revert hunk: #{ui_mutation_error(reason)}")}
         end
 
       _ ->
@@ -6947,36 +7282,45 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp confirm_git_file_revert(socket) do
     case socket.assigns.pending_git_confirmation do
-      {:revert_git_file, scope, path, _return_target} ->
-        refreshed = refresh_git_state(socket)
+      %{
+        kind: :revert_git_file,
+        project_id: project_id,
+        session_id: session_id,
+        scope: scope,
+        path: path,
+        fingerprint: fingerprint
+      }
+      when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
+        root = socket.assigns.project.root_path
 
-        with {:ok, accepted_path} <- authorize_status_path(refreshed, path, [scope]) do
-          root = refreshed.assigns.project.root_path
+        result =
+          with_ui_mutation_lock(socket, fn ->
+            with {:ok, accepted_path} <- authorize_status_path(socket, path, [scope]),
+                 {:ok, current_fingerprint} <- git_file_fingerprint(socket, scope, accepted_path),
+                 true <- current_fingerprint == fingerprint,
+                 true <- fresh_status_authorizes?(root, scope, accepted_path) do
+              HunkOps.revert_file(root, accepted_path, scope)
+            else
+              _ -> {:error, :stale_git_confirmation}
+            end
+          end)
 
-          case with_ui_mutation_lock(refreshed, fn ->
-                 if fresh_status_authorizes?(root, scope, accepted_path) do
-                   HunkOps.revert_file(root, accepted_path)
-                 else
-                   {:error, :stale_git_confirmation}
-                 end
-               end) do
-            {:ok, _} ->
-              refreshed = maybe_reload_reverted_editor(refreshed, accepted_path)
+        case result do
+          {:ok, _} ->
+            socket = maybe_reload_reverted_editor(socket, path)
 
-              {:noreply,
-               refreshed
-               |> assign(:pending_git_confirmation, nil)
-               |> refresh_git_state()
-               |> put_flash(:info, "Reverted #{accepted_path} to clean git working state")}
+            {:noreply,
+             socket
+             |> assign(:pending_git_confirmation, nil)
+             |> refresh_git_state()
+             |> put_flash(:info, "Reverted #{path} to clean git working state")}
 
-            {:error, reason} ->
-              {:noreply,
-               refreshed
-               |> assign(:pending_git_confirmation, nil)
-               |> put_flash(:error, "Failed to revert file: #{ui_mutation_error(reason)}")}
-          end
-        else
-          _ -> {:noreply, assign(refreshed, :pending_git_confirmation, nil)}
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> assign(:pending_git_confirmation, nil)
+             |> refresh_git_state()
+             |> put_flash(:error, "Failed to revert file: #{ui_mutation_error(reason)}")}
         end
 
       _ ->
@@ -7011,8 +7355,28 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp fresh_status_authorizes?(root, scope, path) do
     case Git.status(root, path_limit: 500, output_limit_bytes: 1 * 1_024 * 1_024) do
-      {:ok, status} -> path in status_paths(status, scope)
+      {:ok, status} -> not status.truncated? and path in status_paths(status, scope)
       _ -> false
+    end
+  end
+
+  defp git_status_authority(nil), do: :invalid
+
+  defp git_status_authority(status) do
+    if Map.get(status, :truncated?, false) do
+      :invalid
+    else
+      payload = %{
+        branch: Map.get(status, :branch),
+        staged:
+          Enum.map(Map.get(status, :staged, []), &Map.take(&1, [:path, :status, :old_path])),
+        unstaged:
+          Enum.map(Map.get(status, :unstaged, []), &Map.take(&1, [:path, :status, :old_path])),
+        untracked: Map.get(status, :untracked, []),
+        conflicted: Enum.map(Map.get(status, :conflicted, []), &Map.take(&1, [:path, :status]))
+      }
+
+      :sha256 |> :crypto.hash(:erlang.term_to_binary(payload)) |> Base.encode16(case: :lower)
     end
   end
 
@@ -7028,28 +7392,28 @@ defmodule IexCodeWeb.WorkspaceLive do
     end
   end
 
-  defp git_confirmation_host({:revert_git_file, _scope, _path, _return_target}),
+  defp git_confirmation_host(%{kind: :revert_git_file}),
     do: {"git-file-revert-confirmation", "Revert this file?", "revert_file", nil}
 
-  defp git_confirmation_host({:discard_git_hunk, _scope, _path, hunk_id}),
+  defp git_confirmation_host(%{kind: :discard_git_hunk, hunk_id: hunk_id}),
     do: {"git-hunk-discard-confirmation-#{hunk_id}", "Discard this hunk?", "reject_hunk", hunk_id}
 
-  defp git_confirmation_host({:revert_git_hunk, _scope, _path, hunk_id}),
+  defp git_confirmation_host(%{kind: :revert_git_hunk, hunk_id: hunk_id}),
     do: {"git-hunk-revert-confirmation-#{hunk_id}", "Revert this hunk?", "revert_hunk", hunk_id}
 
-  defp git_confirmation_return_id({:revert_git_file, _scope, _path, :viewer}),
+  defp git_confirmation_return_id(%{kind: :revert_git_file, return_target: :viewer}),
     do: "git-file-revert-trigger"
 
-  defp git_confirmation_return_id({:revert_git_file, _scope, _path, {:ledger, digest}}),
+  defp git_confirmation_return_id(%{kind: :revert_git_file, return_target: {:ledger, digest}}),
     do: "git-file-revert-trigger-#{digest}"
 
-  defp git_confirmation_return_id({:discard_git_hunk, _scope, _path, hunk_id}),
+  defp git_confirmation_return_id(%{kind: :discard_git_hunk, hunk_id: hunk_id}),
     do: "reject-hunk-trigger-#{hunk_id}"
 
-  defp git_confirmation_return_id({:revert_git_hunk, _scope, _path, hunk_id}),
+  defp git_confirmation_return_id(%{kind: :revert_git_hunk, hunk_id: hunk_id}),
     do: "revert-hunk-trigger-#{hunk_id}"
 
-  defp git_confirmation_copy({_kind, _scope, path, _rest}) do
+  defp git_confirmation_copy(%{path: path}) do
     bounded_path = path |> String.replace_invalid() |> String.slice(0, 160)
 
     "The server revalidates #{bounded_path} against the current bounded Git snapshot before mutating it."

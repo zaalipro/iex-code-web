@@ -930,10 +930,27 @@ defmodule IexCode.Tools.Git do
   """
   @spec switch_branch(Path.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
   def switch_branch(repo_dir \\ ".", branch_name, opts \\ []) do
-    create? = Keyword.get(opts, :create, false)
-    args = if create?, do: ["checkout", "-b", branch_name], else: ["checkout", branch_name]
-    run_git(repo_dir, args)
+    if valid_branch_name?(branch_name) do
+      create? = Keyword.get(opts, :create, false)
+
+      args =
+        if create?,
+          do: ["checkout", "-b", branch_name],
+          else: ["switch", "--no-guess", "--", branch_name]
+
+      run_git(repo_dir, args)
+    else
+      {:error, :invalid_branch_name}
+    end
   end
+
+  defp valid_branch_name?(name) when is_binary(name) and name != "" do
+    not String.starts_with?(name, "-") and
+      not String.contains?(name, ["..", "@{", " ", "~", "^", ":", "?", "*", "[", "\\"]) and
+      not String.ends_with?(name, ["/", ".", ".lock"])
+  end
+
+  defp valid_branch_name?(_), do: false
 
   @doc """
   Creates a new branch at the current commit and checks it out.
