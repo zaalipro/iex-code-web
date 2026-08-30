@@ -442,6 +442,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
   attr :status, :any, default: :modified
   attr :additions, :integer, default: 0
   attr :deletions, :integer, default: 0
+  attr :staged, :boolean, default: false
 
   def diff_viewer(assigns), do: interactive_diff_viewer(assigns)
 
@@ -474,27 +475,26 @@ defmodule IexCodeWeb.WorkspaceComponents do
       |> assign(:status, status)
       |> assign(:file_path, file_path)
       |> assign(:diff_mode, diff_mode)
+      |> assign(:staged, assigns[:staged] == true)
       |> assign(:resolved_hunks, resolved_hunks)
 
     ~H"""
     <div
       id="diff-viewer-container"
-      class="min-h-0 min-w-0 bg-[#11151c] border border-[#21262d] rounded-2xl flex flex-col h-full overflow-hidden"
+      class="sf-code-surface min-h-0 min-w-0 border flex flex-col h-full overflow-hidden"
     >
       <!-- Toolbar Header -->
-      <div class="diff-viewer-header p-3 border-b border-[#21262d] bg-[#161b22] flex flex-wrap items-center justify-between gap-2 shrink-0 font-mono text-xs">
+      <div class="diff-viewer-header p-3 border-b flex flex-wrap items-center justify-between gap-2 shrink-0 font-mono text-xs">
         <div class="flex min-w-0 flex-1 items-center gap-2">
-          <.icon name="hero-code-bracket-square" class="w-4 h-4 text-cyan-400 shrink-0" />
-          <span class="min-w-0 truncate font-semibold text-white">
+          <.icon
+            name="hero-code-bracket-square"
+            class="w-4 h-4 text-[var(--sf-text-secondary)] shrink-0"
+          />
+          <span class="min-w-0 truncate font-semibold text-[var(--sf-text-primary)]">
             {@file_path || "Multi-File Patch Preview"}
           </span>
           <span class={[
-            "px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0",
-            to_string(@status) in ["added", "untracked"] &&
-              "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30",
-            to_string(@status) == "deleted" &&
-              "bg-rose-500/10 text-rose-400 border border-rose-500/30",
-            true && "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+            "border border-[var(--sf-hairline)] px-2 py-0.5 text-[10px] font-bold uppercase shrink-0 text-[var(--sf-text-secondary)]"
           ]}>
             {to_string(@status || "MODIFIED")}
           </span>
@@ -504,19 +504,24 @@ defmodule IexCodeWeb.WorkspaceComponents do
           <!-- File Actions: Revert File & Accept All -->
           <%= if @file_path do %>
             <button
-              phx-click="revert_file"
+              :if={!@staged}
+              id="git-file-revert-trigger"
+              phx-click="request_revert_git_file"
               phx-value-file={@file_path}
-              data-confirm="Revert every uncommitted change in this file?"
-              class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-lg text-xs font-mono transition-smooth flex items-center gap-1"
+              phx-value-source="viewer"
+              phx-value-scope={if(@staged, do: "staged", else: "unstaged")}
+              aria-label={"Revert every uncommitted change in #{@file_path}"}
+              class="sf-control min-h-11 px-3 text-xs font-mono transition-smooth flex items-center gap-1"
               title="Revert entire file to clean git state"
             >
               <.icon name="hero-arrow-uturn-left" class="w-3.5 h-3.5" />
               <span class="hidden sm:inline">Revert File</span>
             </button>
             <button
+              :if={!@staged}
               phx-click="accept_all_hunks"
               phx-value-file={@file_path}
-              class="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono transition-smooth flex items-center gap-1"
+              class="sf-control min-h-11 px-3 text-xs font-mono transition-smooth flex items-center gap-1"
               title="Stage all changes for this file"
             >
               <.icon name="hero-check" class="w-3.5 h-3.5" />
@@ -525,25 +530,33 @@ defmodule IexCodeWeb.WorkspaceComponents do
           <% end %>
 
           <!-- View Mode Toggle -->
-          <div class="flex items-center bg-[#0d1117] p-1 rounded-lg border border-[#21262d]">
+          <div
+            class="flex items-center border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] p-1"
+            role="group"
+            aria-label="Diff view mode"
+          >
             <button
+              id="diff-mode-inline"
               phx-click="set_diff_mode"
               phx-value-mode="inline"
+              aria-pressed={to_string(@diff_mode == "inline")}
               class={[
-                "px-2.5 py-1 rounded text-xs transition-smooth",
-                @diff_mode == "inline" && "bg-[#21262d] text-white font-semibold",
-                @diff_mode != "inline" && "text-gray-400 hover:text-gray-200"
+                "sf-control px-2.5 py-1 text-xs transition-smooth",
+                @diff_mode == "inline" && "text-[var(--sf-text-primary)] font-semibold",
+                @diff_mode != "inline" && "text-[var(--sf-text-secondary)]"
               ]}
             >
               Inline
             </button>
             <button
+              id="diff-mode-split"
               phx-click="set_diff_mode"
               phx-value-mode="split"
+              aria-pressed={to_string(@diff_mode == "split")}
               class={[
-                "px-2.5 py-1 rounded text-xs transition-smooth",
-                @diff_mode == "split" && "bg-[#21262d] text-white font-semibold",
-                @diff_mode != "split" && "text-gray-400 hover:text-gray-200"
+                "sf-control px-2.5 py-1 text-xs transition-smooth",
+                @diff_mode == "split" && "text-[var(--sf-text-primary)] font-semibold",
+                @diff_mode != "split" && "text-[var(--sf-text-secondary)]"
               ]}
             >
               Side-by-Side
@@ -553,9 +566,11 @@ defmodule IexCodeWeb.WorkspaceComponents do
           <!-- Copy Diff Button -->
           <button
             id="copy-diff-btn"
+            type="button"
             phx-hook="CodeCopy"
             data-code={@diff_text}
-            class="px-2.5 py-1 bg-[#21262d] hover:bg-[#30363d] text-gray-200 rounded-lg text-xs font-mono transition-smooth flex items-center gap-1.5"
+            aria-label="Copy selected diff"
+            class="sf-control px-2.5 py-1 text-xs font-mono transition-smooth flex items-center gap-1.5"
           >
             <.icon name="hero-clipboard-document" class="w-3.5 h-3.5" />
             <span class="hidden md:inline">Copy Diff</span>
@@ -564,9 +579,9 @@ defmodule IexCodeWeb.WorkspaceComponents do
       </div>
 
       <!-- Diff Body with Granular Hunks -->
-      <div class="flex-1 min-h-0 min-w-0 overflow-auto font-mono text-xs leading-relaxed p-2 sm:p-3 bg-[#0a0d12] space-y-4">
+      <div class="flex-1 min-h-0 min-w-0 overflow-auto font-mono text-xs leading-relaxed p-2 sm:p-3 space-y-4">
         <%= if is_nil(@diff_text) or String.trim(@diff_text) == "" do %>
-          <div class="p-8 text-center text-gray-500">
+          <div class="p-8 text-center text-[var(--sf-text-secondary)]">
             No patch or diff selected.
           </div>
         <% else %>
@@ -576,6 +591,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 hunk={hunk}
                 file_path={@file_path}
                 diff_mode={@diff_mode}
+                staged={@staged}
               />
             <% end %>
           <% else %>
@@ -604,16 +620,16 @@ defmodule IexCodeWeb.WorkspaceComponents do
     ~H"""
     <div
       id={"hunk-card-#{@hunk.id}"}
-      class="border border-[#21262d] rounded-xl overflow-hidden bg-[#11151c] shadow-md"
+      class="border overflow-hidden"
     >
       <!-- Hunk Control Header -->
-      <div class="bg-[#161b22] px-3 py-2 border-b border-[#21262d] flex items-center justify-between font-mono text-xs">
+      <div class="px-3 py-2 border-b flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
         <div class="flex items-center gap-2 truncate">
-          <span class="px-2 py-0.5 rounded bg-indigo-950/60 text-indigo-300 font-semibold text-[11px] border border-indigo-500/30">
+          <span class="px-2 py-0.5 text-[var(--sf-code-text)] font-semibold text-[11px] border border-[var(--sf-hairline)]">
             {@hunk.header ||
               "@@ -#{@hunk.old_start},#{@hunk.old_count || @hunk.old_lines} +#{@hunk.new_start},#{@hunk.new_count || @hunk.new_lines} @@"}
           </span>
-          <span class="text-[10px] text-gray-400">
+          <span class="text-[10px] text-[var(--sf-text-secondary)]">
             Hunk {@hunk.id}
           </span>
         </div>
@@ -621,10 +637,11 @@ defmodule IexCodeWeb.WorkspaceComponents do
         <div class="flex items-center gap-1.5">
           <%= if @staged do %>
             <button
+              type="button"
               phx-click="unstage_hunk"
               phx-value-file={@file_path}
               phx-value-hunk_id={@hunk.id}
-              class="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded text-[11px] font-semibold transition-smooth flex items-center gap-1"
+              class="sf-control min-h-11 px-3 text-xs font-semibold transition-smooth flex items-center gap-1"
               title="Unstage this hunk from the index"
             >
               <.icon name="hero-minus-circle" class="w-3 h-3" />
@@ -632,32 +649,37 @@ defmodule IexCodeWeb.WorkspaceComponents do
             </button>
           <% else %>
             <button
+              type="button"
               phx-click="accept_hunk"
               phx-value-file={@file_path}
               phx-value-hunk_id={@hunk.id}
-              class="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded text-[11px] font-semibold transition-smooth flex items-center gap-1"
+              class="sf-control min-h-11 px-3 text-xs font-semibold transition-smooth flex items-center gap-1"
               title="Stage this hunk"
             >
               <.icon name="hero-check" class="w-3 h-3" />
               <span>Accept Hunk</span>
             </button>
             <button
-              phx-click="reject_hunk"
+              id={"reject-hunk-trigger-#{@hunk.id}"}
+              type="button"
+              phx-click="request_discard_git_hunk"
               phx-value-file={@file_path}
               phx-value-hunk_id={@hunk.id}
-              data-confirm="Discard this hunk?"
-              class="px-2 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded text-[11px] font-semibold transition-smooth flex items-center gap-1"
+              aria-label={"Discard #{@hunk.id} from #{@file_path}"}
+              class="sf-control min-h-11 border-[var(--sf-live-mark)] px-3 text-xs font-semibold text-[var(--sf-live-text)] transition-smooth flex items-center gap-1"
               title="Reject / Discard this hunk"
             >
               <.icon name="hero-x-mark" class="w-3 h-3" />
               <span>Reject Hunk</span>
             </button>
             <button
-              phx-click="revert_hunk"
+              id={"revert-hunk-trigger-#{@hunk.id}"}
+              type="button"
+              phx-click="request_revert_git_hunk"
               phx-value-file={@file_path}
               phx-value-hunk_id={@hunk.id}
-              data-confirm="Revert this hunk?"
-              class="px-2 py-1 bg-gray-700/40 hover:bg-gray-700/60 text-gray-300 border border-gray-600/30 rounded text-[11px] transition-smooth flex items-center gap-1"
+              aria-label={"Revert #{@hunk.id} in #{@file_path}"}
+              class="sf-control min-h-11 px-3 text-xs transition-smooth flex items-center gap-1"
               title="Revert this hunk"
             >
               <.icon name="hero-arrow-uturn-left" class="w-3 h-3" />
@@ -668,7 +690,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
       </div>
 
       <!-- Hunk Body Lines -->
-      <div class="p-2 bg-[#0d1117] overflow-x-auto">
+      <div class="p-2 overflow-x-auto">
         <%= if @diff_mode == "inline" do %>
           <.hunk_inline_lines lines={@hunk.lines} />
         <% else %>
@@ -686,22 +708,26 @@ defmodule IexCodeWeb.WorkspaceComponents do
         <% {bg, text_color, sign} =
           case line.type do
             :addition ->
-              {"bg-emerald-950/40 border-l-2 border-emerald-500", "text-emerald-300", "+"}
+              {"border-l-2 border-[var(--sf-success-text)] bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)]",
+               "text-[var(--sf-success-text)]", "+"}
 
             :deletion ->
-              {"bg-rose-950/40 border-l-2 border-rose-500", "text-rose-300", "-"}
+              {"border-l-2 border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)]",
+               "text-[var(--sf-live-text)]", "-"}
 
             :header ->
-              {"bg-indigo-950/30 text-indigo-300 font-semibold py-0.5 px-2 rounded",
-               "text-indigo-300", "@"}
+              {"bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)] font-semibold py-0.5 px-2",
+               "text-[var(--sf-text-secondary)]", "@"}
 
             _ ->
-              {"hover:bg-[#161b22]", "text-gray-300", " "}
+              {"hover:bg-[var(--sf-raised-control)]", "text-[var(--sf-code-text)]", " "}
           end %>
-        <div class={["flex items-center px-2 py-0.5 rounded", bg]}>
-          <span class="w-8 text-right text-gray-600 select-none pr-2 text-[10px]">{line.old_num || " "}</span>
-          <span class="w-8 text-right text-gray-600 select-none pr-3 text-[10px]">{line.new_num || " "}</span>
-          <span class="w-4 text-center select-none font-bold text-[11px] text-gray-500">{sign}</span>
+        <div class={["flex items-center px-2 py-0.5", bg]}>
+          <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.old_num ||
+            " "}</span>
+          <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-3 text-[10px]">{line.new_num ||
+            " "}</span>
+          <span class="w-4 text-center select-none font-bold text-[11px] text-[var(--sf-text-secondary)]">{sign}</span>
           <span class={["flex-1 whitespace-pre-wrap", text_color]}>{line.content}</span>
         </div>
       <% end %>
@@ -712,36 +738,39 @@ defmodule IexCodeWeb.WorkspaceComponents do
   def hunk_split_lines(assigns) do
     ~H"""
     <div class="grid grid-cols-2 gap-2 font-mono text-xs">
-      <div class="space-y-0.5 border-r border-[#21262d] pr-2">
-        <div class="text-gray-500 text-[10px] uppercase font-bold px-2 py-1 bg-[#11151c] rounded mb-1">
+      <div class="space-y-0.5 border-r border-[var(--sf-hairline)] pr-2">
+        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Original
         </div>
         <%= for line <- @lines do %>
           <%= if line.type in [:context, :deletion] do %>
             <div class={[
-              "px-2 py-0.5 rounded flex items-center",
-              line.type == :deletion && "bg-rose-950/40 text-rose-300 border-l-2 border-rose-500",
-              line.type == :context && "text-gray-300 hover:bg-[#161b22]"
+              "px-2 py-0.5 flex items-center",
+              line.type == :deletion &&
+                "border-l-2 border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)] text-[var(--sf-live-text)]",
+              line.type == :context &&
+                "text-[var(--sf-code-text)] hover:bg-[var(--sf-raised-control)]"
             ]}>
-              <span class="w-8 text-right text-gray-600 select-none pr-2 text-[10px]">{line.old_num}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.old_num}</span>
               <span class="flex-1 whitespace-pre-wrap">{line.content}</span>
             </div>
           <% end %>
         <% end %>
       </div>
       <div class="space-y-0.5 pl-2">
-        <div class="text-gray-500 text-[10px] uppercase font-bold px-2 py-1 bg-[#11151c] rounded mb-1">
+        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Modified
         </div>
         <%= for line <- @lines do %>
           <%= if line.type in [:context, :addition] do %>
             <div class={[
-              "px-2 py-0.5 rounded flex items-center",
+              "px-2 py-0.5 flex items-center",
               line.type == :addition &&
-                "bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500",
-              line.type == :context && "text-gray-300 hover:bg-[#161b22]"
+                "border-l-2 border-[var(--sf-success-text)] bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)] text-[var(--sf-success-text)]",
+              line.type == :context &&
+                "text-[var(--sf-code-text)] hover:bg-[var(--sf-raised-control)]"
             ]}>
-              <span class="w-8 text-right text-gray-600 select-none pr-2 text-[10px]">{line.new_num}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{line.new_num}</span>
               <span class="flex-1 whitespace-pre-wrap">{line.content}</span>
             </div>
           <% end %>
@@ -761,24 +790,27 @@ defmodule IexCodeWeb.WorkspaceComponents do
         <% {bg, text_color, sign} =
           cond do
             String.starts_with?(line, "+") && !String.starts_with?(line, "+++") ->
-              {"bg-emerald-950/40 border-l-2 border-emerald-500", "text-emerald-300", "+"}
+              {"border-l-2 border-[var(--sf-success-text)] bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)]",
+               "text-[var(--sf-success-text)]", "+"}
 
             String.starts_with?(line, "-") && !String.starts_with?(line, "---") ->
-              {"bg-rose-950/40 border-l-2 border-rose-500", "text-rose-300", "-"}
+              {"border-l-2 border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)]",
+               "text-[var(--sf-live-text)]", "-"}
 
             String.starts_with?(line, "@@") ->
-              {"bg-indigo-950/30 text-indigo-300 font-semibold my-1 py-0.5 px-2 rounded",
-               "text-indigo-300", "@"}
+              {"bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)] font-semibold my-1 py-0.5 px-2",
+               "text-[var(--sf-text-secondary)]", "@"}
 
             String.starts_with?(line, "---") || String.starts_with?(line, "+++") ->
-              {"bg-[#161b22] text-gray-400 font-semibold py-1 px-2", "text-gray-400", "#"}
+              {"bg-[var(--sf-instrument-raised)] text-[var(--sf-text-secondary)] font-semibold py-1 px-2",
+               "text-[var(--sf-text-secondary)]", "#"}
 
             true ->
-              {"hover:bg-[#11151c]", "text-gray-300", " "}
+              {"hover:bg-[var(--sf-raised-control)]", "text-[var(--sf-code-text)]", " "}
           end %>
-        <div class={["flex items-center px-2 py-0.5 rounded font-mono", bg]}>
-          <span class="w-10 text-right text-gray-600 select-none pr-3 text-[10px]">{idx}</span>
-          <span class="w-4 text-center select-none font-bold text-[11px] text-gray-500">{sign}</span>
+        <div class={["flex items-center px-2 py-0.5 font-mono", bg]}>
+          <span class="w-10 text-right text-[var(--sf-text-secondary)] select-none pr-3 text-[10px]">{idx}</span>
+          <span class="w-4 text-center select-none font-bold text-[11px] text-[var(--sf-text-secondary)]">{sign}</span>
           <span class={["flex-1 whitespace-pre-wrap", text_color]}>{line}</span>
         </div>
       <% end %>
@@ -792,35 +824,35 @@ defmodule IexCodeWeb.WorkspaceComponents do
 
     ~H"""
     <div class="grid min-w-[42rem] grid-cols-2 gap-2">
-      <div class="space-y-0.5 border-r border-[#21262d] pr-2">
-        <div class="text-gray-500 text-[10px] uppercase font-bold px-2 py-1 bg-[#11151c] rounded mb-1">
+      <div class="space-y-0.5 border-r border-[var(--sf-hairline)] pr-2">
+        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Original
         </div>
         <%= for {line, idx} <- Enum.with_index(@lines, 1) do %>
           <%= if !String.starts_with?(line, "+") || String.starts_with?(line, "+++") do %>
             <div class={[
-              "px-2 py-0.5 rounded flex items-center",
+              "px-2 py-0.5 flex items-center",
               String.starts_with?(line, "-") &&
-                "bg-rose-950/40 text-rose-300 border-l-2 border-rose-500"
+                "border-l-2 border-[var(--sf-live-mark)] bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)] text-[var(--sf-live-text)]"
             ]}>
-              <span class="w-8 text-right text-gray-600 select-none pr-2 text-[10px]">{idx}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{idx}</span>
               <span class="flex-1 whitespace-pre-wrap">{line}</span>
             </div>
           <% end %>
         <% end %>
       </div>
       <div class="space-y-0.5 pl-2">
-        <div class="text-gray-500 text-[10px] uppercase font-bold px-2 py-1 bg-[#11151c] rounded mb-1">
+        <div class="text-[var(--sf-text-secondary)] text-[10px] uppercase font-bold px-2 py-1 bg-[var(--sf-instrument-raised)] mb-1">
           Modified
         </div>
         <%= for {line, idx} <- Enum.with_index(@lines, 1) do %>
           <%= if !String.starts_with?(line, "-") || String.starts_with?(line, "---") do %>
             <div class={[
-              "px-2 py-0.5 rounded flex items-center",
+              "px-2 py-0.5 flex items-center",
               String.starts_with?(line, "+") &&
-                "bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500"
+                "border-l-2 border-[var(--sf-success-text)] bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)] text-[var(--sf-success-text)]"
             ]}>
-              <span class="w-8 text-right text-gray-600 select-none pr-2 text-[10px]">{idx}</span>
+              <span class="w-8 text-right text-[var(--sf-text-secondary)] select-none pr-2 text-[10px]">{idx}</span>
               <span class="flex-1 whitespace-pre-wrap">{line}</span>
             </div>
           <% end %>

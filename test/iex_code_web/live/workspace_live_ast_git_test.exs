@@ -2,7 +2,7 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
   use IexCode.E2E.Case, async: false
   @moduletag mock_llm: true
 
-  alias IexCode.Tools.Git
+  alias IexCode.{Repo, Tools.Git}
 
   # ============================================================================
   # Git Branch Switching & Remote Synchronization
@@ -68,6 +68,211 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
 
       assert render_click(view, "git_fetch")
       assert render_click(view, "git_pull")
+    end
+
+    test "renders factual Change Ledger summary and newest test operation without sentinel leakage",
+         %{
+           conn: conn,
+           workspace_path: path
+         } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+
+      older =
+        create_operation_fixture(session, %{
+          op_type: "run_tests",
+          status: "failed",
+          duration_ms: 7
+        })
+
+      _newer_non_test =
+        create_operation_fixture(session, %{
+          op_type: "tool",
+          status: "completed",
+          title: "NONTEST-TITLE-SENTINEL"
+        })
+
+      newest =
+        create_operation_fixture(session, %{
+          op_type: "run_tests",
+          status: "completed",
+          duration_ms: 42,
+          title: "TEST-TITLE-SENTINEL",
+          result: "TEST-RESULT-SENTINEL",
+          error_message: "TEST-ERROR-SENTINEL",
+          params: %{"secret" => "TEST-PARAM-SENTINEL"},
+          pid_str: "TEST-PID-SENTINEL",
+          agent_name: "TEST-AGENT-SENTINEL"
+        })
+
+      _older = retime(older, ~U[2026-08-28 10:00:00Z])
+      _newest = retime(newest, ~U[2026-08-28 12:00:00Z])
+
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      assert has_element?(view, "#changes-signal-panel", "Latest test operation")
+      assert has_element?(view, "#changes-signal-panel", "completed · 42 ms")
+
+      document = view |> render() |> LazyHTML.from_fragment()
+      signal = document |> LazyHTML.query("#changes-signal-panel") |> LazyHTML.text()
+
+      for secret <- [
+            "NONTEST-TITLE-SENTINEL",
+            "TEST-TITLE-SENTINEL",
+            "TEST-RESULT-SENTINEL",
+            "TEST-ERROR-SENTINEL",
+            "TEST-PARAM-SENTINEL",
+            "TEST-PID-SENTINEL",
+            "TEST-AGENT-SENTINEL"
+          ] do
+        refute signal =~ secret
+      end
+
+      without_duration =
+        create_operation_fixture(session, %{
+          op_type: "run_tests",
+          status: "failed",
+          duration_ms: nil
+        })
+        |> retime(~U[2026-08-28 13:00:00Z])
+
+      send(view.pid, {:operation_created, without_duration})
+      _ = :sys.get_state(view.pid)
+
+      updated_signal =
+        view
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("#changes-signal-panel")
+        |> LazyHTML.text()
+
+      assert updated_signal =~ "Latest test operation"
+      assert updated_signal =~ "failed"
+      refute updated_signal =~ "ms"
+    end
+
+    test "same-view Changes re-entry synchronously accepts new tracked and untracked facts", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      workspace_write_file(path, "README.md", "# externally changed\n")
+      workspace_write_file(path, "lib/untracked_same_view.ex", "defmodule SameView, do: :new\n")
+
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      assert has_element?(view, "[phx-click='select_diff_file'][phx-value-file='README.md']")
+
+      assert has_element?(
+               view,
+               "[phx-click='stage_file'][phx-value-file='lib/untracked_same_view.ex']"
+             )
+    end
+
+    test "renders the 500-path retained bound without claiming a clean repository", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      for index <- 1..501 do
+        workspace_write_file(path, "bounded/status_#{index}.ex", "#{index}\n")
+      end
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      assert has_element?(view, "#git-status-truncated", "Showing bounded Git status")
+
+      assert has_element?(
+               view,
+               "#changes-signal-panel[data-summary-status='attention']",
+               "Showing bounded Git status"
+             )
+
+      refute has_element?(view, "#changes-signal-panel", "No changes")
+      refute has_element?(view, "#changes-signal-panel", "all clean")
+    end
+
+    test "rejects forged branches, foreign paths, and Git pathspec magic", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "safe.ex", "safe\n")
+      workspace_write_file(path, "*.ex", "literal pathspec name\n")
+      workspace_write_file(path, ":!safe.ex", "short-form pathspec name\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "switch_git_branch", %{"branch" => "forged-branch"})
+      render_click(view, "stage_file", %{"file" => "../outside.ex"})
+      render_click(view, "stage_file", %{"file" => "*.ex"})
+      render_click(view, "stage_file", %{"file" => ":!safe.ex"})
+      render_click(view, "select_diff_file", %{"file" => "../outside.ex", "scope" => "unstaged"})
+      render_click(view, "set_diff_mode", %{"mode" => "forged"})
+      render_click(view, "switch_changes_subtab", %{"tab" => "forged"})
+
+      assert {:ok, "main"} = Git.current_branch(path)
+      assert {:ok, status} = Git.status(path)
+      assert "safe.ex" in status.untracked
+      assert "*.ex" in status.untracked
+      assert ":!safe.ex" in status.untracked
+    end
+
+    test "a synchronous Git error clears the prior accepted detailed snapshot", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "README.md", "# accepted before error\n")
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+      assert has_element?(view, "[phx-value-file='README.md'][phx-value-scope='unstaged']")
+
+      File.rename!(Path.join(path, ".git"), Path.join(path, ".git-offline"))
+      render_click(view, "refresh_git_state", %{})
+
+      assert has_element?(view, "#changes-signal-panel", "Git unavailable")
+      refute has_element?(view, "[phx-value-file='README.md']")
+      refute has_element?(view, "#git-file-revert-trigger")
+      assert has_element?(view, "#diff-viewer-container", "No patch or diff selected")
+    end
+
+    test "renders conflicts as bounded facts with visible conflict text", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      {_, 0} = System.cmd("git", ["switch", "develop"], cd: path)
+      workspace_write_file(path, "README.md", "develop side\n")
+      {_, 0} = System.cmd("git", ["add", "--", "README.md"], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Develop side"], cd: path)
+      {_, 0} = System.cmd("git", ["switch", "main"], cd: path)
+      workspace_write_file(path, "README.md", "main side\n")
+      {_, 0} = System.cmd("git", ["add", "--", "README.md"], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Main side"], cd: path)
+      {_, 1} = System.cmd("git", ["merge", "develop"], cd: path, stderr_to_stdout: true)
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      assert has_element?(
+               view,
+               "#changes-signal-panel[data-summary-status='attention']",
+               "Conflicts"
+             )
+
+      assert has_element?(view, "#changes-signal-panel", "1")
+      assert has_element?(view, "#changes-staging-panel", "Conflict")
     end
   end
 
@@ -168,5 +373,11 @@ defmodule IexCodeWeb.WorkspaceLiveAstGitTest do
       assert {:ok, status} = Git.status(path)
       assert status.clean? == true
     end
+  end
+
+  defp retime(struct, inserted_at) do
+    struct
+    |> Ecto.Changeset.change(inserted_at: inserted_at, updated_at: inserted_at)
+    |> Repo.update!()
   end
 end

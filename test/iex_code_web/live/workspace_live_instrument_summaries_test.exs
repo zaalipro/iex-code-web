@@ -242,6 +242,80 @@ defmodule IexCodeWeb.WorkspaceLiveInstrumentSummariesTest do
     send(runtime_task, {:runtime_snapshot_reply, %{state: :idle}})
   end
 
+  test "active Changes keeps its synchronous detailed snapshot when the held Deck read completes",
+       %{
+         conn: conn,
+         workspace_path: path
+       } do
+    {_, 0} = System.cmd("git", ["init", "-b", "main"], cd: path)
+    {_, 0} = System.cmd("git", ["config", "user.name", "Snapshot Tester"], cd: path)
+    {_, 0} = System.cmd("git", ["config", "user.email", "snapshot@example.com"], cd: path)
+    File.write!(Path.join(path, "sync.ex"), "original\n")
+    {_, 0} = System.cmd("git", ["add", "."], cd: path)
+    {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+    File.write!(Path.join(path, "sync.ex"), "synchronous changes snapshot\n")
+
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+    assert_receive {:runtime_snapshot_requested, runtime_task}
+    assert_receive {:git_status_requested, deck_task, ^path, _opts}
+
+    render_click(view, "switch_tab", %{"tab" => "changes"})
+    synchronous = assigns(view)
+    assert synchronous.active_view == "changes"
+    assert [%{path: "sync.ex"}] = synchronous.git_status.unstaged
+    assert [%{path: "sync.ex"}] = synchronous.unstaged_diffs
+    render_click(view, "refresh_git_summary", %{})
+    assert assigns(view).deck_git_generation == synchronous.deck_git_generation
+
+    async_status = %StatusResult{branch: "async-branch", untracked: ["async.ex"], clean?: false}
+    deck_ref = Process.monitor(deck_task)
+    send(deck_task, {:git_status_reply, {:ok, async_status}})
+    assert_receive {:DOWN, ^deck_ref, :process, ^deck_task, :normal}
+    _ = :sys.get_state(view.pid)
+
+    accepted = assigns(view)
+    assert accepted.current_branch == "main"
+    assert [%{path: "sync.ex"}] = accepted.git_status.unstaged
+    assert [%{path: "sync.ex"}] = accepted.unstaged_diffs
+    assert accepted.git_status.untracked == []
+    assert accepted.deck_git_in_flight == nil
+    assert accepted.deck_git_queued_project_id == nil
+    send(runtime_task, {:runtime_snapshot_reply, %{state: :idle}})
+  end
+
+  test "invalid session patch preserves accepted Change Ledger route and snapshot", %{
+    conn: conn,
+    workspace_path: path
+  } do
+    {_, 0} = System.cmd("git", ["init", "-b", "main"], cd: path)
+    {_, 0} = System.cmd("git", ["config", "user.name", "Route Tester"], cd: path)
+    {_, 0} = System.cmd("git", ["config", "user.email", "route@example.com"], cd: path)
+    File.write!(Path.join(path, "route.ex"), "original\n")
+    {_, 0} = System.cmd("git", ["add", "."], cd: path)
+    {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+    File.write!(Path.join(path, "route.ex"), "accepted snapshot\n")
+
+    project = create_project_fixture(%{root_path: path})
+    session = create_session_fixture(project)
+    {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    complete_background_reads()
+    render_patch(view, ~p"/sessions/#{session.id}?view=changes")
+    accepted = assigns(view)
+
+    render_patch(view, "/sessions/#{Ecto.UUID.generate()}?view=deck")
+    after_invalid = assigns(view)
+
+    assert after_invalid.session.id == session.id
+    assert after_invalid.workspace_route == accepted.workspace_route
+    assert after_invalid.active_view == accepted.active_view
+    assert after_invalid.current_branch == accepted.current_branch
+    assert after_invalid.selected_diff_file == accepted.selected_diff_file
+    assert after_invalid.unstaged_diffs == accepted.unstaged_diffs
+  end
+
   test "cross-project rehydrate clears editor and detailed Git state while same-project keeps buffers",
        %{
          conn: conn,

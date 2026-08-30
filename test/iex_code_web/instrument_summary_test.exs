@@ -468,6 +468,30 @@ defmodule IexCodeWeb.InstrumentSummaryTest do
       assert summary.primary == "1 change"
       assert List.last(summary.secondary) == %{label: "Latest test operation", value: "failed"}
     end
+
+    test "never calls a truncated empty retained snapshot clean" do
+      summary =
+        InstrumentSummary.changes(%{
+          destination: "/?view=changes",
+          git_status: %{
+            branch: "main",
+            staged: [],
+            unstaged: [],
+            untracked: [],
+            conflicted: [],
+            clean?: false,
+            truncated?: true
+          },
+          git_error: nil,
+          latest_test: nil
+        })
+        |> assert_closed_summary()
+
+      assert summary.status == :attention
+      assert summary.primary == "0 changes"
+      assert summary.detail == "Showing bounded Git status"
+      refute summary.primary == "No changes"
+    end
   end
 
   describe "chat/1" do

@@ -139,8 +139,15 @@ defmodule IexCodeWeb.WorkspaceLiveEditorLockTest do
 
     on_exit(fn -> WorkspaceLocks.release(blocker) end)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "changes"})
 
-    html = render_click(view, "revert_file", %{"file" => "lib/revert_target.ex"})
+    render_click(view, "request_revert_git_file", %{
+      "file" => "lib/revert_target.ex",
+      "scope" => "unstaged",
+      "source" => "ledger"
+    })
+
+    html = render_click(view, "revert_file", %{})
 
     assert File.read!(Path.join(root, "lib/revert_target.ex")) == edited
     assert html =~ "Workspace change blocked by another IexCode task"
@@ -168,6 +175,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorLockTest do
 
     on_exit(fn -> WorkspaceLocks.release(blocker) end)
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+    render_click(view, "switch_tab", %{"tab" => "changes"})
 
     html = render_click(view, "stage_file", %{"file" => "lib/stage_target.ex"})
 

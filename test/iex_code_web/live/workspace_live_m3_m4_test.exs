@@ -97,10 +97,19 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       assert html =~ "lib/demo_worker.ex"
       assert html =~ "Hunk hunk-1"
       assert has_element?(view, "button[phx-click='accept_hunk']")
-      assert has_element?(view, "button[phx-click='reject_hunk']")
-      assert has_element?(view, "button[phx-click='revert_hunk']")
+
+      assert has_element?(
+               view,
+               "#reject-hunk-trigger-hunk-1[phx-click='request_discard_git_hunk']"
+             )
+
+      assert has_element?(
+               view,
+               "#revert-hunk-trigger-hunk-1[phx-click='request_revert_git_hunk']"
+             )
+
       assert has_element?(view, "button[phx-click='accept_all_hunks']")
-      assert has_element?(view, "button[phx-click='revert_file']")
+      assert has_element?(view, "#git-file-revert-trigger[phx-click='request_revert_git_file']")
 
       # 2. Toggle Side-by-Side (Split) mode
       view
@@ -123,20 +132,7 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
         "hunk_id" => "hunk-1"
       })
 
-      # Verify LiveView process survives and updates flash / status
-      assert Process.alive?(view.pid)
-
-      # 5. Trigger reject hunk
-      render_click(view, "reject_hunk", %{
-        "file" => "lib/demo_worker.ex",
-        "hunk_id" => "hunk-1"
-      })
-
-      assert Process.alive?(view.pid)
-
-      # 6. Trigger revert file
-      render_click(view, "revert_file", %{"file" => "lib/demo_worker.ex"})
-      assert Process.alive?(view.pid)
+      assert has_element?(view, "[phx-click='select_diff_file'][phx-value-scope='staged']")
     end
   end
 

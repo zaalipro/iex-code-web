@@ -3,6 +3,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
   @moduletag mock_llm: true
   @moduletag timeout: 120_000
 
+  alias IexCode.Tools.Git
   alias IexCode.Tools.Git.DiffParser
   alias IexCodeWeb.WorkspaceComponents
 
@@ -65,7 +66,7 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert html_cleared =~ "token.ex"
     end
 
-    test "selects file from any tab, switches to files tab, and renders content preview", %{
+    test "selects a file from the canonical Files workbench and renders content preview", %{
       conn: conn,
       workspace_path: path
     } do
@@ -84,10 +85,8 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # Start on kanban tab
-      assert render(view) =~ "Kanban"
+      render_click(view, "switch_tab", %{"tab" => "files"})
 
-      # Select file -> should switch tab to 'files' and display content
       html = render_click(view, "select_file", %{"path" => "lib/sample_worker.ex"})
       assert html =~ "lib/sample_worker.ex"
       assert html =~ "defmodule IexCode.Engine.SampleWorker do"
@@ -149,10 +148,12 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
+      render_click(view, "switch_tab", %{"tab" => "files"})
+
       # Select non-existent file inside project
       html = render_click(view, "select_file", %{"path" => "lib/does_not_exist.ex"})
       assert html =~ "Could not read file: :enoent"
-      assert Process.alive?(view.pid)
+      assert has_element?(view, "#workspace-shell[data-active-view='files']")
     end
   end
 
@@ -171,6 +172,8 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+      render_click(view, "switch_tab", %{"tab" => "files"})
 
       # 1. Select file
       render_click(view, "select_file", %{"path" => "lib/edit_demo.ex"})
@@ -211,6 +214,8 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
+      render_click(view, "switch_tab", %{"tab" => "files"})
+
       render_click(view, "select_file", %{"path" => "lib/close_me.ex"})
       assert render(view) =~ "lib/close_me.ex"
 
@@ -224,6 +229,65 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
   # ============================================================================
 
   describe "Interactive Diff Modes & Changes View" do
+    test "renders one shared Change Ledger chassis, bounded signal, and shared dock", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      init_git_repo!(path)
+      workspace_write_file(path, "README.md", "# Change ledger\n")
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+      render_click(view, "toggle_branch_menu")
+      document = view |> render() |> LazyHTML.from_fragment()
+
+      for selector <- [
+            "#instrument-workbench-changes[data-workbench-surface='changes']",
+            "#instrument-workbench-changes-title",
+            "#instrument-workbench-changes-status[role='status'][aria-live='polite']",
+            "#return-to-instrument-deck-changes[href='/sessions/#{session.id}'][data-phx-link='patch'][data-phx-link-state='replace'][data-return-instrument-id='instrument-card-changes']",
+            "#changes-toolbar",
+            "#changes-layout",
+            "#changes-staging-panel",
+            "#changes-diff-panel",
+            "#diff-viewer-container",
+            "#copy-diff-btn[phx-hook='CodeCopy'][data-code]",
+            "#changes-fetch-action[phx-click='git_fetch']",
+            "#changes-pull-action[phx-click='git_pull']",
+            "#git-branch-form",
+            "#commit-composer-form",
+            "#prompt-composer",
+            "#prompt-form"
+          ] do
+        assert node_count(document, selector) == 1, selector
+      end
+
+      assert has_element?(view, "#changes-signal-panel", "No test operation recorded")
+      assert has_element?(view, "#diff-mode-inline[aria-pressed='true']")
+      assert has_element?(view, "#diff-mode-split[aria-pressed='false']")
+    end
+
+    test "root Change Ledger return remains the canonical root deck", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      init_git_repo!(path)
+      project = create_project_fixture(%{root_path: path})
+      _session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      assert has_element?(
+               view,
+               "#return-to-instrument-deck-changes[href='/'][data-phx-link-state='replace']"
+             )
+    end
+
     test "switches diff mode between inline and side-by-side (split)", %{
       conn: conn,
       workspace_path: path
@@ -235,16 +299,16 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       # Navigate to changes tab
       render_click(view, "switch_tab", %{"tab" => "changes"})
 
-      html = render(view)
-      assert html =~ "All Changes" or html =~ "Changes"
+      assert has_element?(view, "#diff-mode-inline[aria-pressed='true']")
 
       # Switch to split mode
-      html_split = render_click(view, "set_diff_mode", %{"mode" => "split"})
-      assert html_split =~ "Original" or html_split =~ "Split" or is_binary(html_split)
+      render_click(view, "set_diff_mode", %{"mode" => "split"})
+      assert has_element?(view, "#diff-mode-split[aria-pressed='true']")
+      assert has_element?(view, "#diff-mode-inline[aria-pressed='false']")
 
       # Switch back to inline mode
-      html_inline = render_click(view, "set_diff_mode", %{"mode" => "inline"})
-      assert is_binary(html_inline)
+      render_click(view, "set_diff_mode", %{"mode" => "inline"})
+      assert has_element?(view, "#diff-mode-inline[aria-pressed='true']")
     end
 
     test "switches Changes subtabs: Changes, All files, and Desktop", %{
@@ -258,16 +322,16 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       render_click(view, "switch_tab", %{"tab" => "changes"})
 
       # Switch to 'all' subtab
-      html = render_click(view, "switch_changes_subtab", %{"tab" => "all"})
-      assert is_binary(html)
+      render_click(view, "switch_changes_subtab", %{"tab" => "all"})
+      assert has_element?(view, "[phx-value-tab='all'][aria-pressed='true']")
 
       # Switch to 'desktop' subtab
-      html = render_click(view, "switch_changes_subtab", %{"tab" => "desktop"})
-      assert is_binary(html)
+      render_click(view, "switch_changes_subtab", %{"tab" => "desktop"})
+      assert has_element?(view, "[phx-value-tab='desktop'][aria-pressed='true']")
 
       # Switch back to 'changes' subtab
-      html = render_click(view, "switch_changes_subtab", %{"tab" => "changes"})
-      assert is_binary(html)
+      render_click(view, "switch_changes_subtab", %{"tab" => "changes"})
+      assert has_element?(view, "[phx-value-tab='changes'][aria-pressed='true']")
     end
 
     test "handles interactive hunk accept and reject operations", %{
@@ -300,11 +364,34 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       # Select diff file
       render_click(view, "select_diff_file", %{"file" => "lib/demo_hunk.ex"})
 
-      # Reject hunk
-      html_reject =
-        render_click(view, "reject_hunk", %{"file" => "lib/demo_hunk.ex", "hunk_id" => "hunk-1"})
+      view
+      |> element("#reject-hunk-trigger-hunk-1")
+      |> render_click()
 
-      assert html_reject =~ "Reverted hunk" or html_reject =~ "revert" or is_binary(html_reject)
+      assert has_element?(
+               view,
+               "#git-hunk-discard-confirmation-hunk-1[data-sheet-close-event='cancel_git_confirmation'][data-sheet-background-id='workspace-shell']"
+             )
+
+      render_click(view, "revert_hunk", %{})
+      refute has_element?(view, "#git-hunk-discard-confirmation-hunk-1")
+      assert File.read!(Path.join(path, "lib/demo_hunk.ex")) =~ "def val, do: 99"
+
+      render_click(view, "request_discard_git_hunk", %{
+        "file" => "lib/demo_hunk.ex",
+        "hunk_id" => "hunk-stale"
+      })
+
+      refute has_element?(view, "#git-hunk-discard-confirmation-hunk-stale")
+
+      render_click(view, "request_discard_git_hunk", %{
+        "file" => "lib/demo_hunk.ex",
+        "hunk_id" => "hunk-1"
+      })
+
+      render_click(view, "reject_hunk", %{})
+      refute has_element?(view, "#git-hunk-discard-confirmation-hunk-1")
+      assert File.read!(Path.join(path, "lib/demo_hunk.ex")) =~ "def val, do: 1"
     end
 
     test "accepts all hunks and reverts entire file", %{
@@ -334,12 +421,144 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       render_click(view, "switch_tab", %{"tab" => "changes"})
 
       # Accept all hunks (stage)
-      html_accept = render_click(view, "accept_all_hunks", %{"file" => "lib/all_hunks.ex"})
-      assert html_accept =~ "Staged all changes" or is_binary(html_accept)
+      render_click(view, "accept_all_hunks", %{"file" => "lib/all_hunks.ex"})
+      assert has_element?(view, "[phx-value-file='lib/all_hunks.ex'][phx-value-scope='staged']")
 
-      # Revert file
-      html_revert = render_click(view, "revert_file", %{"file" => "lib/all_hunks.ex"})
-      assert html_revert =~ "Reverted lib/all_hunks.ex" or is_binary(html_revert)
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      view
+      |> element("[id^='git-file-revert-trigger-']")
+      |> render_click()
+
+      assert has_element?(view, "#git-file-revert-confirmation")
+      render_click(view, "revert_file", %{})
+      assert {:ok, status} = Git.status(path)
+      assert status.clean?
+    end
+
+    test "file revert confirmation cancels safely and confirms from server-owned state", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      original = "defmodule ConfirmedRevert, do: :original\n"
+      changed = "defmodule ConfirmedRevert, do: :changed\n"
+      workspace_write_file(path, "lib/confirmed_revert.ex", original)
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "lib/confirmed_revert.ex", changed)
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "lib/confirmed_revert.ex",
+        "source" => "viewer",
+        "scope" => "unstaged"
+      })
+
+      assert has_element?(
+               view,
+               "#git-file-revert-confirmation[data-sheet-return-id='git-file-revert-trigger'][data-sheet-background-id='workspace-shell']"
+             )
+
+      assert has_element?(view, "#git-file-revert-confirmation-dialog.sf-sheet-scroll")
+
+      render_click(view, "cancel_git_confirmation")
+      refute has_element?(view, "#git-file-revert-confirmation")
+      assert File.read!(Path.join(path, "lib/confirmed_revert.ex")) == changed
+
+      render_click(view, "request_revert_git_file", %{
+        "file" => "lib/confirmed_revert.ex",
+        "source" => "viewer",
+        "scope" => "unstaged"
+      })
+
+      render_click(view, "revert_file", %{})
+      assert File.read!(Path.join(path, "lib/confirmed_revert.ex")) == original
+
+      workspace_write_file(path, "lib/confirmed_revert.ex", changed)
+      render_click(view, "revert_file", %{})
+      assert File.read!(Path.join(path, "lib/confirmed_revert.ex")) == changed
+    end
+
+    test "partially staged files receive scope-specific unique revert trigger IDs", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      workspace_write_file(path, "lib/partial.ex", "one\ntwo\n")
+      init_git_repo!(path)
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "lib/partial.ex", "one staged\ntwo\n")
+      {_, 0} = System.cmd("git", ["add", "--", "lib/partial.ex"], cd: path)
+      workspace_write_file(path, "lib/partial.ex", "one staged\ntwo unstaged\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      trigger_ids =
+        view
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("[id^='git-file-revert-trigger-']")
+        |> LazyHTML.attribute("id")
+
+      assert length(trigger_ids) == 2
+      assert trigger_ids |> Enum.uniq() |> length() == 2
+
+      for scope <- ["staged", "unstaged"] do
+        selector = "[id^='git-file-revert-trigger-'][phx-value-scope='#{scope}']"
+
+        trigger_id =
+          view
+          |> element(selector)
+          |> render()
+          |> LazyHTML.from_fragment()
+          |> LazyHTML.query("button")
+          |> LazyHTML.attribute("id")
+
+        view |> element(selector) |> render_click()
+
+        assert has_element?(
+                 view,
+                 "#git-file-revert-confirmation[data-sheet-return-id='#{trigger_id}']"
+               )
+
+        render_click(view, "cancel_git_confirmation")
+      end
+    end
+
+    test "an authorized untracked-file confirmation can cancel or remove only that file", %{
+      conn: conn,
+      workspace_path: path
+    } do
+      init_git_repo!(path)
+      workspace_write_file(path, "README.md", "# baseline\n")
+      {_, 0} = System.cmd("git", ["add", "."], cd: path)
+      {_, 0} = System.cmd("git", ["commit", "-m", "Initial"], cd: path)
+      workspace_write_file(path, "remove_me.ex", "temporary\n")
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      render_click(view, "switch_tab", %{"tab" => "changes"})
+
+      trigger =
+        "[phx-click='request_revert_git_file'][phx-value-file='remove_me.ex'][phx-value-scope='untracked']"
+
+      view |> element(trigger) |> render_click()
+      render_click(view, "cancel_git_confirmation")
+      assert File.exists?(Path.join(path, "remove_me.ex"))
+
+      view |> element(trigger) |> render_click()
+      render_click(view, "revert_file", %{})
+      refute File.exists?(Path.join(path, "remove_me.ex"))
+      assert File.exists?(Path.join(path, "README.md"))
     end
   end
 
@@ -424,6 +643,30 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
   # ============================================================================
 
   describe "WorkspaceComponents Diff Rendering" do
+    test "forwards staged state so a staged hunk only offers unstage" do
+      diff = """
+      diff --git a/lib/staged.ex b/lib/staged.ex
+      --- a/lib/staged.ex
+      +++ b/lib/staged.ex
+      @@ -1 +1 @@
+      -old
+      +new
+      """
+
+      rendered =
+        Phoenix.LiveViewTest.render_component(&WorkspaceComponents.interactive_diff_viewer/1, %{
+          diff_text: diff,
+          file_path: "lib/staged.ex",
+          staged: true
+        })
+
+      document = LazyHTML.from_fragment(rendered)
+      assert node_count(document, "[phx-click='unstage_hunk']") == 1
+      assert node_count(document, "[phx-click='accept_hunk']") == 0
+      assert node_count(document, "[phx-click='request_discard_git_hunk']") == 0
+      assert node_count(document, "[phx-click='request_revert_git_hunk']") == 0
+    end
+
     test "renders inline_diff with additions, deletions, context, and header lines" do
       diff = """
       --- a/lib/test.ex
@@ -438,12 +681,12 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       rendered =
         Phoenix.LiveViewTest.render_component(&WorkspaceComponents.inline_diff/1, %{diff: diff})
 
-      assert rendered =~ "bg-emerald-950/40"
+      assert rendered =~ "var(--sf-success-text)"
       assert rendered =~ "def new_val, do: 2"
-      assert rendered =~ "bg-rose-950/40"
+      assert rendered =~ "var(--sf-live-text)"
       assert rendered =~ "def old_val, do: 1"
       assert rendered =~ "defmodule Test do"
-      assert rendered =~ "text-indigo-300"
+      assert rendered =~ "var(--sf-code-text)"
     end
 
     test "renders split_diff with dual columns for original and modified" do
@@ -463,5 +706,9 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert rendered =~ "old line"
       assert rendered =~ "new line"
     end
+  end
+
+  defp node_count(document, selector) do
+    document |> LazyHTML.query(selector) |> LazyHTML.to_tree() |> length()
   end
 end

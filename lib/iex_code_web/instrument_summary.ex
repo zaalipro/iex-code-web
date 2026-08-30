@@ -265,7 +265,12 @@ defmodule IexCodeWeb.InstrumentSummary do
             else: if(total > 0, do: :active, else: :ready)
 
         noun = if total == 1, do: "change", else: "changes"
-        primary = if total == 0, do: "No changes", else: "#{total} #{noun}"
+
+        primary =
+          if total == 0 and field(status_data, :clean?) == true and not truncated?,
+            do: "No changes",
+            else: "#{total} #{noun}"
+
         detail = if truncated?, do: "Showing bounded Git status", else: nil
         test_fact = latest_test_fact(field(facts, :latest_test))
 

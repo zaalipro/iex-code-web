@@ -1023,422 +1023,398 @@
           </.workbench_chassis>
         <% end %>
 
-        <!-- TAB 4: CHANGES & 3-TIER GIT STAGING HUB -->
-        <%= if @active_tab == "changes" do %>
-          <div class="flex-1 flex flex-col h-full overflow-hidden">
-            <!-- Top Git Branch & Sync Toolbar -->
-            <div
-              id="changes-toolbar"
-              class="px-3 sm:px-4 py-2 border-b border-[#21262d] bg-[#11151c] flex flex-wrap items-center justify-between gap-2 shrink-0 font-mono text-xs"
+        <%!-- TAB 4: CHANGE LEDGER --%>
+          <%= if @active_view == "changes" do %>
+            <% summary = @instrument_summaries["changes"] %>
+            <.workbench_chassis
+              id="instrument-workbench-changes"
+              surface="changes"
+              index="05"
+              title="Change Ledger"
+              status={summary.primary || "Warming · checking Git"}
+              return_to={workspace_path(@workspace_route, "deck")}
+              return_instrument_id="instrument-card-changes"
             >
-              <div class="flex min-w-0 items-center gap-2 sm:gap-3 relative">
-                <!-- Branch Selector Button -->
-                <div
-                  class="relative"
-                  phx-click-away={@show_branch_menu && "close_branch_menu"}
+              <:primary_action>
+                <button
+                  id="changes-fetch-action"
+                  type="button"
+                  phx-click="git_fetch"
+                  phx-disable-with="Fetching…"
+                  class="sf-control min-h-11 inline-flex items-center gap-2 px-4 text-sm font-semibold"
                 >
-                  <button
-                    type="button"
-                    phx-click="toggle_branch_menu"
-                    class="flex items-center gap-2 px-3 py-1.5 bg-[#161b22] hover:bg-[#21262d] border border-[#30363d] rounded-lg text-white font-medium transition-smooth"
+                  <.icon name="hero-arrow-down-tray" class="h-4 w-4" /> Fetch
+                </button>
+              </:primary_action>
+              <:local_modes>
+                <div
+                  id="changes-subtab-switcher"
+                  class="flex flex-wrap gap-2"
+                  role="group"
+                  aria-label="Change Ledger mode"
+                >
+                  <%= for {label, value} <- [{"Changes", "changes"}, {"All files", "all"}, {"Desktop", "desktop"}] do %>
+                    <button
+                      type="button"
+                      phx-click="switch_changes_subtab"
+                      phx-value-tab={value}
+                      aria-pressed={to_string(@changes_subtab == value)}
+                      class="sf-control min-h-11 px-3 text-xs"
+                    >{label}</button>
+                  <% end %>
+                </div>
+              </:local_modes>
+              <:primary_field>
+                <div id="changes-primary" class="changes-primary-field">
+                  <div
+                    id="changes-toolbar"
+                    class="changes-toolbar sf-hairline-b flex flex-wrap items-center justify-between gap-3"
                   >
-                    <.icon name="hero-code-bracket-square" class="w-4 h-4 text-emerald-400" />
-                    <span class="max-w-28 truncate sm:max-w-48">{@current_branch}</span>
-                    <.icon name="hero-chevron-down" class="w-3.5 h-3.5 text-gray-400" />
-                  </button>
-
-                  <%= if @show_branch_menu do %>
-                    <div class="absolute top-full left-0 mt-1.5 w-64 bg-[#161b22] border border-[#30363d] rounded-xl shadow-2xl p-2 z-50 space-y-2">
-                      <div class="text-[11px] font-bold text-gray-400 uppercase tracking-wider px-2 py-1">
-                        Branches ({length(@git_branches)})
-                      </div>
-                      <div class="max-h-48 overflow-y-auto space-y-0.5">
-                        <%= for b <- @git_branches do %>
-                          <button
-                            type="button"
-                            phx-click="switch_git_branch"
-                            phx-value-branch={b.name}
-                            class={[
-                              "w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left text-xs transition-smooth",
-                              b.current? && "bg-[#21262d] text-emerald-400 font-bold",
-                              !b.current? && "text-gray-300 hover:bg-[#21262d] hover:text-white"
-                            ]}
-                          >
-                            <span class="truncate">{b.name}</span>
-                            <%= if b.current? do %>
-                              <.icon name="hero-check" class="w-3.5 h-3.5 text-emerald-400" />
+                    <div class="flex min-w-0 flex-wrap items-center gap-3">
+                      <div
+                        class="relative"
+                        phx-click-away={@show_branch_menu && "close_branch_menu"}
+                      >
+                        <button
+                          id="changes-branch-trigger"
+                          type="button"
+                          phx-click="toggle_branch_menu"
+                          aria-expanded={to_string(@show_branch_menu)}
+                          aria-controls="changes-branch-menu"
+                          aria-label={"Current branch #{@current_branch}. Toggle branch menu"}
+                          class="sf-control min-h-11 inline-flex max-w-full items-center gap-2 px-3 font-mono text-xs font-semibold"
+                        >
+                          <.icon name="hero-code-bracket-square" class="h-4 w-4" />
+                          <span class="max-w-48 truncate">{@current_branch}</span>
+                          <.icon name="hero-chevron-down" class="h-3.5 w-3.5" />
+                        </button>
+                        <div
+                          :if={@show_branch_menu}
+                          id="changes-branch-menu"
+                          role="menu"
+                          aria-label="Git branches"
+                          class="absolute left-0 top-full z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] p-2 shadow-xl"
+                        >
+                          <div class="px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-[var(--sf-text-secondary)]">
+                            Branches
+                          </div>
+                          <div class="max-h-52 overflow-y-auto">
+                            <%= for branch <- @git_branches do %>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                phx-click="switch_git_branch"
+                                phx-value-branch={branch.name}
+                                class={[
+                                  "flex min-h-11 w-full items-center justify-between px-2 text-left font-mono text-xs",
+                                  branch.current? && "text-[var(--sf-live-text)]",
+                                  !branch.current? && "text-[var(--sf-text-primary)]"
+                                ]}
+                              >
+                                <span class="truncate">{branch.name}</span>
+                                <span :if={branch.current?} aria-label="Current branch">●</span>
+                              </button>
                             <% end %>
-                          </button>
-                        <% end %>
+                          </div>
+                          <.form
+                            for={@git_branch_form}
+                            id="git-branch-form"
+                            phx-submit="create_git_branch"
+                            class="mt-2 flex gap-2 border-t border-[var(--sf-hairline)] pt-2"
+                          >
+                            <.input
+                              field={@git_branch_form[:name]}
+                              type="text"
+                              id="git-branch-name"
+                              label="New branch name"
+                              placeholder="New branch name"
+                              autocomplete="off"
+                              class="sf-control min-h-11 min-w-0 flex-1 px-2 text-xs"
+                            />
+                            <button
+                              type="submit"
+                              phx-disable-with="Creating…"
+                              class="sf-control min-h-11 px-3 text-xs"
+                            >Create</button>
+                          </.form>
+                        </div>
                       </div>
+                      <div
+                        class="flex items-center gap-2 font-mono text-xs text-[var(--sf-text-secondary)]"
+                        aria-label="Git sync facts"
+                      >
+                        <span>Ahead
+                        <strong class="text-[var(--sf-text-primary)]">{if(@git_status,
+                          do: @git_status.ahead,
+                          else: 0
+                        )}</strong></span>
+                        <span aria-hidden="true">·</span>
+                        <span>Behind
+                        <strong class="text-[var(--sf-text-primary)]">{if(@git_status,
+                          do: @git_status.behind,
+                          else: 0
+                        )}</strong></span>
+                      </div>
+                    </div>
+                    <button
+                      id="changes-pull-action"
+                      type="button"
+                      phx-click="git_pull"
+                      phx-disable-with="Pulling…"
+                      class="sf-control min-h-11 inline-flex items-center gap-2 px-3 text-xs"
+                    >
+                      <.icon name="hero-arrow-path" class="h-4 w-4" /> Pull
+                    </button>
+                  </div>
 
-                      <div class="pt-2 border-t border-[#21262d]">
-                        <form phx-submit="create_git_branch" class="flex gap-1.5">
-                          <input
-                            type="text"
-                            name="name"
-                            placeholder="New branch name..."
-                            class="flex-1 bg-[#0d1117] border border-[#30363d] rounded-lg px-2 py-1 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 font-mono"
+                  <div id="changes-layout" class="changes-layout">
+                    <section
+                      id="changes-staging-panel"
+                      aria-labelledby="changes-staging-title"
+                      class="changes-staging-panel"
+                    >
+                      <div class="flex items-center justify-between border-b border-[var(--sf-hairline)] pb-3">
+                        <div>
+                          <p class="sf-metadata">Bounded working tree</p>
+                          <h3 id="changes-staging-title" class="mt-1 font-semibold">
+                            Staging ledger
+                          </h3>
+                        </div>
+                      </div>
+                      <div class="changes-file-lists">
+                        <section aria-labelledby="staged-heading">
+                          <div class="changes-list-heading">
+                            <h4 id="staged-heading">Staged</h4><button
+                              :if={@staged_diffs != []}
+                              type="button"
+                              phx-click="unstage_all"
+                              class="sf-control min-h-11 px-2 text-xs"
+                            >Unstage all</button>
+                          </div>
+                          <div class="changes-list">
+                            <%= for file_diff <- @staged_diffs do %>
+                              <% path = file_diff.path || file_diff.new_path %>
+                              <div class={[
+                                "changes-file-row",
+                                @selected_diff_file == path && @active_diff_scope == :staged &&
+                                  "changes-file-row--selected"
+                              ]}>
+                                <button
+                                  type="button"
+                                  phx-click="select_diff_file"
+                                  phx-value-file={path}
+                                  phx-value-scope="staged"
+                                  aria-label={"View staged #{path}"}
+                                  class="changes-file-select"
+                                ><span aria-hidden="true">S</span><span class="truncate">{path}</span></button>
+                                <div class="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    phx-click="unstage_file"
+                                    phx-value-file={path}
+                                    aria-label={"Unstage #{path}"}
+                                    class="sf-control min-h-11 min-w-11 px-2 text-xs"
+                                  >−</button>
+                                  <button
+                                    id={"git-file-revert-trigger-#{git_path_digest("staged", path)}"}
+                                    type="button"
+                                    phx-click="request_revert_git_file"
+                                    phx-value-file={path}
+                                    phx-value-source="ledger"
+                                    phx-value-scope="staged"
+                                    aria-label={"Revert staged changes to #{path}"}
+                                    class="sf-control min-h-11 min-w-11 px-2 text-xs"
+                                  >↶</button>
+                                </div>
+                              </div>
+                            <% end %>
+                            <p :if={@staged_diffs == []} class="changes-empty">
+                              No staged changes
+                            </p>
+                          </div>
+                        </section>
+
+                        <section aria-labelledby="unstaged-heading">
+                          <div class="changes-list-heading">
+                            <h4 id="unstaged-heading">Unstaged</h4><button
+                              :if={@unstaged_diffs != []}
+                              type="button"
+                              phx-click="stage_all"
+                              class="sf-control min-h-11 px-2 text-xs"
+                            >Stage all</button>
+                          </div>
+                          <div class="changes-list">
+                            <%= for file_diff <- @unstaged_diffs do %>
+                              <% path = file_diff.path || file_diff.new_path %>
+                              <div class={[
+                                "changes-file-row",
+                                @selected_diff_file == path && @active_diff_scope == :unstaged &&
+                                  "changes-file-row--selected"
+                              ]}>
+                                <button
+                                  type="button"
+                                  phx-click="select_diff_file"
+                                  phx-value-file={path}
+                                  phx-value-scope="unstaged"
+                                  aria-label={"View unstaged #{path}"}
+                                  class="changes-file-select"
+                                ><span aria-hidden="true">U</span><span class="truncate">{path}</span></button>
+                                <div class="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    phx-click="stage_file"
+                                    phx-value-file={path}
+                                    aria-label={"Stage #{path}"}
+                                    class="sf-control min-h-11 min-w-11 px-2 text-xs"
+                                  >+</button>
+                                  <button
+                                    id={"git-file-revert-trigger-#{git_path_digest("unstaged", path)}"}
+                                    type="button"
+                                    phx-click="request_revert_git_file"
+                                    phx-value-file={path}
+                                    phx-value-source="ledger"
+                                    phx-value-scope="unstaged"
+                                    aria-label={"Revert changes to #{path}"}
+                                    class="sf-control min-h-11 min-w-11 px-2 text-xs"
+                                  >↶</button>
+                                </div>
+                              </div>
+                            <% end %>
+                            <p :if={@unstaged_diffs == []} class="changes-empty">
+                              No unstaged changes
+                            </p>
+                          </div>
+                        </section>
+
+                        <section
+                          :if={@git_status && @git_status.untracked != []}
+                          aria-labelledby="untracked-heading"
+                        >
+                          <div class="changes-list-heading">
+                            <h4 id="untracked-heading">Untracked</h4>
+                          </div>
+                          <div class="changes-list">
+                            <%= for path <- @git_status.untracked do %>
+                              <div class="changes-file-row">
+                                <span class="changes-file-select"><span aria-hidden="true">?</span><span class="truncate">{path}</span></span>
+                                <div class="flex items-center gap-1">
+                                  <button type="button" phx-click="stage_file" phx-value-file={path} aria-label={"Stage untracked #{path}"} class="sf-control min-h-11 min-w-11 px-2 text-xs">+</button>
+                                  <button id={"git-file-revert-trigger-#{git_path_digest("untracked", path)}"} type="button" phx-click="request_revert_git_file" phx-value-file={path} phx-value-source="ledger" phx-value-scope="untracked" aria-label={"Remove untracked #{path}"} class="sf-control min-h-11 min-w-11 px-2 text-xs">↶</button>
+                                </div>
+                              </div>
+                            <% end %>
+                          </div>
+                        </section>
+
+                        <section
+                          :if={@git_status && @git_status.conflicted != []}
+                          aria-labelledby="conflicted-heading"
+                        >
+                          <div class="changes-list-heading">
+                            <h4 id="conflicted-heading">Conflicts</h4>
+                          </div>
+                          <div class="changes-list">
+                            <%= for entry <- @git_status.conflicted do %>
+                              <div class="changes-file-row">
+                                <span class="changes-file-select"><span aria-hidden="true">!</span><span class="truncate">{entry.path}</span></span><span class="font-mono text-xs text-[var(--sf-live-text)]">Conflict</span>
+                              </div>
+                            <% end %>
+                          </div>
+                        </section>
+
+                        <div
+                          :if={@git_status && @git_status.truncated?}
+                          id="git-status-truncated"
+                          class="changes-truncation"
+                        >
+                          Showing bounded Git status. Retained status is capped to the workspace limit.
+                        </div>
+                      </div>
+                      <div class="changes-commit-panel">
+                        <div class="flex items-center justify-between gap-2">
+                          <h4>Commit staged changes</h4><button
+                            type="button"
+                            phx-click="generate_commit_msg"
+                            class="sf-control min-h-11 px-2 text-xs"
+                          >AI generate</button>
+                        </div>
+                        <.form
+                          for={@commit_form}
+                          id="commit-composer-form"
+                          phx-change="update_commit_message"
+                          phx-submit="git_commit"
+                          class="mt-3 space-y-2"
+                        >
+                          <.input
+                            field={@commit_form[:message]}
+                            id="commit-message"
+                            type="textarea"
+                            rows="3"
+                            label="Commit message"
+                            placeholder="Describe the staged change"
+                            class="sf-code-surface min-h-24 w-full resize-y p-2 text-sm"
                           />
                           <button
                             type="submit"
-                            class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold"
-                          >
-                            Create
-                          </button>
-                        </form>
+                            phx-disable-with="Committing…"
+                            disabled={
+                              String.trim(@commit_message || "") == "" or @staged_diffs == []
+                            }
+                            class="sf-control min-h-11 w-full px-3 text-xs font-semibold"
+                          >Commit to {@current_branch} ({length(@staged_diffs)} staged)</button>
+                        </.form>
                       </div>
-                    </div>
-                  <% end %>
-                </div>
+                    </section>
 
-                <!-- Sync Metrics & Actions -->
-                <div class="hidden sm:flex items-center gap-2 text-gray-400 text-[11px]">
-                  <span>Ahead:
-                  <strong class="text-white">{(@git_status && @git_status.ahead) || 0}</strong></span>
-                  <span>·</span>
-                  <span>Behind:
-                  <strong class="text-white">{(@git_status && @git_status.behind) || 0}</strong></span>
-                </div>
-              </div>
-
-              <div class="flex items-center gap-1.5 sm:gap-2">
-                <button
-                  type="button"
-                  phx-click="git_fetch"
-                  class="flex items-center gap-1.5 px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] border border-[#21262d] hover:border-[#30363d] text-gray-300 hover:text-white rounded-lg transition-smooth"
-                  title="Fetch latest remote commits"
-                >
-                  <.icon name="hero-arrow-down-tray" class="w-3.5 h-3.5 text-cyan-400" />
-                  <span class="hidden sm:inline">Fetch</span>
-                </button>
-                <button
-                  type="button"
-                  phx-click="git_pull"
-                  class="flex items-center gap-1.5 px-2.5 py-1 bg-[#161b22] hover:bg-[#21262d] border border-[#21262d] hover:border-[#30363d] text-gray-300 hover:text-white rounded-lg transition-smooth"
-                  title="Pull remote changes into local branch"
-                >
-                  <.icon name="hero-arrow-path" class="w-3.5 h-3.5 text-emerald-400" />
-                  <span class="hidden sm:inline">Pull</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Main Changes Body: 3-Tier Staging Hub + Interactive Diff Viewer -->
-            <div
-              id="changes-layout"
-              class="flex-1 flex min-h-0 flex-col overflow-hidden md:flex-row"
-            >
-              <!-- Left Column: 3-Tier Staging Hub & Commit Composer -->
-              <div
-                id="changes-staging-panel"
-                class="h-[min(46%,24rem)] w-full border-b border-[#21262d] bg-[#11151c] flex shrink-0 flex-col overflow-hidden font-mono text-xs md:h-full md:w-84 md:border-r md:border-b-0"
-              >
-                <!-- Staging Header -->
-                <div class="p-3 border-b border-[#21262d] flex items-center justify-between text-gray-400 font-semibold">
-                  <div class="flex items-center gap-1.5">
-                    <.icon name="hero-code-bracket" class="w-3.5 h-3.5 text-cyan-400" />
-                    <span>All Changes</span>
-                  </div>
-                  <span class="text-[11px] text-gray-500">{length(@parsed_diffs)} files</span>
-                </div>
-
-                <!-- Staging Lists -->
-                <div class="flex-1 overflow-y-auto p-3 space-y-4">
-                  <!-- Tier 1: Staged Changes -->
-                  <div class="space-y-1.5">
-                    <div class="flex items-center justify-between text-gray-300 font-semibold pb-1 border-b border-[#21262d]">
-                      <div class="flex items-center gap-1.5">
-                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        <span>Staged Changes</span>
-                        <span class="text-[10px] text-gray-500 font-normal">({length(
-                          @staged_diffs
-                        )})</span>
-                      </div>
-                      <%= if @staged_diffs != [] do %>
-                        <button
-                          type="button"
-                          phx-click="unstage_all"
-                          class="text-[10px] text-gray-400 hover:text-rose-400 transition-smooth"
-                        >
-                          Unstage All
-                        </button>
-                      <% end %>
-                    </div>
-
-                    <div class="space-y-0.5">
-                      <%= for file_diff <- @staged_diffs do %>
-                        <% path = file_diff.path || file_diff.new_path
-
-                        is_selected =
-                          @selected_diff_file == path and @active_diff_scope == :staged %>
-                        <div class={[
-                          "flex items-center justify-between py-1 px-2 rounded-lg group transition-smooth",
-                          is_selected &&
-                            "bg-[#21262d] text-white font-medium border border-[#30363d]",
-                          !is_selected && "hover:bg-[#161b22] text-gray-300"
-                        ]}>
-                          <button
-                            type="button"
-                            phx-click="select_diff_file"
-                            phx-value-file={path}
-                            phx-value-scope="staged"
-                            class="flex-1 flex items-center gap-2 truncate text-left"
-                          >
-                            <.icon
-                              name="hero-document-text"
-                              class="w-3.5 h-3.5 text-emerald-400 shrink-0"
-                            />
-                            <span class="truncate">{path}</span>
-                          </button>
-                          <div class="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              phx-click="unstage_file"
-                              phx-value-file={path}
-                              class="p-1 text-gray-500 hover:text-rose-400 hover:bg-[#21262d] rounded transition-smooth"
-                              title="Unstage file"
-                            >
-                              <.icon name="hero-minus" class="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      <% end %>
-                      <%= if @staged_diffs == [] do %>
-                        <div class="text-[11px] text-gray-500 italic py-1 px-2">
-                          No staged changes
-                        </div>
-                      <% end %>
-                    </div>
-                  </div>
-
-                  <!-- Tier 2: Unstaged Changes -->
-                  <div class="space-y-1.5">
-                    <div class="flex items-center justify-between text-gray-300 font-semibold pb-1 border-b border-[#21262d]">
-                      <div class="flex items-center gap-1.5">
-                        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-                        <span>Unstaged Changes</span>
-                        <span class="text-[10px] text-gray-500 font-normal">({length(
-                          @unstaged_diffs
-                        )})</span>
-                      </div>
-                      <%= if @unstaged_diffs != [] do %>
-                        <button
-                          type="button"
-                          phx-click="stage_all"
-                          class="text-[10px] text-gray-400 hover:text-emerald-400 transition-smooth"
-                        >
-                          Stage All
-                        </button>
-                      <% end %>
-                    </div>
-
-                    <div class="space-y-0.5">
-                      <%= for file_diff <- @unstaged_diffs do %>
-                        <% path = file_diff.path || file_diff.new_path
-
-                        is_selected =
-                          @selected_diff_file == path and @active_diff_scope == :unstaged %>
-                        <div class={[
-                          "flex items-center justify-between py-1 px-2 rounded-lg group transition-smooth",
-                          is_selected &&
-                            "bg-[#21262d] text-white font-medium border border-[#30363d]",
-                          !is_selected && "hover:bg-[#161b22] text-gray-300"
-                        ]}>
-                          <button
-                            type="button"
-                            phx-click="select_diff_file"
-                            phx-value-file={path}
-                            phx-value-scope="unstaged"
-                            class="flex-1 flex items-center gap-2 truncate text-left"
-                          >
-                            <.icon
-                              name="hero-document-text"
-                              class="w-3.5 h-3.5 text-amber-400 shrink-0"
-                            />
-                            <span class="truncate">{path}</span>
-                          </button>
-                          <div class="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              phx-click="stage_file"
-                              phx-value-file={path}
-                              class="p-1 text-gray-500 hover:text-emerald-400 hover:bg-[#21262d] rounded transition-smooth"
-                              title="Stage file"
-                            >
-                              <.icon name="hero-plus" class="w-3 h-3" />
-                            </button>
-                            <button
-                              type="button"
-                              phx-click="revert_file"
-                              phx-value-file={path}
-                              data-confirm={"Revert every uncommitted change in #{path}?"}
-                              aria-label={"Revert changes to #{path}"}
-                              class="p-1 text-gray-500 hover:text-rose-400 hover:bg-[#21262d] rounded transition-smooth"
-                              title="Revert file changes"
-                            >
-                              <.icon name="hero-arrow-uturn-left" class="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      <% end %>
-                      <%= if @unstaged_diffs == [] do %>
-                        <div class="text-[11px] text-gray-500 italic py-1 px-2">
-                          No unstaged changes
-                        </div>
-                      <% end %>
-                    </div>
-                  </div>
-
-                  <!-- Tier 3: Untracked Files -->
-                  <% untracked = (@git_status && @git_status.untracked) || [] %>
-                  <div
-                    :if={@git_status && @git_status.truncated?}
-                    id="git-status-truncated"
-                    class="border border-amber-400/25 bg-amber-400/[0.06] px-2.5 py-2 text-[10px] leading-4 text-amber-200"
-                  >
-                    Status preview retained {@git_status.retained_paths} paths and is truncated.
-                    Narrow the area with the terminal for omitted files.
-                  </div>
-                  <%= if untracked != [] do %>
-                    <div class="space-y-1.5">
-                      <div class="flex items-center justify-between text-gray-300 font-semibold pb-1 border-b border-[#21262d]">
-                        <div class="flex items-center gap-1.5">
-                          <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-                          <span>Untracked Files</span>
-                          <span class="text-[10px] text-gray-500 font-normal">({length(untracked)})</span>
-                        </div>
-                      </div>
-
-                      <div class="space-y-0.5">
-                        <%= for file <- untracked do %>
-                          <div class="flex items-center justify-between py-1 px-2 rounded-lg hover:bg-[#161b22] text-gray-400 group transition-smooth">
-                            <div class="flex items-center gap-2 truncate">
-                              <.icon
-                                name="hero-question-mark-circle"
-                                class="w-3.5 h-3.5 text-gray-500 shrink-0"
-                              />
-                              <span class="truncate">{file}</span>
-                            </div>
-                            <button
-                              type="button"
-                              phx-click="stage_file"
-                              phx-value-file={file}
-                              class="p-1 text-gray-500 hover:text-emerald-400 hover:bg-[#21262d] rounded transition-smooth"
-                              title="Stage untracked file"
-                            >
-                              <.icon name="hero-plus" class="w-3 h-3" />
-                            </button>
-                          </div>
-                        <% end %>
-                      </div>
-                    </div>
-                  <% end %>
-
-                  <% canvas_files =
-                    cond do
-                      @parsed_diffs != [] ->
-                        Enum.map(
-                          @parsed_diffs,
-                          &(Map.get(&1, :path) || Map.get(&1, :file_path) || to_string(&1))
-                        )
-
-                      @project_files != [] ->
-                        Enum.take(@project_files, 4)
-
-                      true ->
-                        []
-                    end %>
-                  <div class="mt-4 pt-3 border-t border-[#21262d]">
-                    <div class="text-xs font-semibold text-gray-400 mb-2">
-                      Canvas · {length(canvas_files)}
-                    </div>
-                    <div class="space-y-1 text-[11px]">
-                      <%= for file <- canvas_files do %>
-                        <div
-                          class="p-2 bg-[#161b22] rounded text-gray-300 truncate font-mono"
-                          title={file}
-                        >
-                          {file}
-                        </div>
-                      <% end %>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Commit Composer Card -->
-                <div class="p-3 border-t border-[#21262d] bg-[#0d1117] space-y-2 shrink-0">
-                  <div class="flex items-center justify-between">
-                    <span class="text-xs font-semibold text-gray-300">Commit Changes</span>
-                    <button
-                      type="button"
-                      phx-click="generate_commit_msg"
-                      class="flex items-center gap-1 text-[11px] text-purple-400 hover:text-purple-300 transition-smooth font-medium"
-                      title="AI Generate commit message from staged changes"
+                    <section
+                      id="changes-diff-panel"
+                      aria-label="Selected diff"
+                      class="changes-diff-panel"
                     >
-                      <.icon name="hero-sparkles" class="w-3 h-3" />
-                      <span>✨ AI Generate</span>
-                    </button>
+                      <div
+                        :if={@diff_truncated?}
+                        id="diff-preview-truncated"
+                        class="changes-truncation"
+                      >
+                        Preview capped at 2 MiB. The repository content is unchanged; use Git locally for the complete diff.
+                      </div>
+                      <.interactive_diff_viewer
+                        diff_text={@diff_text}
+                        diff_mode={@diff_mode}
+                        file_path={@diff_file_path}
+                        hunks={@diff_hunks}
+                        staged={@active_diff_scope == :staged}
+                      />
+                    </section>
                   </div>
-
-                  <form
-                    id="commit-composer-form"
-                    phx-change="update_commit_message"
-                    phx-submit="git_commit"
-                    class="space-y-2"
+                </div>
+              </:primary_field>
+              <:signal_panel>
+              <section id="changes-signal-panel" data-summary-status={summary.status} aria-labelledby="changes-signal-title">
+                  <p class="sf-metadata">Change Ledger signal</p>
+                  <h3 id="changes-signal-title" class="mt-2 text-base font-semibold">
+                    {summary.primary}
+                  </h3>
+                  <p
+                    :if={summary.detail}
+                    class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]"
                   >
-                    <textarea
-                      name="message"
-                      rows="3"
-                      placeholder="Commit message (e.g. feat(editor): add jump to symbol)..."
-                      class="w-full bg-[#161b22] border border-[#21262d] rounded-lg p-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 font-mono resize-none"
-                    >{@commit_message}</textarea>
+                    {summary.detail}
+                  </p>
+                  <dl class="changes-signal-facts">
+                    <%= for fact <- summary.secondary do %>
+                      <div>
+                        <dt>{fact.label}</dt><dd>{fact.value}</dd>
+                      </div>
+                    <% end %>
+                  </dl>
+                </section>
+              </:signal_panel>
+              <:command_dock><.shared_command_dock workspace_assigns={assigns} /></:command_dock>
+            </.workbench_chassis>
+          <% end %>
 
-                    <button
-                      type="submit"
-                      disabled={String.trim(@commit_message || "") == "" or @staged_diffs == []}
-                      class={[
-                        "w-full py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-smooth",
-                        (String.trim(@commit_message || "") != "" and @staged_diffs != []) &&
-                          "bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm cursor-pointer",
-                        (String.trim(@commit_message || "") == "" or @staged_diffs == []) &&
-                          "bg-[#21262d] text-gray-500 cursor-not-allowed"
-                      ]}
-                    >
-                      <.icon name="hero-check" class="w-3.5 h-3.5" />
-                      <span>Commit to {@current_branch} ({length(@staged_diffs)} staged)</span>
-                    </button>
-                  </form>
-                </div>
-              </div>
-
-              <!-- Right Interactive Diff Viewer -->
-              <div
-                id="changes-diff-panel"
-                class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0a0d12] p-2 sm:p-3"
-              >
-                <div
-                  :if={@diff_truncated?}
-                  id="diff-preview-truncated"
-                  class="mb-2 flex items-center gap-2 border border-amber-400/30 bg-amber-400/[0.07] px-3 py-2 font-mono text-[10px] text-amber-200"
-                >
-                  <.icon name="hero-exclamation-triangle" class="h-3.5 w-3.5 shrink-0" />
-                  Preview capped at 2 MiB. The repository content is unchanged; open the file or
-                  use Git locally for the complete diff.
-                </div>
-                <.interactive_diff_viewer
-                  diff_text={@diff_text}
-                  diff_mode={@diff_mode}
-                  file_path={@diff_file_path}
-                  hunks={@diff_hunks}
-                  staged={@active_diff_scope == :staged}
-                />
-              </div>
-            </div>
-          </div>
-        <% end %>
-
-        <!-- DEDICATED DEEP RESEARCH WORKSPACE -->
+          <!-- DEDICATED DEEP RESEARCH WORKSPACE -->
         <%= if @active_view == "research" do %>
           <% level = research_level_semantics(@research_launch_level) %>
           <.workbench_chassis
@@ -2547,12 +2523,65 @@
       </div>
 
       <%!-- Shared command dock --%>
-      <%= if @active_view not in ["kanban", "calendar", "swarm", "research"] do %>
+      <%= if @active_view not in ["kanban", "calendar", "swarm", "research", "changes"] do %>
         <.shared_command_dock workspace_assigns={assigns} />
       <% end %>
       <%!-- Shared composer component owns data-command-context, data-command-tools, id="toggle-run-setup", id="run-setup-tray", id="prompt-form", var(--sf-text-primary), var(--sf-text-secondary), var(--sf-live-mark), and var(--sf-hairline). --%>
     </main>
   </div>
+
+  <%= if @pending_git_confirmation do %>
+    <% pending_git = @pending_git_confirmation
+    {host_id, title, action, hunk_id} = git_confirmation_host(pending_git) %>
+    <div
+      id={host_id}
+      phx-hook="ResponsiveSheet"
+      role="presentation"
+      data-sheet-close-event="cancel_git_confirmation"
+      data-sheet-return-id={git_confirmation_return_id(pending_git)}
+      data-sheet-background-id="workspace-shell"
+      class="git-confirmation-overlay fixed inset-0 z-[70] flex items-end justify-center bg-[var(--sf-shadow)] sm:items-center"
+    >
+      <div
+        id={"#{host_id}-dialog"}
+        phx-hook="ModalFocus"
+        data-modal-focus
+        data-cancel-event="cancel_git_confirmation"
+        data-initial-focus="#cancel-git-confirmation"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="git-confirmation-title"
+        tabindex="-1"
+        class="git-confirmation-dialog sf-chassis sf-sheet-scroll w-full max-w-md p-6"
+      >
+        <p class="sf-metadata">Destructive Git action</p>
+        <h2 id="git-confirmation-title" class="mt-2 text-lg font-semibold text-[var(--sf-text-primary)]">
+          {title}
+        </h2>
+        <p class="mt-2 text-sm leading-6 text-[var(--sf-text-secondary)]">
+          {git_confirmation_copy(pending_git)} This action cannot be undone.
+        </p>
+        <p :if={hunk_id} class="mt-3 font-mono text-xs text-[var(--sf-text-secondary)]">
+          Authorized hunk {hunk_id}
+        </p>
+        <div class="mt-6 flex flex-wrap justify-end gap-3 pb-[env(safe-area-inset-bottom)]">
+          <button
+            id="cancel-git-confirmation"
+            type="button"
+            phx-click="cancel_git_confirmation"
+            class="sf-control min-h-11 px-4 text-sm"
+          >Cancel</button>
+          <button
+            id="confirm-git-confirmation"
+            type="button"
+            phx-click={action}
+            phx-disable-with="Confirming…"
+            class="sf-control min-h-11 border-[var(--sf-live-mark)] px-4 text-sm text-[var(--sf-live-text)]"
+          >Confirm destructive action</button>
+        </div>
+      </div>
+    </div>
+  <% end %>
 
   <%= if @pending_calendar_task_delete do %>
     <% pending_calendar_delete = @pending_calendar_task_delete %>
