@@ -419,6 +419,54 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       refute staged_diff =~ "line 28 MODIFIED"
     end
 
+    test "unstage_hunk denies staged rename before applying a partial patch", %{tmp_dir: tmp_dir} do
+      original = Path.join(tmp_dir, "lib/sample.txt")
+      renamed = Path.join(tmp_dir, "lib/renamed.txt")
+      {_, 0} = System.cmd("git", ["mv", "lib/sample.txt", "lib/renamed.txt"], cd: tmp_dir)
+      File.write!(renamed, String.replace(File.read!(renamed), "line 3\n", "line 3 RENAMED\n"))
+      assert :ok = Git.stage("lib/renamed.txt", tmp_dir)
+      before = git_snapshot(tmp_dir)
+
+      assert {:ok, staged_diff} = Git.diff(tmp_dir, staged: true)
+
+      assert {:error, :unsupported_git_shape} =
+               HunkOps.unstage_hunk(tmp_dir, "lib/renamed.txt", "hunk-1", diff: staged_diff)
+
+      assert git_snapshot(tmp_dir) == before
+      refute File.exists?(original)
+      assert File.read!(renamed) =~ "RENAMED"
+    end
+
+    test "strict expected authority rejects a forged hunk patch", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "line 1\nline 2\nline 3 MODIFIED\n")
+      assert {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :unstaged)
+      assert {:ok, diff} = Git.diff(tmp_dir)
+      assert {:ok, [file_diff]} = DiffParser.parse(diff)
+      [hunk | _] = file_diff.hunks
+
+      expected_hunk =
+        HunkOps.hunk_binding(
+          :unstaged,
+          :stage,
+          "hunk-1",
+          DiffParser.format_hunk_patch(file_diff, hunk)
+        )
+
+      forged = String.replace(diff, "line 3 MODIFIED", "EVIL")
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.accept_hunk(tmp_dir, "lib/sample.txt", "hunk-1",
+                 diff: forged,
+                 mode: :stage,
+                 expected_authority: authority,
+                 expected_hunk: expected_hunk
+               )
+
+      assert {:ok, ""} = Git.diff(tmp_dir, staged: true)
+      refute File.read!(file) =~ "EVIL"
+    end
+
     test "reject_hunk discards an individual hunk from the working tree", %{
       tmp_dir: tmp_dir,
       lines: lines
@@ -703,6 +751,106 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
 
       assert File.read!(file) == "worktree reviewed\n"
       assert {"external index\n", 0} = System.cmd("git", ["show", ":lib/sample.txt"], cd: tmp_dir)
+    end
+
+    test "strict staged revert holds the official index lock through validation and publish", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "staged transaction\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :staged)
+      parent = self()
+
+      task =
+        start_supervised!(
+          {Task,
+           fn ->
+             result =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :staged,
+                 expected_authority: authority,
+                 before_index_transaction: fn ->
+                   send(parent, {:index_lock_held, self()})
+
+                   receive do
+                     :release_index_transaction -> :ok
+                   end
+                 end
+               )
+
+             send(parent, {:index_transaction_result, result})
+           end}
+        )
+
+      monitor = Process.monitor(task)
+      assert_receive {:index_lock_held, ^task}, 2_000
+
+      {writer_output, writer_status} =
+        System.cmd(
+          "git",
+          ["update-index", "--chmod=+x", "--", "lib/sample.txt"],
+          cd: tmp_dir,
+          stderr_to_stdout: true
+        )
+
+      assert writer_status != 0
+      assert writer_output =~ "index.lock"
+      send(task, :release_index_transaction)
+
+      assert_receive {:index_transaction_result, {:ok, :reverted}}, 2_000
+      assert_receive {:DOWN, ^monitor, :process, ^task, :normal}, 2_000
+      assert {:ok, ""} = Git.diff(tmp_dir, staged: true)
+
+      {entry, 0} = System.cmd("git", ["ls-files", "--stage", "--", "lib/sample.txt"], cd: tmp_dir)
+      assert entry =~ "100644"
+    end
+
+    test "strict worktree hunk effect rejects a distant edit after final comparison", %{
+      tmp_dir: tmp_dir,
+      lines: lines
+    } do
+      changed =
+        lines
+        |> List.replace_at(2, "line 3 REVIEWED")
+        |> List.replace_at(27, "line 28 REVIEWED")
+
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, Enum.join(changed, "\n") <> "\n")
+      {:ok, diff} = Git.diff(tmp_dir)
+      {:ok, [file_diff]} = DiffParser.parse(diff)
+      [hunk | _] = file_diff.hunks
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :unstaged)
+
+      expected_hunk =
+        HunkOps.hunk_binding(
+          :unstaged,
+          :reject,
+          "hunk-1",
+          DiffParser.format_hunk_patch(file_diff, hunk)
+        )
+
+      assert {:error, :stale_git_snapshot} =
+               HunkOps.reject_hunk(tmp_dir, "lib/sample.txt", "hunk-1",
+                 diff: diff,
+                 expected_authority: authority,
+                 expected_hunk: expected_hunk,
+                 before_worktree_effect: fn ->
+                   send(self(), :worktree_effect_barrier)
+
+                   File.write!(
+                     file,
+                     String.replace(File.read!(file), "line 20\n", "line 20 EXTERNAL\n")
+                   )
+                 end
+               )
+
+      assert_receive :worktree_effect_barrier
+
+      final = File.read!(file)
+      assert final =~ "line 3 REVIEWED"
+      assert final =~ "line 20 EXTERNAL"
+      assert final =~ "line 28 REVIEWED"
+      assert {:ok, ""} = Git.diff(tmp_dir, staged: true)
     end
 
     test "accept_all_hunks stages the entire file", %{tmp_dir: tmp_dir} do

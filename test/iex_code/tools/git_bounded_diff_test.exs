@@ -139,6 +139,32 @@ defmodule IexCode.Tools.GitBoundedDiffTest do
     assert_boundary_and_descendant_dead(producer_path, child_path)
   end
 
+  test "strict capped runner terminates an oversized producer before materializing output", %{
+    root: root
+  } do
+    {fake_git, producer_path, child_path} = fake_git(root, :produce_forever)
+    cleanup_processes_on_exit([producer_path, child_path])
+
+    assert {:error, :output_limit_exceeded} =
+             Git.run_git_bounded(root, ["diff"], 2_048, _git_executable: fake_git)
+
+    assert_boundary_and_descendant_dead(producer_path, child_path)
+  end
+
+  test "strict authority is compact and retains no raw exact patches", %{root: root} do
+    File.write!(Path.join(root, "large.txt"), "reviewed\n")
+
+    assert {:ok, authority} = HunkOps.capture_authority(root, "large.txt", :unstaged)
+    refute Map.has_key?(authority, :staged_patch)
+    refute Map.has_key?(authority, :unstaged_patch)
+    refute Map.has_key?(authority, :head_patch)
+
+    assert %{sha256: digest, bytes: bytes} = authority.unstaged_effect
+    assert is_binary(digest) and byte_size(digest) == 64
+    assert is_integer(bytes) and bytes > 0
+    assert byte_size(:erlang.term_to_binary(authority)) < 16_384
+  end
+
   defp fake_git(root, mode) do
     suffix = System.unique_integer([:positive, :monotonic])
     executable = Path.join(root, "fake-git-#{suffix}")

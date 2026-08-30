@@ -1863,7 +1863,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                HunkOps.accept_hunk(root, accepted_path, hunk_id,
                  diff: snapshot.raw_diff,
                  expected_identity: snapshot.identity,
-                 expected_authority: snapshot.authority
+                 expected_authority: snapshot.authority,
+                 expected_hunk: HunkOps.hunk_binding(:unstaged, :stage, hunk_id, snapshot.patch)
                )
              else
                _ -> {:error, :stale_git_snapshot}
@@ -2414,7 +2415,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                HunkOps.unstage_hunk(root, accepted_path, hunk_id,
                  diff: snapshot.raw_diff,
                  expected_identity: snapshot.identity,
-                 expected_authority: snapshot.authority
+                 expected_authority: snapshot.authority,
+                 expected_hunk: HunkOps.hunk_binding(:staged, :unstage, hunk_id, snapshot.patch)
                )
              else
                _ -> {:error, :stale_git_snapshot}
@@ -7176,7 +7178,13 @@ defmodule IexCodeWeb.WorkspaceLive do
 
       with {:ok, authority} <- HunkOps.capture_authority(root, path, scope) do
         {:ok,
-         %{fingerprint: fingerprint, raw_diff: raw_diff, identity: identity, authority: authority}}
+         %{
+           fingerprint: fingerprint,
+           raw_diff: raw_diff,
+           patch: DiffParser.format_hunk_patch(file_diff, hunk),
+           identity: identity,
+           authority: authority
+         }}
       end
     else
       _ -> {:error, :stale_git_confirmation}
@@ -7216,7 +7224,9 @@ defmodule IexCodeWeb.WorkspaceLive do
        when kind in [:discard_git_hunk, :revert_git_hunk] do
     with {:ok, accepted_path} <- authorize_hunk(socket, :unstaged, file, hunk_id),
          {:ok, fingerprint} <-
-           displayed_hunk_fingerprint(socket, :unstaged, accepted_path, hunk_id) do
+           displayed_hunk_fingerprint(socket, :unstaged, accepted_path, hunk_id),
+         {:ok, snapshot} <- fresh_hunk_snapshot(socket, :unstaged, accepted_path, hunk_id),
+         true <- snapshot.fingerprint == fingerprint do
       {:noreply,
        socket
        |> clear_pending_confirmations()
@@ -7227,7 +7237,9 @@ defmodule IexCodeWeb.WorkspaceLive do
          scope: :unstaged,
          path: accepted_path,
          hunk_id: hunk_id,
-         fingerprint: fingerprint
+         fingerprint: fingerprint,
+         authority: snapshot.authority,
+         hunk_binding: HunkOps.hunk_binding(:unstaged, :reject, hunk_id, snapshot.patch)
        })}
     else
       _ -> {:noreply, assign(socket, :pending_git_confirmation, nil)}
@@ -7243,7 +7255,9 @@ defmodule IexCodeWeb.WorkspaceLive do
         scope: scope,
         path: path,
         hunk_id: hunk_id,
-        fingerprint: fingerprint
+        fingerprint: fingerprint,
+        authority: authority,
+        hunk_binding: hunk_binding
       }
       when project_id == socket.assigns.project.id and session_id == socket.assigns.session.id ->
         root = socket.assigns.project.root_path
@@ -7256,7 +7270,8 @@ defmodule IexCodeWeb.WorkspaceLive do
               HunkOps.reject_hunk(root, accepted_path, hunk_id,
                 diff: snapshot.raw_diff,
                 expected_identity: snapshot.identity,
-                expected_authority: snapshot.authority
+                expected_authority: authority,
+                expected_hunk: hunk_binding
               )
             else
               false -> {:error, :stale_git_confirmation}
@@ -7314,8 +7329,8 @@ defmodule IexCodeWeb.WorkspaceLive do
                  {:ok, current_fingerprint} <- git_file_fingerprint(socket, scope, accepted_path),
                  true <- current_fingerprint.digest == fingerprint.digest do
               HunkOps.revert_file(root, accepted_path, scope,
-                expected_identity: current_fingerprint.identity,
-                expected_authority: current_fingerprint.authority
+                expected_identity: fingerprint.identity,
+                expected_authority: fingerprint.authority
               )
             else
               _ -> {:error, :stale_git_confirmation}

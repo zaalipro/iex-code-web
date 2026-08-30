@@ -15,6 +15,8 @@ defmodule IexCode.Tools.Git.HunkOps do
   alias IexCode.Tools.MultiPatch
   alias IexCode.{WorkspaceIdentity, WorkspacePath}
 
+  @authority_patch_limit 256 * 1_024
+
   @doc """
   Accepts a specific hunk.
   In a Git repository with unstaged changes, staging the hunk moves it into the Git index.
@@ -31,17 +33,33 @@ defmodule IexCode.Tools.Git.HunkOps do
     with :ok <- verify_expected_identity(project_root, file_path, opts),
          {:ok, {file_diff, hunk}} <- find_target_hunk(project_root, file_path, hunk_id, opts) do
       mode = Keyword.get(opts, :mode, :stage)
+      patch_str = DiffParser.format_hunk_patch(file_diff, hunk)
 
       with :ok <- verify_expected_authority(project_root, file_path, mode_scope(mode), opts),
-           :ok <- before_effect(opts),
-           :ok <- verify_expected_authority(project_root, file_path, mode_scope(mode), opts) do
-        case mode do
-          :stage ->
-            stage_hunk(project_root, file_path, file_diff, hunk)
+           :ok <- verify_hunk_binding(opts, mode_scope(mode), mode, hunk_id, patch_str),
+           :ok <- before_effect(opts) do
+        effect = fn git_opts ->
+          with :ok <- verify_expected_authority(project_root, file_path, mode_scope(mode), opts),
+               :ok <- verify_hunk_binding(opts, mode_scope(mode), mode, hunk_id, patch_str) do
+            maybe_before_worktree_effect(opts, mode)
 
-          :apply_to_file ->
-            apply_hunk_to_file(project_root, file_path, file_diff, hunk, opts)
+            case mode do
+              :stage ->
+                if Keyword.has_key?(opts, :expected_authority) do
+                  exact_index_hunk_effect(project_root, file_path, patch_str, :forward, git_opts)
+                else
+                  stage_hunk(project_root, file_path, file_diff, hunk, git_opts)
+                end
+
+              :apply_to_file ->
+                apply_hunk_to_file(project_root, file_path, file_diff, hunk, opts)
+            end
+          end
         end
+
+        if mode == :stage,
+          do: run_index_transaction(project_root, opts, effect),
+          else: effect.([])
       end
     end
   end
@@ -68,27 +86,76 @@ defmodule IexCode.Tools.Git.HunkOps do
                if(staged?, do: :staged, else: :unstaged),
                opts
              ),
-           :ok <- before_effect(opts),
            :ok <-
-             verify_expected_authority(
-               project_root,
-               file_path,
+             verify_hunk_binding(
+               opts,
                if(staged?, do: :staged, else: :unstaged),
-               opts
-             ) do
-        result =
-          if staged? do
-            Git.apply_patch(project_root, patch_str, reverse: true, cached: true)
-          else
-            Git.apply_patch(project_root, patch_str, reverse: true)
+               if(staged?, do: :unstage, else: :reject),
+               hunk_id,
+               patch_str
+             ),
+           :ok <- before_effect(opts) do
+        effect = fn git_opts ->
+          with :ok <-
+                 verify_expected_authority(
+                   project_root,
+                   file_path,
+                   if(staged?, do: :staged, else: :unstaged),
+                   opts
+                 ),
+               :ok <-
+                 verify_hunk_binding(
+                   opts,
+                   if(staged?, do: :staged, else: :unstaged),
+                   if(staged?, do: :unstage, else: :reject),
+                   hunk_id,
+                   patch_str
+                 ),
+               :ok <-
+                 if(staged?,
+                   do: git_scope_preflight(project_root, file_path, :staged),
+                   else: :ok
+                 ) do
+            maybe_before_worktree_effect(opts, if(staged?, do: :unstage, else: :reject))
+
+            if staged?,
+              do:
+                if(Keyword.has_key?(opts, :expected_authority),
+                  do:
+                    exact_index_hunk_effect(
+                      project_root,
+                      file_path,
+                      patch_str,
+                      :reverse,
+                      git_opts
+                    ),
+                  else:
+                    Git.apply_patch(
+                      project_root,
+                      patch_str,
+                      [reverse: true, cached: true] ++ git_opts
+                    )
+                ),
+              else:
+                if(Keyword.has_key?(opts, :expected_authority),
+                  do: exact_worktree_hunk_effect(project_root, file_path, patch_str, opts),
+                  else: Git.apply_patch(project_root, patch_str, reverse: true)
+                )
           end
+        end
+
+        result =
+          if staged?,
+            do: run_index_transaction(project_root, opts, effect),
+            else: effect.([])
 
         case result do
           {:ok, _output} ->
             fetch_updated_diff(project_root, file_path)
 
           {:error, reason} ->
-            if staged? or is_map(Keyword.get(opts, :expected_identity)) do
+            if staged? or is_map(Keyword.get(opts, :expected_identity)) or
+                 Keyword.has_key?(opts, :expected_authority) do
               {:error, reason}
             else
               case fallback_revert_hunk_in_file(project_root, file_path, hunk) do
@@ -143,14 +210,49 @@ defmodule IexCode.Tools.Git.HunkOps do
 
     with :ok <- verify_expected_identity(project_root, file_path, opts),
          :ok <- verify_expected_authority(project_root, file_path, scope, opts),
-         :ok <- before_effect(opts),
-         :ok <- verify_expected_authority(project_root, file_path, scope, opts) do
-      do_revert_file_scope(project_root, file_path, scope, opts)
+         :ok <- before_effect(opts) do
+      effect = fn git_opts ->
+        with :ok <- verify_expected_authority(project_root, file_path, scope, opts) do
+          do_revert_file_scope(
+            project_root,
+            file_path,
+            scope,
+            Keyword.put(opts, :git_opts, git_opts)
+          )
+        end
+      end
+
+      if index_scope?(scope, opts),
+        do: run_index_transaction(project_root, opts, effect),
+        else: effect.([])
     end
   end
 
   defp mode_scope(:stage), do: :unstaged
   defp mode_scope(:apply_to_file), do: :unstaged
+
+  defp index_scope?(:staged, opts), do: Keyword.has_key?(opts, :expected_authority)
+
+  defp index_scope?(:all, opts) do
+    case Keyword.get(opts, :expected_authority) do
+      %{staged_effect: %{bytes: bytes}} when bytes > 0 -> true
+      _ -> false
+    end
+  end
+
+  defp index_scope?(_scope, _opts), do: false
+
+  @doc false
+  def hunk_binding(scope, operation, hunk_id, patch)
+      when scope in [:staged, :unstaged] and
+             operation in [:stage, :apply_to_file, :unstage, :reject] and is_binary(patch) do
+    %{
+      scope: scope,
+      operation: operation,
+      hunk_id: to_string(hunk_id),
+      patch_digest: digest(patch)
+    }
+  end
 
   @doc false
   def capture_authority(root, path, scope) do
@@ -165,20 +267,29 @@ defmodule IexCode.Tools.Git.HunkOps do
          {:ok, staged_diff} <- exact_effect_diff(root, path, :staged),
          {:ok, unstaged_diff} <- exact_effect_diff(root, path, :unstaged),
          {:ok, head_diff} <- exact_head_diff(root, path),
-         {:ok, index} <- Git.run_git(root, ["ls-files", "--stage", "--", path]) do
+         {:ok, staged_hunks} <- capture_hunk_manifest(root, path, :staged),
+         {:ok, unstaged_hunks} <- capture_hunk_manifest(root, path, :unstaged),
+         {:ok, index} <- Git.run_git_bounded(root, ["ls-files", "--stage", "--", path], 65_536),
+         {:ok, head_oid} <- bounded_oid(root, ["rev-parse", "HEAD"], []),
+         {:ok, index_tree_oid} <- bounded_oid(root, ["write-tree"], []) do
       {:ok,
        %{
+         version: 2,
          scope: scope,
          path: path,
          branch: Map.get(status, :branch),
+         head_oid: head_oid,
+         index_tree_oid: index_tree_oid,
          status_authority: status_authority(status),
          identity: identity,
          index_identity: digest(index),
          staged_diff: digest(staged_diff),
          unstaged_diff: digest(unstaged_diff),
-         staged_patch: staged_diff,
-         unstaged_patch: unstaged_diff,
-         head_patch: head_diff
+         staged_effect: effect_manifest(staged_diff),
+         unstaged_effect: effect_manifest(unstaged_diff),
+         head_effect: effect_manifest(head_diff),
+         staged_hunks: staged_hunks,
+         unstaged_hunks: unstaged_hunks
        }}
     else
       _ -> {:error, :stale_git_snapshot}
@@ -209,6 +320,27 @@ defmodule IexCode.Tools.Git.HunkOps do
 
   defp authority_matches?(_, _), do: false
 
+  defp verify_hunk_binding(opts, scope, operation, hunk_id, patch) do
+    case Keyword.fetch(opts, :expected_authority) do
+      :error ->
+        :ok
+
+      {:ok, _authority} ->
+        expected = hunk_binding(scope, operation, hunk_id, patch)
+        authority = Keyword.fetch!(opts, :expected_authority)
+
+        manifest =
+          Map.get(authority, if(scope == :staged, do: :staged_hunks, else: :unstaged_hunks), [])
+
+        if Keyword.get(opts, :expected_hunk) == expected and
+             Enum.any?(manifest, fn entry ->
+               entry.hunk_id == expected.hunk_id and entry.patch_digest == expected.patch_digest
+             end),
+           do: :ok,
+           else: {:error, :stale_git_snapshot}
+    end
+  end
+
   defp authority_path_member?(status, path, :staged),
     do: Enum.any?(status.staged, &status_path_match?(&1, path))
 
@@ -236,29 +368,66 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp exact_effect_diff(root, path, scope) do
-    args = ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv"]
-    args = if scope == :staged, do: args ++ ["--cached"], else: args
-
-    case Git.run_git(root, args ++ ["-U2147483647", "--", path]) do
-      {:ok, content} when byte_size(content) <= 8 * 1_024 * 1_024 -> {:ok, content}
+    case Git.diff_bounded(root,
+           staged: scope == :staged,
+           binary: true,
+           full_index: true,
+           no_textconv: true,
+           paths: [path],
+           unified: 2_147_483_647,
+           max_bytes: @authority_patch_limit,
+           producer_limit_bytes: @authority_patch_limit + 1
+         ) do
+      {:ok, %{content: content, truncated?: false}} -> {:ok, content}
       _ -> {:error, :stale_git_snapshot}
     end
   end
 
   defp exact_head_diff(root, path) do
-    case Git.run_git(root, [
-           "diff",
-           "HEAD",
-           "--binary",
-           "--full-index",
-           "--no-ext-diff",
-           "--no-textconv",
-           "-U2147483647",
-           "--",
-           path
-         ]) do
-      {:ok, content} when byte_size(content) <= 8 * 1_024 * 1_024 -> {:ok, content}
+    case Git.diff_bounded(root,
+           commit: "HEAD",
+           binary: true,
+           full_index: true,
+           no_textconv: true,
+           paths: [path],
+           unified: 2_147_483_647,
+           max_bytes: @authority_patch_limit,
+           producer_limit_bytes: @authority_patch_limit + 1
+         ) do
+      {:ok, %{content: content, truncated?: false}} -> {:ok, content}
       _ -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp effect_manifest(patch) when is_binary(patch) do
+    %{sha256: digest(patch), bytes: byte_size(patch)}
+  end
+
+  defp capture_hunk_manifest(root, path, scope) do
+    case Git.diff_bounded(root,
+           paths: [path],
+           staged: scope == :staged,
+           unified: 3,
+           max_bytes: @authority_patch_limit,
+           producer_limit_bytes: @authority_patch_limit + 1
+         ) do
+      {:ok, %{content: content, truncated?: false}} ->
+        with {:ok, file_diffs} <- DiffParser.parse(content) do
+          manifests =
+            for file_diff <- file_diffs,
+                status_entry_matches_path?(file_diff, path),
+                hunk <- file_diff.hunks do
+              %{
+                hunk_id: to_string(hunk.id),
+                patch_digest: digest(DiffParser.format_hunk_patch(file_diff, hunk))
+              }
+            end
+
+          {:ok, manifests}
+        end
+
+      _ ->
+        {:error, :stale_git_snapshot}
     end
   end
 
@@ -277,6 +446,188 @@ defmodule IexCode.Tools.Git.HunkOps do
       _ ->
         :ok
     end
+  end
+
+  defp run_index_transaction(root, opts, effect) do
+    Git.with_index_transaction(root, fn git_opts ->
+      previous = Process.get(:iex_code_git_index_file)
+      index_file = git_opts |> Keyword.get(:env, []) |> List.keyfind("GIT_INDEX_FILE", 0)
+      if index_file, do: Process.put(:iex_code_git_index_file, elem(index_file, 1))
+
+      try do
+        case Keyword.get(opts, :before_index_transaction) do
+          fun when is_function(fun, 0) -> _ = fun.()
+          _ -> :ok
+        end
+
+        effect.(git_opts)
+      after
+        if previous,
+          do: Process.put(:iex_code_git_index_file, previous),
+          else: Process.delete(:iex_code_git_index_file)
+      end
+    end)
+  end
+
+  defp maybe_before_worktree_effect(opts, operation)
+       when operation in [:reject, :apply_to_file] do
+    case Keyword.get(opts, :before_worktree_effect) do
+      fun when is_function(fun, 0) -> _ = fun.()
+      _ -> :ok
+    end
+  end
+
+  defp maybe_before_worktree_effect(_opts, _operation), do: :ok
+
+  defp exact_index_hunk_effect(root, path, selected_patch, direction, git_opts) do
+    with {:ok, base_index} <- index_file_from_opts(git_opts),
+         {:ok, full_patch} <-
+           build_full_context_hunk_patch(root, path, base_index, selected_patch, direction),
+         {:ok, output} <-
+           Git.apply_patch(
+             root,
+             full_patch,
+             [cached: true, context: 2_147_483_647, whitespace: "nowarn"] ++ git_opts
+           ) do
+      {:ok, output}
+    else
+      _ -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp exact_worktree_hunk_effect(root, path, selected_patch, opts) do
+    authority = Keyword.fetch!(opts, :expected_authority)
+    scratch = scratch_index_path(root)
+
+    try do
+      with {:ok, index_path} <- repository_index_path(root),
+           :ok <- File.cp(index_path, scratch),
+           :ok <- File.chmod(scratch, 0o600),
+           {:ok, worktree_patch} <-
+             verified_effect_patch(
+               root,
+               path,
+               :unstaged,
+               Map.fetch!(authority, :unstaged_effect)
+             ),
+           scratch_opts = [env: [{"GIT_INDEX_FILE", scratch}]],
+           {:ok, _} <- Git.apply_patch(root, worktree_patch, [cached: true] ++ scratch_opts),
+           {:ok, full_patch} <-
+             build_full_context_hunk_patch(root, path, scratch, selected_patch, :reverse),
+           {:ok, output} <-
+             Git.apply_patch(root, full_patch,
+               reverse: false,
+               context: 2_147_483_647,
+               whitespace: "nowarn"
+             ) do
+        {:ok, output}
+      else
+        _ -> {:error, :stale_git_snapshot}
+      end
+    after
+      File.rm(scratch)
+      File.rm(scratch <> ".lock")
+    end
+  end
+
+  defp build_full_context_hunk_patch(root, path, base_index, selected_patch, direction) do
+    desired_index = scratch_index_path(root)
+    base_opts = [env: [{"GIT_INDEX_FILE", base_index}]]
+    desired_opts = [env: [{"GIT_INDEX_FILE", desired_index}]]
+
+    try do
+      with :ok <- File.cp(base_index, desired_index),
+           :ok <- File.chmod(desired_index, 0o600),
+           {:ok, base_tree} <- bounded_oid(root, ["write-tree"], base_opts),
+           {:ok, _} <-
+             Git.apply_patch(
+               root,
+               selected_patch,
+               [cached: true, reverse: direction == :reverse] ++ desired_opts
+             ),
+           {:ok, desired_tree} <- bounded_oid(root, ["write-tree"], desired_opts),
+           {:ok, full_patch} <-
+             Git.run_git_bounded(
+               root,
+               [
+                 "diff",
+                 "--binary",
+                 "--full-index",
+                 "--no-ext-diff",
+                 "--no-textconv",
+                 "--no-renames",
+                 "-U2147483647",
+                 base_tree,
+                 desired_tree,
+                 "--",
+                 path
+               ],
+               @authority_patch_limit
+             ),
+           :ok <- validate_exact_effect_patch(full_patch, path) do
+        {:ok, full_patch}
+      else
+        _ -> {:error, :stale_git_snapshot}
+      end
+    after
+      File.rm(desired_index)
+      File.rm(desired_index <> ".lock")
+    end
+  end
+
+  defp bounded_oid(root, args, opts) do
+    case Git.run_git_bounded(root, args, 256, opts) do
+      {:ok, output} ->
+        oid = String.trim(output)
+
+        if Regex.match?(~r/\A[0-9a-f]{40,64}\z/, oid),
+          do: {:ok, oid},
+          else: {:error, :invalid_oid}
+
+      error ->
+        error
+    end
+  end
+
+  defp validate_exact_effect_patch(patch, path) do
+    with true <- patch != "",
+         {:ok, [file_diff]} <- DiffParser.parse(patch),
+         true <- file_diff.status == :modified,
+         true <- not file_diff.binary?,
+         true <- status_entry_matches_path?(file_diff, path) do
+      :ok
+    else
+      _ -> {:error, :invalid_exact_patch}
+    end
+  end
+
+  defp repository_index_path(root) do
+    case Git.run_git_bounded(
+           root,
+           ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+           4_096
+         ) do
+      {:ok, output} ->
+        path = String.trim(output)
+
+        if Path.type(path) == :absolute and File.regular?(path),
+          do: {:ok, path},
+          else: {:error, :invalid_index_path}
+
+      error ->
+        error
+    end
+  end
+
+  defp index_file_from_opts(opts) do
+    case opts |> Keyword.get(:env, []) |> List.keyfind("GIT_INDEX_FILE", 0) do
+      {"GIT_INDEX_FILE", path} when is_binary(path) -> {:ok, path}
+      _ -> {:error, :missing_index_transaction}
+    end
+  end
+
+  defp scratch_index_path(root) do
+    Path.join(root, ".git/index.iex-hunk-#{System.unique_integer([:positive])}")
   end
 
   defp do_revert_file_scope(project_root, file_path, scope, opts) do
@@ -298,9 +649,11 @@ defmodule IexCode.Tools.Git.HunkOps do
 
   defp do_exact_revert_file_scope(project_root, file_path, scope, opts) do
     authority = Keyword.fetch!(opts, :expected_authority)
-    staged_patch = Map.get(authority, :staged_patch, "")
-    unstaged_patch = Map.get(authority, :unstaged_patch, "")
-    head_patch = Map.get(authority, :head_patch, "")
+    git_opts = Keyword.get(opts, :git_opts, [])
+    staged_effect = Map.get(authority, :staged_effect, %{})
+    unstaged_effect = Map.get(authority, :unstaged_effect, %{})
+    staged_bytes = Map.get(staged_effect, :bytes)
+    unstaged_bytes = Map.get(unstaged_effect, :bytes)
 
     with :ok <-
            if(scope in [:staged, :all],
@@ -308,24 +661,57 @@ defmodule IexCode.Tools.Git.HunkOps do
              else: :ok
            ) do
       case scope do
-        :staged when staged_patch != "" ->
-          exact_reverse_apply(project_root, staged_patch, cached: true)
+        :staged ->
+          with {:ok, patch} <-
+                 verified_effect_patch(project_root, file_path, :staged, staged_effect),
+               false <- patch == "" do
+            exact_reverse_apply(project_root, patch, [cached: true] ++ git_opts)
+          else
+            _ -> {:error, :unsupported_atomic_effect}
+          end
 
-        :unstaged when unstaged_patch != "" ->
-          exact_reverse_apply(project_root, unstaged_patch, [])
+        :unstaged ->
+          with {:ok, patch} <-
+                 verified_effect_patch(project_root, file_path, :unstaged, unstaged_effect),
+               false <- patch == "" do
+            exact_reverse_apply(project_root, patch, git_opts)
+          else
+            _ -> {:error, :unsupported_atomic_effect}
+          end
 
-        :all when staged_patch == "" and unstaged_patch != "" ->
-          exact_reverse_apply(project_root, unstaged_patch, [])
+        :all when staged_bytes == 0 ->
+          with {:ok, patch} <-
+                 verified_effect_patch(project_root, file_path, :unstaged, unstaged_effect),
+               false <- patch == "" do
+            exact_reverse_apply(project_root, patch, git_opts)
+          else
+            _ -> {:error, :unsupported_atomic_effect}
+          end
 
-        :all when staged_patch != "" and unstaged_patch == "" and head_patch != "" ->
-          exact_reverse_apply(project_root, head_patch, index: true)
+        :all when unstaged_bytes == 0 ->
+          with {:ok, patch} <-
+                 verified_effect_patch(project_root, file_path, :staged, staged_effect),
+               false <- patch == "" do
+            exact_reverse_apply(project_root, patch, [index: true] ++ git_opts)
+          else
+            _ -> {:error, :unsupported_atomic_effect}
+          end
 
-        :all when staged_patch != "" and unstaged_patch != "" ->
+        :all ->
           {:error, :unsupported_atomic_effect}
 
         _ ->
           {:error, :unsupported_atomic_effect}
       end
+    end
+  end
+
+  defp verified_effect_patch(root, path, scope, expected) do
+    with {:ok, patch} <- exact_effect_diff(root, path, scope),
+         true <- effect_manifest(patch) == expected do
+      {:ok, patch}
+    else
+      _ -> {:error, :stale_git_snapshot}
     end
   end
 
@@ -603,6 +989,33 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp resolve_diff_text(project_root, file_path, opts) do
+    if Keyword.has_key?(opts, :expected_authority) do
+      resolve_strict_diff_text(project_root, file_path, opts)
+    else
+      resolve_legacy_diff_text(project_root, file_path, opts)
+    end
+  end
+
+  defp resolve_strict_diff_text(project_root, file_path, opts) do
+    supplied = Keyword.get(opts, :diff)
+    staged = Keyword.get(opts, :staged, false)
+
+    case Git.diff_bounded(project_root,
+           paths: [file_path],
+           staged: staged,
+           max_bytes: 8 * 1_024 * 1_024,
+           producer_limit_bytes: 8 * 1_024 * 1_024
+         ) do
+      {:ok, %{content: current, truncated?: false}}
+      when is_binary(supplied) and supplied != "" and supplied == current ->
+        {:ok, current}
+
+      _ ->
+        {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp resolve_legacy_diff_text(project_root, file_path, opts) do
     case Keyword.get(opts, :diff) do
       d when is_binary(d) and d != "" ->
         {:ok, d}
@@ -622,10 +1035,10 @@ defmodule IexCode.Tools.Git.HunkOps do
     end
   end
 
-  defp stage_hunk(project_root, file_path, file_diff, hunk) do
+  defp stage_hunk(project_root, file_path, file_diff, hunk, git_opts) do
     patch_str = DiffParser.format_hunk_patch(file_diff, hunk)
 
-    case Git.apply_patch(project_root, patch_str, cached: true) do
+    case Git.apply_patch(project_root, patch_str, [cached: true] ++ git_opts) do
       {:ok, _output} ->
         fetch_updated_diff(project_root, file_path)
 

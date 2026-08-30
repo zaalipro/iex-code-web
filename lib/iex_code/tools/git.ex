@@ -62,7 +62,7 @@ defmodule IexCode.Tools.Git do
           :hide,
           cd: full_path,
           args: status_args,
-          env: [{~c"GIT_CEILING_DIRECTORIES", String.to_charlist(parent_dir)}]
+          env: direct_git_env(parent_dir, opts)
         ])
 
       # Very small producers can exit before the caller inspects the Port.
@@ -269,11 +269,20 @@ defmodule IexCode.Tools.Git do
 
   defp diff_to_file(repo_dir, output_path, opts, producer_limit) do
     args = ["--no-pager", "diff", "--no-ext-diff"]
+    args = if Keyword.get(opts, :binary, false), do: args ++ ["--binary"], else: args
+    args = if Keyword.get(opts, :full_index, false), do: args ++ ["--full-index"], else: args
+    args = if Keyword.get(opts, :no_textconv, false), do: args ++ ["--no-textconv"], else: args
     args = if Keyword.get(opts, :staged, false), do: args ++ ["--cached"], else: args
 
     args =
       case Keyword.get(opts, :unified) do
         n when is_integer(n) -> args ++ ["-U#{n}"]
+        _ -> args
+      end
+
+    args =
+      case Keyword.get(opts, :commit) do
+        commit when is_binary(commit) and commit != "" -> args ++ [commit]
         _ -> args
       end
 
@@ -292,7 +301,8 @@ defmodule IexCode.Tools.Git do
               :stderr_to_stdout,
               :hide,
               cd: repo_dir,
-              args: args
+              args: args,
+              env: direct_git_env(Path.dirname(Path.expand(repo_dir)), opts)
             ])
 
           os_pid = port_os_pid(port)
@@ -830,6 +840,12 @@ defmodule IexCode.Tools.Git do
     args = if Keyword.get(opts, :check, false), do: args ++ ["--check"], else: args
 
     args =
+      case Keyword.get(opts, :context) do
+        context when is_integer(context) and context > 0 -> args ++ ["-C#{context}"]
+        _ -> args
+      end
+
+    args =
       if Keyword.get(opts, :three_way, false) or Keyword.get(opts, :"3way", false),
         do: args ++ ["--3way"],
         else: args
@@ -848,9 +864,69 @@ defmodule IexCode.Tools.Git do
 
     try do
       File.write!(temp_file, patch_content)
-      run_git(repo_dir, args ++ [temp_file])
+      run_git(repo_dir, args ++ [temp_file], Keyword.take(opts, [:env]))
     after
       File.rm(temp_file)
+    end
+  end
+
+  @doc """
+  Runs an index-mutating callback while holding Git's official `index.lock`.
+
+  The callback's Git subprocesses receive an explicit alternate index. On a
+  successful `{:ok, _}` result that alternate is atomically published over the
+  official index; failures leave the official index untouched.
+  """
+  @spec with_index_transaction(Path.t(), (keyword() -> term())) :: term()
+  def with_index_transaction(repo_dir, fun) when is_binary(repo_dir) and is_function(fun, 1) do
+    with {:ok, git_dir_output} <- run_git(repo_dir, ["rev-parse", "--git-dir"]),
+         git_dir <- Path.expand(String.trim(git_dir_output), repo_dir),
+         lock_path <- Path.join(git_dir, "index.lock"),
+         {:ok, lock_io} <- File.open(lock_path, [:write, :binary, :exclusive]) do
+      index_path = Path.join(git_dir, "index")
+      alternate = Path.join(git_dir, "index.iex-code-#{System.unique_integer([:positive])}")
+
+      try do
+        :ok = File.chmod(lock_path, 0o600)
+
+        copy_result =
+          if File.regular?(index_path),
+            do: File.cp(index_path, alternate),
+            else: File.touch(alternate)
+
+        case copy_result do
+          :ok ->
+            :ok = File.chmod(alternate, 0o600)
+            result = fun.(env: [{"GIT_INDEX_FILE", alternate}])
+
+            case result do
+              {:ok, _} = success ->
+                with {:ok, alternate_io} <- File.open(alternate, [:read, :binary]),
+                     :ok <- :file.sync(alternate_io),
+                     :ok <- File.close(alternate_io),
+                     :ok <- File.rename(alternate, index_path) do
+                  success
+                else
+                  {:error, reason} -> {:error, {:index_publish_failed, reason}}
+                end
+
+              _ ->
+                result
+            end
+
+          {:error, reason} ->
+            {:error, {:index_copy_failed, reason}}
+        end
+      after
+        File.close(lock_io)
+        File.rm(alternate)
+        File.rm(lock_path)
+      end
+    else
+      {:error, :eexist} -> {:error, :git_index_busy}
+      {:error, :enoent} -> {:error, :not_a_git_repo}
+      {:error, reason} -> {:error, reason}
+      error -> error
     end
   end
 
@@ -945,37 +1021,61 @@ defmodule IexCode.Tools.Git do
   defp restore_shape_allowed?(_repo_dir, _file_list, _staged?, _worktree?), do: :ok
 
   defp rename_or_copy_pair_touches?(repo_dir, file_list) do
-    case run_git(repo_dir, [
-           "diff",
-           "--cached",
-           "--name-status",
-           "-z",
-           "-M",
-           "-C",
-           "--find-copies-harder",
-           "HEAD",
-           "--"
-         ]) do
-      {:ok, output} when byte_size(output) <= 2 * 1_024 * 1_024 ->
-        output
-        |> String.split(<<0>>, trim: true)
-        |> name_status_pairs()
-        |> Enum.any?(fn {old_path, new_path} ->
-          old_path in file_list or new_path in file_list
-        end)
+    case run_git_bounded(
+           repo_dir,
+           [
+             "diff",
+             "--cached",
+             "--name-status",
+             "-z",
+             "-M",
+             "-C",
+             "--find-copies-harder",
+             "HEAD",
+             "--"
+           ],
+           2 * 1_024 * 1_024
+         ) do
+      {:ok, output} ->
+        case name_status_pairs(output) do
+          {:ok, pairs} ->
+            Enum.any?(pairs, fn {old_path, new_path} ->
+              old_path in file_list or new_path in file_list
+            end)
+
+          {:error, _} ->
+            true
+        end
 
       _ ->
         true
     end
   end
 
-  defp name_status_pairs([<<prefix, _::binary>>, old_path, new_path | rest])
-       when prefix in [?R, ?C] do
-    [{old_path, new_path} | name_status_pairs(rest)]
+  defp name_status_pairs(""), do: {:ok, []}
+
+  defp name_status_pairs(output) when is_binary(output) do
+    fields = String.split(output, <<0>>, trim: false)
+
+    case List.last(fields) do
+      "" -> fields |> Enum.drop(-1) |> parse_name_status_fields([])
+      _ -> {:error, :malformed_name_status}
+    end
   end
 
-  defp name_status_pairs([_status, _path | rest]), do: name_status_pairs(rest)
-  defp name_status_pairs(_rest), do: []
+  defp parse_name_status_fields([], pairs), do: {:ok, Enum.reverse(pairs)}
+
+  defp parse_name_status_fields([<<prefix, _::binary>>, old_path, new_path | rest], pairs)
+       when prefix in [?R, ?C] and old_path != "" and new_path != "" do
+    parse_name_status_fields(rest, [{old_path, new_path} | pairs])
+  end
+
+  defp parse_name_status_fields([<<prefix, _::binary>>, path | rest], pairs)
+       when prefix in [?A, ?D, ?M, ?T, ?U, ?X, ?B] and path != "" do
+    parse_name_status_fields(rest, pairs)
+  end
+
+  defp parse_name_status_fields(_fields, _pairs), do: {:error, :malformed_name_status}
 
   @doc """
   Returns a list of local and remote branches for the repository.
@@ -1087,12 +1187,127 @@ defmodule IexCode.Tools.Git do
   where `message` comes from stderr (falling back to stdout). Transient
   `.git/index.lock` contention is retried a few times with small delays.
   """
-  def run_git(repo_dir, args) do
-    run_git_with_retries(Path.expand(repo_dir), args, @lock_retries)
+  def run_git(repo_dir, args, opts \\ []) do
+    opts = with_process_index_env(opts)
+    run_git_with_retries(Path.expand(repo_dir), args, @lock_retries, opts)
   end
 
-  defp run_git_with_retries(full_path, args, retries) do
-    task = Task.async(fn -> exec_git(full_path, args) end)
+  defp with_process_index_env(opts) do
+    case {Keyword.get(opts, :env, []), Process.get(:iex_code_git_index_file)} do
+      {[], index} when is_binary(index) and index != "" ->
+        Keyword.put(opts, :env, [{"GIT_INDEX_FILE", index}])
+
+      _ ->
+        opts
+    end
+  end
+
+  @doc "Runs Git with a producer-side output cap and direct argv invocation."
+  @spec run_git_bounded(Path.t(), [String.t()], pos_integer(), keyword()) ::
+          {:ok, binary()} | {:error, term()}
+  def run_git_bounded(repo_dir, args, max_bytes, opts \\ [])
+      when is_binary(repo_dir) and is_list(args) and is_integer(max_bytes) and max_bytes > 0 do
+    full_path = Path.expand(repo_dir)
+    parent_dir = Path.dirname(full_path)
+
+    with true <- Enum.all?(args, &(is_binary(&1) and not String.contains?(&1, <<0>>))),
+         git when is_binary(git) <-
+           Keyword.get(opts, :_git_executable) || System.find_executable("git") do
+      port =
+        Port.open({:spawn_executable, git}, [
+          :binary,
+          :exit_status,
+          :stderr_to_stdout,
+          :hide,
+          cd: full_path,
+          args: args,
+          env: direct_git_env(parent_dir, opts)
+        ])
+
+      collect_git_bounded(
+        port,
+        port_os_pid(port),
+        [],
+        0,
+        max_bytes,
+        System.monotonic_time(:millisecond) + git_timeout(opts)
+      )
+    else
+      false -> {:error, :invalid_git_arguments}
+      nil -> {:error, :git_not_found}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp collect_git_bounded(port, os_pid, chunks, bytes, limit, deadline) do
+    remaining_time = deadline - System.monotonic_time(:millisecond)
+
+    if remaining_time <= 0 do
+      terminate_git(port, os_pid)
+      drain_port(port)
+      {:error, :timeout}
+    else
+      receive do
+        {^port, {:data, data}} ->
+          if byte_size(data) <= limit - bytes do
+            collect_git_bounded(
+              port,
+              os_pid,
+              [data | chunks],
+              bytes + byte_size(data),
+              limit,
+              deadline
+            )
+          else
+            terminate_git(port, os_pid)
+            drain_port(port)
+            {:error, :output_limit_exceeded}
+          end
+
+        {^port, {:exit_status, 0}} ->
+          {:ok, chunks |> Enum.reverse() |> IO.iodata_to_binary()}
+
+        {^port, {:exit_status, status}} ->
+          {:error, {:git_error, status}}
+      after
+        remaining_time ->
+          terminate_git(port, os_pid)
+          drain_port(port)
+          {:error, :timeout}
+      end
+    end
+  end
+
+  defp drain_port(port) do
+    receive do
+      {^port, _message} -> drain_port(port)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp direct_git_env(parent_dir, opts) do
+    supplied = Keyword.get(opts, :env, [])
+    supplied = if supplied == [], do: process_index_env(), else: supplied
+
+    [
+      {~c"GIT_CEILING_DIRECTORIES", String.to_charlist(parent_dir)}
+      | Enum.map(supplied, fn {key, value} ->
+          {String.to_charlist(key), String.to_charlist(value)}
+        end)
+    ]
+  end
+
+  defp process_index_env do
+    case Process.get(:iex_code_git_index_file) do
+      index when is_binary(index) and index != "" -> [{"GIT_INDEX_FILE", index}]
+      _ -> []
+    end
+  end
+
+  defp run_git_with_retries(full_path, args, retries, opts) do
+    task = Task.async(fn -> exec_git(full_path, args, opts) end)
 
     result =
       case Task.yield(task, @git_timeout_ms) || Task.shutdown(task, :brutal_kill) do
@@ -1104,7 +1319,7 @@ defmodule IexCode.Tools.Git do
       {:error, {:git_error, _exit_code, message}} = err ->
         if index_locked?(message) and retries > 0 do
           Process.sleep(@lock_retry_ms)
-          run_git_with_retries(full_path, args, retries - 1)
+          run_git_with_retries(full_path, args, retries - 1, opts)
         else
           err
         end
@@ -1118,7 +1333,7 @@ defmodule IexCode.Tools.Git do
     String.contains?(message, "index.lock")
   end
 
-  defp exec_git(full_path, args) do
+  defp exec_git(full_path, args, opts) do
     stderr_file =
       Path.join(
         System.tmp_dir!(),
@@ -1129,11 +1344,20 @@ defmodule IexCode.Tools.Git do
     # Set GIT_CEILING_DIRECTORIES to repo_dir's parent so git does not traverse into parent project repo
     parent_dir = Path.dirname(full_path)
 
+    env_prefix =
+      opts
+      |> Keyword.get(:env, [])
+      |> Enum.map_join(" ", fn {key, value} ->
+        "#{to_string(key)}=#{shell_quote(to_string(value))}"
+      end)
+
+    env_prefix = if env_prefix == "", do: "", else: env_prefix <> " "
+
     cmd =
-      "GIT_CEILING_DIRECTORIES=#{shell_quote(parent_dir)} git #{Enum.map_join(args, " ", &shell_quote/1)} 2> #{shell_quote(stderr_file)}"
+      "#{env_prefix}GIT_CEILING_DIRECTORIES=#{shell_quote(parent_dir)} git #{Enum.map_join(args, " ", &shell_quote/1)} 2> #{shell_quote(stderr_file)}"
 
     try do
-      case System.shell(cmd, cd: full_path) do
+      case System.shell(cmd, cd: full_path, env: Keyword.get(opts, :env, [])) do
         {output, 0} ->
           {:ok, output}
 

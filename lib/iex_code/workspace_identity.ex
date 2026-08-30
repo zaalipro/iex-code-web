@@ -7,6 +7,12 @@ defmodule IexCode.WorkspaceIdentity do
 
   @spec capture(Path.t(), Path.t(), keyword()) :: {:ok, map()} | {:error, atom() | term()}
   def capture(root, path, opts \\ []) when is_binary(root) and is_binary(path) do
+    with {:ok, canonical_root} <- WorkspacePath.resolve(root, "") do
+      capture_resolved(canonical_root, path, opts)
+    end
+  end
+
+  defp capture_resolved(root, path, opts) do
     max_bytes = normalize_max_bytes(Keyword.get(opts, :max_bytes, @default_max_bytes))
     allow_final_symlink? = Keyword.get(opts, :allow_final_symlink, false)
 
@@ -158,7 +164,6 @@ defmodule IexCode.WorkspaceIdentity do
       port =
         Port.open({:spawn_executable, python}, [
           :binary,
-          :exit_status,
           :use_stdio,
           {:packet, 4},
           args: ["-I", reader, root, path, Integer.to_string(max_bytes)]
