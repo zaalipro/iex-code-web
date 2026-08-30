@@ -253,6 +253,59 @@ defmodule IexCodeWeb.WorkspaceLiveEditorDiffsTest do
       assert editor_text(view) =~ baseline
       refute has_element?(view, "[phx-click='close_file_buffer'][phx-value-path='binary.dat']")
     end
+
+    test "reports safe-reader timeout and stopped-helper failures without replacing the editor",
+         %{
+           conn: conn,
+           workspace_path: path
+         } do
+      baseline = "retained editor body\n"
+      workspace_write_file(path, "lib/retained.ex", baseline)
+      workspace_write_file(path, "lib/timeout.ex", "timeout target\n")
+      workspace_write_file(path, "lib/stopped.ex", "stopped target\n")
+      timeout_reader = Path.join(path, "timeout_reader.py")
+      stopped_reader = Path.join(path, "stopped_reader.py")
+      File.write!(timeout_reader, "import time\ntime.sleep(2)\n")
+      File.write!(stopped_reader, "raise SystemExit(2)\n")
+
+      previous = Application.get_env(:iex_code, :editor_identity_reader_opts)
+
+      on_exit(fn ->
+        if is_nil(previous),
+          do: Application.delete_env(:iex_code, :editor_identity_reader_opts),
+          else: Application.put_env(:iex_code, :editor_identity_reader_opts, previous)
+      end)
+
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}?view=files")
+      render_click(view, "select_file", %{"path" => "lib/retained.ex"})
+
+      for {relative, reader, expected} <- [
+            {"lib/timeout.ex", timeout_reader, "read timed out"},
+            {"lib/stopped.ex", stopped_reader, "safe reader failed"}
+          ] do
+        Application.put_env(:iex_code, :editor_identity_reader_opts,
+          reader_path: reader,
+          reader_timeout_ms: 50
+        )
+
+        render_click(view, "select_file", %{"path" => relative})
+
+        assert has_element?(view, "#flash-error", expected)
+        assert has_element?(view, "#files-selected-signal", "lib/retained.ex")
+        assert editor_text(view) =~ baseline
+
+        assert [^baseline] =
+                 view
+                 |> render()
+                 |> LazyHTML.from_fragment()
+                 |> LazyHTML.query("#copy-file-btn")
+                 |> LazyHTML.attribute("data-code")
+
+        refute has_element?(view, "[phx-click='close_file_buffer'][phx-value-path='#{relative}']")
+      end
+    end
   end
 
   # ============================================================================

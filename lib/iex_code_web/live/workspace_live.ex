@@ -6270,10 +6270,12 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   defp read_editor_file(socket, path) do
     root = socket.assigns.project.root_path
+    reader_opts = Application.get_env(:iex_code, :editor_identity_reader_opts, [])
 
-    case WorkspaceIdentity.capture(root, path,
-           max_bytes: @editor_file_max_bytes,
-           return_content: true
+    case WorkspaceIdentity.capture(
+           root,
+           path,
+           Keyword.merge(reader_opts, max_bytes: @editor_file_max_bytes, return_content: true)
          ) do
       {:ok, %{missing?: true}} ->
         {:ok, "Could not read file: :enoent"}
@@ -6292,7 +6294,9 @@ defmodule IexCodeWeb.WorkspaceLive do
   defp editor_read_error(:file_too_large), do: "file exceeds the 2 MiB editor limit"
   defp editor_read_error(:identity_too_large), do: "file exceeds the 2 MiB editor limit"
   defp editor_read_error(:invalid_encoding), do: "unsupported text encoding"
+  defp editor_read_error(:reader_timeout), do: "read timed out"
   defp editor_read_error(:read_timeout), do: "read timed out"
+  defp editor_read_error(:reader_failed), do: "safe reader failed"
   defp editor_read_error(:identity_changed), do: "file changed while reading"
   defp editor_read_error(:invalid_file_type), do: "file is not a regular file"
   defp editor_read_error(:read_failed), do: "read failed"

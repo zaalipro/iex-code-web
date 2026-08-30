@@ -101,7 +101,7 @@ defmodule IexCode.WorkspaceIdentity do
     return_content? = Keyword.get(opts, :return_content, false) == true
     observe(opts, :before_open)
 
-    case open_no_follow_reader(root, path, max_bytes, return_content?) do
+    case open_no_follow_reader(root, path, max_bytes, return_content?, opts) do
       {:ok, port} ->
         try do
           with {:ok, opened} <- receive_reader_message(port, opts),
@@ -130,17 +130,25 @@ defmodule IexCode.WorkspaceIdentity do
               {:ok, identity}
             else
               {:error, :identity_too_large} -> {:error, :identity_too_large}
+              {:error, :invalid_reader_response} -> {:error, :reader_failed}
               _ -> {:error, :identity_changed}
             end
           else
-            _ -> {:error, :identity_changed}
+            {:error, :reader_timeout} ->
+              {:error, :reader_timeout}
+
+            {:error, reason} when reason in [:reader_stopped, :invalid_reader_response] ->
+              {:error, :reader_failed}
+
+            _ ->
+              {:error, :identity_changed}
           end
         after
           close_reader(port)
         end
 
       _ ->
-        {:error, :identity_changed}
+        {:error, :reader_failed}
     end
   end
 
@@ -164,8 +172,13 @@ defmodule IexCode.WorkspaceIdentity do
   # standard-library helper provides that exact open boundary and returns only
   # a capped payload through a packet-framed port. Missing Python, unsupported
   # flags, malformed output, and timeouts all deny authority.
-  defp open_no_follow_reader(root, path, max_bytes, return_content?) do
-    reader = Path.join(to_string(:code.priv_dir(:iex_code)), "workspace_identity_reader.py")
+  defp open_no_follow_reader(root, path, max_bytes, return_content?, opts) do
+    reader =
+      Keyword.get(
+        opts,
+        :reader_path,
+        Path.join(to_string(:code.priv_dir(:iex_code)), "workspace_identity_reader.py")
+      )
 
     with python when is_binary(python) <- System.find_executable("python3"),
          true <- File.regular?(reader) do
@@ -173,6 +186,7 @@ defmodule IexCode.WorkspaceIdentity do
         Port.open({:spawn_executable, python}, [
           :binary,
           :use_stdio,
+          :exit_status,
           {:packet, 4},
           args: [
             "-I",
@@ -216,6 +230,8 @@ defmodule IexCode.WorkspaceIdentity do
             _ ->
               {:error, :invalid_reader_response}
           end
+        else
+          _ -> {:error, :invalid_reader_response}
         end
 
       {^port, {:exit_status, _status}} ->
@@ -245,7 +261,7 @@ defmodule IexCode.WorkspaceIdentity do
            true <- digest == content_digest(content) do
         {:ok, {digest, content}}
       else
-        _ -> {:error, :identity_changed}
+        _ -> {:error, :invalid_reader_response}
       end
     else
       {:ok, {digest, nil}}
@@ -256,7 +272,11 @@ defmodule IexCode.WorkspaceIdentity do
        when is_integer(count) and count == max + 1,
        do: {:error, :identity_too_large}
 
-  defp decode_reader_result(_result, _max, _return?), do: {:error, :identity_changed}
+  defp decode_reader_result(%{"status" => "changed"}, _max, _return?),
+    do: {:error, :identity_changed}
+
+  defp decode_reader_result(_result, _max, _return?),
+    do: {:error, :invalid_reader_response}
 
   defp content_digest(content) do
     :sha256
