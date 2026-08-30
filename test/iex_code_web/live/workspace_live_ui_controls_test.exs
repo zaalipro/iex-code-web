@@ -694,11 +694,18 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       )
 
       _ = :sys.get_state(view.pid)
-      assert has_element?(view, "#terminal-xterm-container[phx-hook='TerminalHook']")
+
+      assert_push_event(view, "terminal_output", %{
+        data: "\e[1;32m[SUCCESS]\e[0m Test suite 100% passed"
+      })
 
       # 6. Clear terminal
       render_click(view, "clear_terminal")
-      assert has_element?(view, "#btn-terminal-clear")
+      assert has_element?(view, "#terminal-clear-confirmation")
+      render_click(view, "confirm_terminal_action", %{})
+      _ = :sys.get_state(view.pid)
+      refute has_element?(view, "#terminal-clear-confirmation")
+      assert :sys.get_state(view.pid).socket.assigns.terminal_output == ""
     end
   end
 

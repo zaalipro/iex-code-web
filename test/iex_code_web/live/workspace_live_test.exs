@@ -383,11 +383,15 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     # Receive async terminal output event
     send(view.pid, {:terminal_output, session.id, "Streaming log line 42"})
     _ = :sys.get_state(view.pid)
-    assert has_element?(view, "#terminal-xterm-container[phx-hook='TerminalHook']")
+    assert_push_event(view, "terminal_output", %{data: "Streaming log line 42"})
 
     # Clear terminal
     render_click(view, "clear_terminal")
-    assert has_element?(view, "#btn-terminal-clear")
+    assert has_element?(view, "#terminal-clear-confirmation")
+    render_click(view, "confirm_terminal_action", %{})
+    _ = :sys.get_state(view.pid)
+    refute has_element?(view, "#terminal-clear-confirmation")
+    assert :sys.get_state(view.pid).socket.assigns.terminal_output == ""
   end
 
   test "rejects path traversal attempts in select_file with flash error", %{

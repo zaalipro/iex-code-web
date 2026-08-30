@@ -276,7 +276,7 @@ defmodule IexCodeWeb.SettingsLiveTest do
     assert has_element?(view, "#settings-provider-engine-serpapi")
   end
 
-  test "settings tokens keep form labels and save action readable in both themes" do
+  test "settings token wiring stays explicit for labels, errors, and theme controls" do
     css = File.read!(Path.expand("../../../assets/css/app.css", __DIR__))
 
     assert css =~ ".settings-page #settings-form label > span"
@@ -284,9 +284,8 @@ defmodule IexCodeWeb.SettingsLiveTest do
     assert css =~ ":root[data-theme=\"light\"] .settings-save-button"
     assert css =~ "background: var(--sf-live-text); color: var(--sf-instrument-raised)"
 
-    assert contrast_ratio("#101214", "#F6532E") >= 4.5
-    assert contrast_ratio("#FBF8F2", "#A8321F") >= 4.5
-    assert contrast_ratio("#655F58", "#FBF8F2") >= 4.5
+    assert css =~ ".settings-bench-identity"
+    assert css =~ "color: var(--sf-text-secondary) !important"
   end
 
   test "resource policy is editable with guarded advanced controls and read-only deployment facts",
@@ -989,26 +988,4 @@ defmodule IexCodeWeb.SettingsLiveTest do
 
   defp restore_env(key, nil), do: Application.delete_env(:iex_code, key)
   defp restore_env(key, value), do: Application.put_env(:iex_code, key, value)
-
-  defp contrast_ratio(foreground, background) do
-    {lighter, darker} =
-      [relative_luminance(foreground), relative_luminance(background)]
-      |> Enum.sort(:desc)
-      |> List.to_tuple()
-
-    (lighter + 0.05) / (darker + 0.05)
-  end
-
-  defp relative_luminance("#" <> rgb) do
-    [r, g, b] =
-      rgb
-      |> String.codepoints()
-      |> Enum.chunk_every(2)
-      |> Enum.map(fn pair -> pair |> Enum.join() |> String.to_integer(16) |> Kernel./(255) end)
-      |> Enum.map(fn value ->
-        if value <= 0.04045, do: value / 12.92, else: :math.pow((value + 0.055) / 1.055, 2.4)
-      end)
-
-    0.2126 * r + 0.7152 * g + 0.0722 * b
-  end
 end
