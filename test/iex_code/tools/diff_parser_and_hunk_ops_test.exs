@@ -889,6 +889,27 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       assert git_snapshot(tmp_dir) == before
     end
 
+    test "strict all-layer staged-only revert restores a deleted tracked file", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      original = File.read!(file)
+      File.rm!(file)
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :all)
+
+      assert {:ok, :reverted} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all,
+                 expected_identity: identity,
+                 expected_authority: authority
+               )
+
+      assert File.read!(file) == original
+      assert {:ok, status} = Git.status(tmp_dir)
+      assert status.clean?
+    end
+
     test "strict all-layer staged-only revert rolls back index and worktree on effect failure", %{
       tmp_dir: tmp_dir
     } do

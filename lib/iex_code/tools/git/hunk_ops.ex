@@ -483,8 +483,8 @@ defmodule IexCode.Tools.Git.HunkOps do
   defp complete_index_transaction({:ok, {:after_publish, effect, success}})
        when is_function(effect, 0) do
     case effect.() do
-      :ok -> {:ok, success}
-      {:ok, _} -> {:ok, success}
+      :ok -> {:ok, {:ok, success}}
+      {:ok, _} -> {:ok, {:ok, success}}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -721,7 +721,8 @@ defmodule IexCode.Tools.Git.HunkOps do
           with {:ok, patch} <-
                  verified_effect_patch(project_root, file_path, :staged, staged_effect),
                false <- patch == "",
-               {:ok, original_bytes} <- File.read(Path.expand(file_path, project_root)),
+               {:ok, worktree_snapshot} <-
+                 capture_worktree_snapshot(Path.expand(file_path, project_root)),
                {:ok, _output} <-
                  Git.apply_patch(
                    project_root,
@@ -735,7 +736,7 @@ defmodule IexCode.Tools.Git.HunkOps do
                   project_root,
                   file_path,
                   patch,
-                  original_bytes,
+                  worktree_snapshot,
                   opts
                 )
               end, :reverted}}
@@ -768,7 +769,7 @@ defmodule IexCode.Tools.Git.HunkOps do
     end
   end
 
-  defp perform_published_worktree_revert(root, path, patch, original_bytes, opts) do
+  defp perform_published_worktree_revert(root, path, patch, worktree_snapshot, opts) do
     effect =
       case Keyword.get(opts, :_worktree_effect) do
         fun when is_function(fun, 0) -> fun.()
@@ -783,13 +784,31 @@ defmodule IexCode.Tools.Git.HunkOps do
         :ok
 
       {:error, reason} ->
-        case File.write(Path.expand(path, root), original_bytes) do
+        case restore_worktree_snapshot(Path.expand(path, root), worktree_snapshot) do
           :ok ->
             {:error, reason}
 
           {:error, rollback_reason} ->
             {:error, {:worktree_rollback_failed, reason, rollback_reason}}
         end
+    end
+  end
+
+  defp capture_worktree_snapshot(path) do
+    case File.read(path) do
+      {:ok, bytes} -> {:ok, {:present, bytes}}
+      {:error, :enoent} -> {:ok, :absent}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp restore_worktree_snapshot(path, {:present, bytes}), do: File.write(path, bytes)
+
+  defp restore_worktree_snapshot(path, :absent) do
+    case File.rm(path) do
+      :ok -> :ok
+      {:error, :enoent} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
