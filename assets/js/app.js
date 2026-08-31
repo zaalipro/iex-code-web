@@ -14,6 +14,7 @@ import TaskMoveReturn from "./hooks/task_move_return_hook.mjs"
 import LocalTime from "./hooks/local_time_hook"
 import CalendarDeleteFocus from "./hooks/calendar_delete_focus_hook"
 import {createModalFocus} from "./hooks/modal_focus_hook"
+import {resolveCommandPaletteFocusTarget} from "./hooks/command_palette_focus_return.mjs"
 // modalSheetReturnId(this.el) and restoreModalFocus({ remain shared ModalFocus teardown contracts.
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
@@ -235,7 +236,7 @@ const Hooks = {
       this.lastFocusedElement = null
 
       requestAnimationFrame(() => {
-        if (element?.isConnected) element.focus()
+        resolveCommandPaletteFocusTarget({document, previouslyFocused: element})?.focus()
       })
     },
     trapFocus(event, dialog) {
