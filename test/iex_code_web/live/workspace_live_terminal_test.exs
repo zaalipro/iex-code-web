@@ -676,5 +676,35 @@ defmodule IexCodeWeb.WorkspaceLiveTerminalTest do
       refute has_element?(view, "#terminal-restart-confirmation")
       assert TerminalServer.whereis(session.id) == pid
     end
+
+    test "agent ownership arriving after user confirmation prevalidation blocks restart effect",
+         %{
+           conn: conn,
+           workspace_path: path
+         } do
+      project = create_project_fixture(%{root_path: path})
+      session = create_session_fixture(project)
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
+      view |> element("#instrument-card-terminal") |> render_click()
+      pid = TerminalServer.whereis(session.id)
+      before = :sys.get_state(pid)
+
+      view |> element("#btn-terminal-restart") |> render_click()
+      assert has_element?(view, "#terminal-restart-confirmation")
+
+      assert :ok =
+               TerminalSession.set_occupant(
+                 session.id,
+                 {:agent, "handoff-agent", "handoff-op"},
+                 adapter_generation: before.adapter_generation
+               )
+
+      render_click(view, "confirm_terminal_action", %{})
+      after_confirmation = :sys.get_state(pid)
+      assert after_confirmation.adapter_generation == before.adapter_generation
+      assert after_confirmation.adapter.port == before.adapter.port
+      assert after_confirmation.active_occupant == {:agent, "handoff-agent", "handoff-op"}
+      refute has_element?(view, "#terminal-restart-confirmation")
+    end
   end
 end

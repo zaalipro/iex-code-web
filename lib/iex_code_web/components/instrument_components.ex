@@ -414,9 +414,24 @@ defmodule IexCodeWeb.InstrumentComponents do
       </div>
 
       <div class="flex min-w-0 items-center gap-2">
-        <div class="flex min-h-11 shrink-0 items-center gap-2" aria-controls="connection-status">
-          <span class="sf-success-mark h-2 w-2 rounded-full" aria-hidden="true"></span>
-          <span class="sf-body-copy text-sm">Connected</span>
+        <div
+          id="mission-connection-indicator"
+          class="flex min-h-11 shrink-0 items-center gap-2"
+          aria-controls="connection-status"
+          data-state="connected"
+        >
+          <span
+            id="mission-connection-mark"
+            class="sf-success-mark h-2 w-2 rounded-full"
+            data-state="connected"
+            aria-hidden="true"
+          ></span>
+          <span
+            id="mission-connection-status"
+            class="sf-body-copy text-sm"
+            data-state="connected"
+            aria-label="Connected"
+          >Connected</span>
         </div>
         <button
           id="runtime-switchboard-trigger"
@@ -557,7 +572,8 @@ defmodule IexCodeWeb.InstrumentComponents do
   defp surface_index(_), do: "00"
 
   defp normalize_status(status)
-       when status in [:ready, :active, :attention, :empty, :error, :standby], do: status
+       when status in [:ready, :active, :attention, :empty, :error, :standby],
+       do: status
 
   defp normalize_status(_), do: :standby
 

@@ -103,7 +103,7 @@ class FakeMedia extends FakeTarget {
   change(matches) { this.matches = matches; this.emit("change", {matches, media: this.media}) }
 }
 
-function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = false, noFocusables = false, dialog = false, confirmationTopology = false} = {}) {
+function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = false, noFocusables = false, dialog = false, confirmationTopology = false, isolateDesktop = false, fullIsolation = false} = {}) {
   const media = new FakeMedia(viewportWidth === undefined ? mobile : viewportWidth <= 639)
   const document = new FakeTarget()
   const root = new FakeElement("root")
@@ -115,6 +115,8 @@ function setup({mobile = true, viewportWidth, backgroundAria, backgroundInert = 
     sheetCloseEvent: "close_sheet",
     sheetReturnId: "open-sheet",
     sheetBackgroundId: "workspace-shell",
+    ...(isolateDesktop ? {sheetIsolateDesktop: "true"} : {}),
+    ...(fullIsolation ? {modalIsolation: "siblings"} : {}),
     ...(dialog ? {sheetDialog: "true"} : {})
   }})
   sheet.setAttribute("tabindex", "-1")
@@ -205,6 +207,18 @@ test("desktop mount is inert and media changes activate then fully clean up with
   assert.equal(h.document.listenerCount("keydown"), 0)
   h.flushFrames()
   assert.equal(h.trigger.focusCalls.length, 0)
+})
+
+test("desktop command palette isolates the full application background", () => {
+  const h = setup({mobile: false, isolateDesktop: true, fullIsolation: true})
+  h.hook.mounted()
+  assert.equal(h.background.inert, true)
+  assert.equal(h.background.getAttribute("aria-hidden"), "true")
+  assert.equal(h.sheet.inert, false)
+  assert.equal(h.document.listenerCount("keydown"), 0)
+  h.hook.destroyed()
+  assert.equal(h.background.inert, false)
+  assert.equal(h.background.getAttribute("aria-hidden"), null)
 })
 
 test("639 to 640 and 640 to 639 expose exact sheet ownership boundaries", () => {
@@ -325,6 +339,7 @@ test("updated rebinds changed backgrounds and missing datasets degrade safely", 
 
   h.sheet.dataset.sheetCloseEvent = ""
   h.hook.updated()
+  assert.equal(h.background.inert, false)
   assert.equal(second.inert, false)
   assert.equal(h.document.listenerCount("keydown"), 0)
 })

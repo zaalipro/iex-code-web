@@ -100,13 +100,35 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
 
     assert has_element?(
              view,
-             "#command-palette-dialog[data-sheet-close-event='close_command_palette'][data-sheet-return-id='command-palette-trigger'][data-sheet-background-id='workspace-shell']"
+             "#command-palette-dialog[data-sheet-close-event='close_command_palette'][data-sheet-return-id='command-palette-trigger'][data-sheet-background-id='workspace-shell'][data-sheet-isolate-desktop='true'][data-modal-isolation='siblings']"
            )
 
     refute has_element?(view, "#workspace-sidebar")
     refute has_element?(view, "#workspace-desktop-tabs")
-    assert has_element?(view, "#new-session-btn[type='button']")
-    assert has_element?(view, "#new-session-btn", "New Session")
+
+    assert has_element?(
+             view,
+             "[data-palette-item-id='new-session'][role='option']",
+             "New Session"
+           )
+
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    assert document
+           |> LazyHTML.query(
+             "#command-palette-results [role='option'] form, #command-palette-results [role='option'] a[href], #command-palette-results [role='option'] button, #command-palette-results [role='option'] input, #command-palette-results [role='option'] select, #command-palette-results [role='option'] textarea"
+           )
+           |> Enum.empty?()
+
+    assert Enum.all?(
+             LazyHTML.query(document, "#command-palette-results [role='option']"),
+             fn option ->
+               match?(["palette-item-" <> _], LazyHTML.attribute(option, "id"))
+             end
+           )
+
+    refute has_element?(view, "#command-palette-results #workspace-logout-form")
+    assert has_element?(view, "#workspace-logout-form[hidden]")
   end
 
   test "server result order, rendered option order, and arrow selection stay identical", %{
@@ -369,7 +391,11 @@ defmodule IexCodeWeb.WorkspaceLiveCommandPaletteTest do
     html = render(view)
     assert has_element?(view, "#workspace-logout-form[action='/logout'][method='post']")
     assert has_element?(view, "#workspace-logout-form input[name='_csrf_token']")
-    assert has_element?(view, "#workspace-logout-form-button.sf-control.min-h-11[type='submit']")
+
+    assert has_element?(
+             view,
+             "#workspace-logout-form[hidden] #workspace-logout-form-button[type='submit']"
+           )
 
     refute html =~ "workspace-logout-form[href"
   end

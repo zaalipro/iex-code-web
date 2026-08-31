@@ -5,6 +5,7 @@ import { SearchAddon } from "@xterm/addon-search"
 import { CanvasAddon } from "@xterm/addon-canvas"
 import {resolveTheme} from "../theme.mjs"
 import {consumeInitialHandshake, initialTerminalLifecycle, transitionTerminalLifecycle} from "./terminal_lifecycle.mjs"
+import {syncTerminalAriaDisabled} from "./ignored_host_semantics.mjs"
 
 /**
  * TerminalHook - High-performance interactive xterm.js LiveView Hook.
@@ -19,6 +20,7 @@ import {consumeInitialHandshake, initialTerminalLifecycle, transitionTerminalLif
  */
 export const TerminalHook = {
   mounted() {
+    syncTerminalAriaDisabled(this.el)
     const theme = resolveTheme({
       explicitTheme: document.documentElement.dataset.theme,
       prefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -290,6 +292,7 @@ export const TerminalHook = {
   },
 
   updated() {
+    syncTerminalAriaDisabled(this.el)
     const nextSessionId = this.el.dataset.sessionId || null
     const nextActive = this.el.dataset.terminalActive === "true"
     const transition = transitionTerminalLifecycle({

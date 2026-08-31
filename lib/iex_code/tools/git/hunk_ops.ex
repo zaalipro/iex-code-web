@@ -151,7 +151,7 @@ defmodule IexCode.Tools.Git.HunkOps do
 
         case result do
           {:ok, _output} ->
-            fetch_updated_diff(project_root, file_path)
+            refresh_after_mutation(project_root, file_path, opts)
 
           {:error, reason} ->
             if staged? or is_map(Keyword.get(opts, :expected_identity)) or
@@ -449,25 +449,47 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp run_index_transaction(root, opts, effect) do
-    Git.with_index_transaction(root, fn git_opts ->
-      previous = Process.get(:iex_code_git_index_file)
-      index_file = git_opts |> Keyword.get(:env, []) |> List.keyfind("GIT_INDEX_FILE", 0)
-      if index_file, do: Process.put(:iex_code_git_index_file, elem(index_file, 1))
+    transaction_opts =
+      [
+        after_publish: &complete_index_transaction/1,
+        _publish_index: Keyword.get(opts, :_publish_index)
+      ]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
-      try do
-        case Keyword.get(opts, :before_index_transaction) do
-          fun when is_function(fun, 0) -> _ = fun.()
-          _ -> :ok
+    Git.with_index_transaction(
+      root,
+      fn git_opts ->
+        previous = Process.get(:iex_code_git_index_file)
+        index_file = git_opts |> Keyword.get(:env, []) |> List.keyfind("GIT_INDEX_FILE", 0)
+        if index_file, do: Process.put(:iex_code_git_index_file, elem(index_file, 1))
+
+        try do
+          case Keyword.get(opts, :before_index_transaction) do
+            fun when is_function(fun, 0) -> _ = fun.()
+            _ -> :ok
+          end
+
+          effect.(git_opts)
+        after
+          if previous,
+            do: Process.put(:iex_code_git_index_file, previous),
+            else: Process.delete(:iex_code_git_index_file)
         end
-
-        effect.(git_opts)
-      after
-        if previous,
-          do: Process.put(:iex_code_git_index_file, previous),
-          else: Process.delete(:iex_code_git_index_file)
-      end
-    end)
+      end,
+      transaction_opts
+    )
   end
+
+  defp complete_index_transaction({:ok, {:after_publish, effect, success}})
+       when is_function(effect, 0) do
+    case effect.() do
+      :ok -> {:ok, success}
+      {:ok, _} -> {:ok, success}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp complete_index_transaction(success), do: {:ok, success}
 
   defp maybe_before_worktree_effect(opts, operation)
        when operation in [:reject, :apply_to_file] do
@@ -497,41 +519,45 @@ defmodule IexCode.Tools.Git.HunkOps do
 
   defp exact_worktree_hunk_effect(root, path, selected_patch, opts) do
     authority = Keyword.fetch!(opts, :expected_authority)
-    scratch = scratch_index_path(root)
 
-    try do
-      with {:ok, index_path} <- repository_index_path(root),
-           :ok <- File.cp(index_path, scratch),
-           :ok <- File.chmod(scratch, 0o600),
-           {:ok, worktree_patch} <-
-             verified_effect_patch(
-               root,
-               path,
-               :unstaged,
-               Map.fetch!(authority, :unstaged_effect)
-             ),
-           scratch_opts = [env: [{"GIT_INDEX_FILE", scratch}]],
-           {:ok, _} <- Git.apply_patch(root, worktree_patch, [cached: true] ++ scratch_opts),
-           {:ok, full_patch} <-
-             build_full_context_hunk_patch(root, path, scratch, selected_patch, :reverse),
-           {:ok, output} <-
-             Git.apply_patch(root, full_patch,
-               reverse: false,
-               context: 2_147_483_647,
-               whitespace: "nowarn"
-             ) do
-        {:ok, output}
-      else
-        _ -> {:error, :stale_git_snapshot}
+    with {:ok, index_path} <- repository_index_path(root) do
+      scratch = scratch_index_path(index_path)
+
+      try do
+        with :ok <- File.cp(index_path, scratch),
+             :ok <- File.chmod(scratch, 0o600),
+             {:ok, worktree_patch} <-
+               verified_effect_patch(
+                 root,
+                 path,
+                 :unstaged,
+                 Map.fetch!(authority, :unstaged_effect)
+               ),
+             scratch_opts = [env: [{"GIT_INDEX_FILE", scratch}]],
+             {:ok, _} <- Git.apply_patch(root, worktree_patch, [cached: true] ++ scratch_opts),
+             {:ok, full_patch} <-
+               build_full_context_hunk_patch(root, path, scratch, selected_patch, :reverse),
+             {:ok, output} <-
+               Git.apply_patch(root, full_patch,
+                 reverse: false,
+                 context: 2_147_483_647,
+                 whitespace: "nowarn"
+               ) do
+          {:ok, output}
+        else
+          _ -> {:error, :stale_git_snapshot}
+        end
+      after
+        File.rm(scratch)
+        File.rm(scratch <> ".lock")
       end
-    after
-      File.rm(scratch)
-      File.rm(scratch <> ".lock")
+    else
+      _ -> {:error, :stale_git_snapshot}
     end
   end
 
   defp build_full_context_hunk_patch(root, path, base_index, selected_patch, direction) do
-    desired_index = scratch_index_path(root)
+    desired_index = scratch_index_path(base_index)
     base_opts = [env: [{"GIT_INDEX_FILE", base_index}]]
     desired_opts = [env: [{"GIT_INDEX_FILE", desired_index}]]
 
@@ -626,8 +652,11 @@ defmodule IexCode.Tools.Git.HunkOps do
     end
   end
 
-  defp scratch_index_path(root) do
-    Path.join(root, ".git/index.iex-hunk-#{System.unique_integer([:positive])}")
+  defp scratch_index_path(index_path) do
+    Path.join(
+      Path.dirname(index_path),
+      "index.iex-hunk-#{System.unique_integer([:positive])}"
+    )
   end
 
   defp do_revert_file_scope(project_root, file_path, scope, opts) do
@@ -691,8 +720,25 @@ defmodule IexCode.Tools.Git.HunkOps do
         :all when unstaged_bytes == 0 ->
           with {:ok, patch} <-
                  verified_effect_patch(project_root, file_path, :staged, staged_effect),
-               false <- patch == "" do
-            exact_reverse_apply(project_root, patch, [index: true] ++ git_opts)
+               false <- patch == "",
+               {:ok, original_bytes} <- File.read(Path.expand(file_path, project_root)),
+               {:ok, _output} <-
+                 Git.apply_patch(
+                   project_root,
+                   patch,
+                   [reverse: true, cached: true, whitespace: "nowarn"] ++ git_opts
+                 ) do
+            {:ok,
+             {:after_publish,
+              fn ->
+                perform_published_worktree_revert(
+                  project_root,
+                  file_path,
+                  patch,
+                  original_bytes,
+                  opts
+                )
+              end, :reverted}}
           else
             _ -> {:error, :unsupported_atomic_effect}
           end
@@ -719,6 +765,31 @@ defmodule IexCode.Tools.Git.HunkOps do
     case Git.apply_patch(root, patch, [reverse: true, whitespace: "nowarn"] ++ opts) do
       {:ok, _output} -> {:ok, :reverted}
       {:error, _reason} -> {:error, :stale_git_snapshot}
+    end
+  end
+
+  defp perform_published_worktree_revert(root, path, patch, original_bytes, opts) do
+    effect =
+      case Keyword.get(opts, :_worktree_effect) do
+        fun when is_function(fun, 0) -> fun.()
+        _ -> exact_reverse_apply(root, patch, [])
+      end
+
+    case effect do
+      :ok ->
+        :ok
+
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        case File.write(Path.expand(path, root), original_bytes) do
+          :ok ->
+            {:error, reason}
+
+          {:error, rollback_reason} ->
+            {:error, {:worktree_rollback_failed, reason, rollback_reason}}
+        end
     end
   end
 
@@ -1081,6 +1152,19 @@ defmodule IexCode.Tools.Git.HunkOps do
       {:ok, %{content: remaining_diff, truncated?: false}} -> {:ok, remaining_diff}
       {:ok, %{truncated?: true}} -> {:error, :diff_too_large}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp refresh_after_mutation(project_root, file_path, opts) do
+    result =
+      case Keyword.get(opts, :_fetch_updated_diff) do
+        fun when is_function(fun, 0) -> fun.()
+        _ -> fetch_updated_diff(project_root, file_path)
+      end
+
+    case result do
+      {:ok, diff} -> {:ok, diff}
+      {:error, _refresh_reason} -> {:ok, ""}
     end
   end
 

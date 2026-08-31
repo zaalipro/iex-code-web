@@ -177,7 +177,13 @@ defmodule IexCodeWeb.WorkspaceComponentsWorkbenchTest do
       """)
 
     document = LazyHTML.from_fragment(html)
-    hooks = LazyHTML.query(document, "[phx-hook='CodeCopy'][phx-update='ignore'][data-code]")
+
+    hooks =
+      LazyHTML.query(
+        document,
+        "[phx-hook='CodeCopy'][phx-update='ignore'][data-code][data-copy-label]"
+      )
+
     ids = Enum.flat_map(hooks, &(LazyHTML.attribute(&1, "id") || []))
 
     assert length(ids) == 4

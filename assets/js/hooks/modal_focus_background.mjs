@@ -1,10 +1,6 @@
 const owners = new WeakMap()
 
-export function modalBackgroundId(dialog) {
-  return dialog?.closest?.("[data-sheet-background-id]")?.dataset?.sheetBackgroundId || "workspace-shell"
-}
-
-export function acquireModalBackground(target, owner) {
+function acquire(target, owner) {
   if (!target || !owner) return null
   let record = owners.get(target)
   if (!record) {
@@ -22,7 +18,7 @@ export function acquireModalBackground(target, owner) {
   return record
 }
 
-export function releaseModalBackground(target, owner) {
+function release(target, owner) {
   const record = target && owners.get(target)
   if (!record) return
   record.owners.delete(owner)
@@ -31,6 +27,40 @@ export function releaseModalBackground(target, owner) {
   if (record.hasAriaHidden) target.setAttribute?.("aria-hidden", record.ariaHidden ?? "")
   else target.removeAttribute?.("aria-hidden")
   owners.delete(target)
+}
+
+export function acquireModalIsolation(dialog, owner, {root = dialog?.ownerDocument?.body} = {}) {
+  if (!dialog || !owner) return []
+  const targets = []
+  let branch = dialog
+  let parent = dialog.parentElement
+  while (parent) {
+    for (const sibling of Array.from(parent.children || [])) {
+      if (sibling === branch) continue
+      acquire(sibling, owner)
+      targets.push(sibling)
+    }
+    if (parent === root) break
+    branch = parent
+    parent = parent.parentElement
+  }
+  return targets
+}
+
+export function releaseModalIsolation(targets, owner) {
+  for (const target of targets || []) release(target, owner)
+}
+
+export function modalBackgroundId(dialog) {
+  return dialog?.closest?.("[data-sheet-background-id]")?.dataset?.sheetBackgroundId || "workspace-shell"
+}
+
+export function acquireModalBackground(target, owner) {
+  return acquire(target, owner)
+}
+
+export function releaseModalBackground(target, owner) {
+  release(target, owner)
 }
 
 export function topmostUsableModal(dialogs = []) {

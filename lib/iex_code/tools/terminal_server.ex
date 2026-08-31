@@ -1140,6 +1140,22 @@ defmodule IexCode.Tools.TerminalServer do
     end
   end
 
+  @doc false
+  def clear_if_user(session_id, adapter_generation) when is_binary(session_id) do
+    case whereis(session_id) do
+      nil -> {:error, :not_found}
+      _pid -> TerminalSession.clear_if_user(session_id, adapter_generation)
+    end
+  end
+
+  @doc false
+  def interrupt_if_user(session_id, adapter_generation) when is_binary(session_id) do
+    case whereis(session_id) do
+      nil -> {:error, :not_found}
+      _pid -> TerminalSession.interrupt_if_user(session_id, adapter_generation)
+    end
+  end
+
   @doc """
   Retrieves a full state inspection map from the running terminal session.
   """
@@ -1179,6 +1195,14 @@ defmodule IexCode.Tools.TerminalServer do
          {:ok, pid} <- TerminalSupervisor.start_session(session_id, merged_opts),
          :ok <- await_running(session_id, pid, 5_000) do
       {:ok, pid}
+    end
+  end
+
+  @doc false
+  def restart_if_user(session_id, adapter_generation, opts \\ []) when is_binary(session_id) do
+    case whereis(session_id) do
+      nil -> {:error, :not_found}
+      _pid -> TerminalSession.restart_if_user(session_id, adapter_generation, opts)
     end
   end
 

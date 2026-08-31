@@ -877,22 +877,29 @@ defmodule IexCode.Tools.Git do
   successful `{:ok, _}` result that alternate is atomically published over the
   official index; failures leave the official index untouched.
   """
-  @spec with_index_transaction(Path.t(), (keyword() -> term())) :: term()
-  def with_index_transaction(repo_dir, fun) when is_binary(repo_dir) and is_function(fun, 1) do
+  @spec with_index_transaction(Path.t(), (keyword() -> term()), keyword()) :: term()
+  def with_index_transaction(repo_dir, fun, opts \\ [])
+      when is_binary(repo_dir) and is_function(fun, 1) and is_list(opts) do
     with {:ok, git_dir_output} <- run_git(repo_dir, ["rev-parse", "--git-dir"]),
          git_dir <- Path.expand(String.trim(git_dir_output), repo_dir),
          lock_path <- Path.join(git_dir, "index.lock"),
          {:ok, lock_io} <- File.open(lock_path, [:write, :binary, :exclusive]) do
       index_path = Path.join(git_dir, "index")
       alternate = Path.join(git_dir, "index.iex-code-#{System.unique_integer([:positive])}")
+      original = alternate <> ".original"
 
       try do
         :ok = File.chmod(lock_path, 0o600)
 
         copy_result =
-          if File.regular?(index_path),
-            do: File.cp(index_path, alternate),
-            else: File.touch(alternate)
+          if File.regular?(index_path) do
+            with :ok <- File.cp(index_path, alternate),
+                 :ok <- File.cp(index_path, original) do
+              :ok
+            end
+          else
+            File.touch(alternate)
+          end
 
         case copy_result do
           :ok ->
@@ -904,8 +911,20 @@ defmodule IexCode.Tools.Git do
                 with {:ok, alternate_io} <- File.open(alternate, [:read, :binary]),
                      :ok <- :file.sync(alternate_io),
                      :ok <- File.close(alternate_io),
-                     :ok <- File.rename(alternate, index_path) do
-                  success
+                     :ok <- publish_index(alternate, index_path, opts) do
+                  case after_index_publish(success, opts) do
+                    {:ok, final_result} ->
+                      final_result
+
+                    {:error, reason} ->
+                      case restore_index(index_path, original) do
+                        :ok ->
+                          {:error, {:index_effect_failed, reason}}
+
+                        {:error, rollback_reason} ->
+                          {:error, {:index_rollback_failed, reason, rollback_reason}}
+                      end
+                  end
                 else
                   {:error, reason} -> {:error, {:index_publish_failed, reason}}
                 end
@@ -920,6 +939,7 @@ defmodule IexCode.Tools.Git do
       after
         File.close(lock_io)
         File.rm(alternate)
+        File.rm(original)
         File.rm(lock_path)
       end
     else
@@ -928,6 +948,24 @@ defmodule IexCode.Tools.Git do
       {:error, reason} -> {:error, reason}
       error -> error
     end
+  end
+
+  defp publish_index(alternate, index_path, opts) do
+    case Keyword.get(opts, :_publish_index) do
+      fun when is_function(fun, 2) -> fun.(alternate, index_path)
+      _ -> File.rename(alternate, index_path)
+    end
+  end
+
+  defp after_index_publish(success, opts) do
+    case Keyword.get(opts, :after_publish) do
+      fun when is_function(fun, 1) -> fun.(success)
+      _ -> {:ok, success}
+    end
+  end
+
+  defp restore_index(index_path, original) do
+    if File.regular?(original), do: File.rename(original, index_path), else: File.rm(index_path)
   end
 
   @doc """

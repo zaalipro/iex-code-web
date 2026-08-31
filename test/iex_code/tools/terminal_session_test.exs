@@ -503,6 +503,31 @@ defmodule IexCode.Tools.TerminalSessionTest do
   end
 
   describe "restart and process lifecycle" do
+    test "user lifecycle effects reject an agent that acquires ownership after confirmation", %{
+      session_id: session_id
+    } do
+      {:ok, pid} =
+        start_supervised({TerminalSession, [session_id: session_id, project_root: File.cwd!()]})
+
+      _ = :sys.get_state(pid)
+      {:ok, %{adapter_generation: generation}} = TerminalSession.get_state(session_id)
+      assert :ok = TerminalSession.send_input(session_id, "echo guarded-history\n")
+      assert {:ok, _output} = receive_matching_output(session_id, "guarded-history")
+      before = :sys.get_state(pid)
+      history = TerminalSession.get_history(session_id)
+      assert :ok = TerminalSession.set_occupant(session_id, {:agent, "race-agent", "race-op"})
+
+      assert {:error, :agent_occupied} = TerminalSession.clear_if_user(session_id, generation)
+      assert {:error, :agent_occupied} = TerminalSession.interrupt_if_user(session_id, generation)
+      assert {:error, :agent_occupied} = TerminalSession.restart_if_user(session_id, generation)
+      after_rejections = :sys.get_state(pid)
+      assert after_rejections.adapter_generation == generation
+      assert after_rejections.adapter.port == before.adapter.port
+      assert after_rejections.active_occupant == {:agent, "race-agent", "race-op"}
+      assert is_nil(after_rejections.pending_interrupt)
+      assert TerminalSession.get_history(session_id) == history
+    end
+
     test "restarts session with new shell process", %{session_id: session_id} do
       {:ok, pid} =
         start_supervised({TerminalSession, [session_id: session_id, project_root: File.cwd!()]})

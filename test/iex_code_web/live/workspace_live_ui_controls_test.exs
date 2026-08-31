@@ -290,7 +290,7 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       refute html =~ "Select AI Model"
     end
 
-    test "submits prompt from prompt bar and switches tab on slash commands", %{
+    test "submits /kanban through the composer and preserves /swarm durable routing", %{
       conn: conn,
       workspace_path: path
     } do
@@ -298,16 +298,22 @@ defmodule IexCodeWeb.WorkspaceLiveUIControlsTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # Submit regular prompt
-      html = render_submit(view, "submit_prompt", %{"prompt" => "Refactor payment service"})
-      assert is_binary(html)
+      view
+      |> form("#prompt-form", %{"prompt" => "/kanban"})
+      |> render_submit()
 
-      # Enter workbenches through the canonical route seam after the prompt submission.
-      render_click(view, "switch_tab", %{"tab" => "swarm"})
-      assert live_assigns(view).active_view == "swarm"
-
-      render_click(view, "switch_tab", %{"tab" => "kanban"})
+      assert_patch(view, "/sessions/#{session.id}?view=kanban")
       assert live_assigns(view).active_view == "kanban"
+      assert has_element?(view, "#instrument-workbench-kanban")
+
+      view
+      |> form("#prompt-form", %{"prompt" => "/swarm Audit durable ownership"})
+      |> render_submit()
+
+      assert Enum.any?(
+               IexCode.Runs.list_runs(session_id: session.id),
+               &(&1.kind == "coding_swarm")
+             )
     end
 
     test "navigates to SettingsLive and saves API configuration there",

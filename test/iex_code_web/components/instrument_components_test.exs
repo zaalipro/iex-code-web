@@ -436,6 +436,19 @@ defmodule IexCodeWeb.InstrumentComponentsTest do
     assert LazyHTML.text(document) =~ "Morning Session"
     assert LazyHTML.text(document) =~ "Connected"
     assert LazyHTML.query(document, "[aria-controls='connection-status']")
+
+    assert LazyHTML.query(
+             document,
+             "#mission-connection-status[data-state='connected']"
+           )
+
+    assert LazyHTML.query(document, "#mission-connection-indicator[data-state='connected']")
+
+    assert LazyHTML.query(
+             document,
+             "#mission-connection-mark[data-state='connected'][aria-hidden='true']"
+           )
+
     assert Enum.empty?(LazyHTML.query(document, "#connection-status"))
     assert Enum.empty?(LazyHTML.query(document, "[role='status']"))
     assert Enum.empty?(LazyHTML.query(document, "[aria-live]"))

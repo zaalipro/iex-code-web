@@ -1,5 +1,11 @@
+import {
+  acquireModalBackground,
+  acquireModalIsolation,
+  releaseModalBackground,
+  releaseModalIsolation
+} from "./modal_focus_background.mjs"
+
 const activeSheets = new Set()
-const backgroundOwners = new WeakMap()
 
 const focusableSelector = [
   "a[href]",
@@ -52,6 +58,8 @@ const ResponsiveSheet = {
     this.active = false
     this.background = null
     this.backgroundSnapshot = null
+    this.isolationTargets = []
+    this.desktopIsolation = false
     this.closeSent = false
     this.focusFrame = null
     this.returnFrame = null
@@ -82,7 +90,7 @@ const ResponsiveSheet = {
     const valid = nonblank(datasets.sheetCloseEvent) && nonblank(datasets.sheetReturnId) &&
       nonblank(datasets.sheetBackgroundId)
 
-    if (!mobile || !valid) {
+    if (!valid) {
       this.deactivate()
       return
     }
@@ -93,7 +101,18 @@ const ResponsiveSheet = {
       return
     }
 
-    if (this.active && this.background !== nextBackground) this.deactivate()
+    if (!mobile && datasets.sheetIsolateDesktop === "true") {
+      if (this.active || (this.desktopIsolation && this.background !== nextBackground)) this.deactivate()
+      if (!this.desktopIsolation) this.activateDesktopIsolation(nextBackground)
+      return
+    }
+
+    if (!mobile) {
+      this.deactivate()
+      return
+    }
+
+    if ((this.active || this.desktopIsolation) && this.background !== nextBackground) this.deactivate()
     if (this.active) return
 
     this.activate(nextBackground)
@@ -102,22 +121,7 @@ const ResponsiveSheet = {
   activate(background) {
     this.el?.__responsiveModalFocusCoordinator?.beforeMobileActivate?.()
     this.background = background
-    let record = backgroundOwners.get(background)
-    if (!record) {
-      record = {
-        owners: new Set(),
-        snapshot: {
-          inert: Boolean(background.inert),
-          hasAriaHidden: background.hasAttribute?.("aria-hidden") === true,
-          ariaHidden: background.getAttribute?.("aria-hidden")
-        }
-      }
-      backgroundOwners.set(background, record)
-    }
-    record.owners.add(this)
-    this.backgroundRecord = record
-    background.inert = true
-    background.setAttribute?.("aria-hidden", "true")
+    this.acquireIsolation(background)
     activeSheets.add(this)
     this.active = true
     if (this.dialogSemantics) {
@@ -135,10 +139,40 @@ const ResponsiveSheet = {
     })
   },
 
+  activateDesktopIsolation(background) {
+    this.background = background
+    this.desktopIsolation = true
+    this.acquireIsolation(background)
+  },
+
+  acquireIsolation(background) {
+    this.isolationTargets = this.el?.dataset?.modalIsolation === "siblings"
+      ? acquireModalIsolation(this.el, this)
+      : []
+    if (this.isolationTargets.length === 0) {
+      acquireModalBackground(background, this)
+      this.isolationTargets = [background]
+    }
+  },
+
+  releaseIsolation() {
+    if (this.isolationTargets.length === 1 && this.isolationTargets[0] === this.background && !this.el?.parentElement) {
+      releaseModalBackground(this.background, this)
+    } else {
+      releaseModalIsolation(this.isolationTargets, this)
+    }
+    this.isolationTargets = []
+    this.desktopIsolation = false
+  },
+
   deactivate() {
     if (!this.active) {
       cancelFrame(this, this.focusFrame)
       this.focusFrame = null
+      if (this.desktopIsolation) {
+        this.releaseIsolation()
+        this.background = null
+      }
       return
     }
     cancelFrame(this, this.focusFrame)
@@ -148,17 +182,7 @@ const ResponsiveSheet = {
     this.el?.removeAttribute?.("data-responsive-sheet-active")
     if (this.el?.dataset) delete this.el.dataset.responsiveSheetActive
     const background = this.background
-    const record = this.backgroundRecord || (background && backgroundOwners.get(background))
-    record?.owners.delete(this)
-    if (background && (!record || record.owners.size === 0)) {
-      background.inert = record?.snapshot.inert === true
-      if (record?.snapshot.hasAriaHidden) {
-        background.setAttribute?.("aria-hidden", record.snapshot.ariaHidden ?? "")
-      } else {
-        background.removeAttribute?.("aria-hidden")
-      }
-      if (record) backgroundOwners.delete(background)
-    }
+    this.releaseIsolation()
     this.active = false
     if (this.dialogSemantics) {
       const role = this.dialogSemanticsSnapshot?.role

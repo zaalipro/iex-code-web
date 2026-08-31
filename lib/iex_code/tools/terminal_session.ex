@@ -299,6 +299,16 @@ defmodule IexCode.Tools.TerminalSession do
     end
   end
 
+  @doc false
+  def clear_if_user(session_id, adapter_generation) when is_binary(session_id) do
+    guarded_user_call(session_id, {:clear_if_user, adapter_generation})
+  end
+
+  @doc false
+  def interrupt_if_user(session_id, adapter_generation) when is_binary(session_id) do
+    guarded_user_call(session_id, {:interrupt_if_user, adapter_generation})
+  end
+
   @doc """
   Updates the active occupant state (:user | {:agent, name, op_id}).
   """
@@ -353,6 +363,19 @@ defmodule IexCode.Tools.TerminalSession do
   def restart(session_id, opts \\ []) when is_binary(session_id) do
     try do
       GenServer.call(via_tuple(session_id), {:restart, opts})
+    catch
+      :exit, _ -> {:error, :not_found}
+    end
+  end
+
+  @doc false
+  def restart_if_user(session_id, adapter_generation, opts \\ []) when is_binary(session_id) do
+    guarded_user_call(session_id, {:restart_if_user, adapter_generation, opts})
+  end
+
+  defp guarded_user_call(session_id, request) do
+    try do
+      GenServer.call(via_tuple(session_id), request)
     catch
       :exit, _ -> {:error, :not_found}
     end
@@ -837,6 +860,22 @@ defmodule IexCode.Tools.TerminalSession do
   end
 
   @impl true
+  def handle_call({:clear_if_user, generation}, from, state) do
+    case authorize_user_effect(state, generation) do
+      :ok -> handle_call(:clear_history, from, state)
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:interrupt_if_user, generation}, from, state) do
+    case authorize_user_effect(state, generation) do
+      :ok -> handle_call({:send_signal, :sigint, [adapter_generation: generation]}, from, state)
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:set_occupant, occupant, opts}, _from, state) do
     if stale_adapter_generation?(state, opts) do
       {:reply, {:error, :stale_terminal_generation}, state}
@@ -973,6 +1012,14 @@ defmodule IexCode.Tools.TerminalSession do
         err_state = %{reset_state | status: :error, exit_reason: reason}
         broadcast_status(err_state)
         {:reply, {:error, reason}, err_state}
+    end
+  end
+
+  @impl true
+  def handle_call({:restart_if_user, generation, opts}, from, state) do
+    case authorize_user_effect(state, generation) do
+      :ok -> handle_call({:restart, opts}, from, state)
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -2406,4 +2453,12 @@ defmodule IexCode.Tools.TerminalSession do
 
   defp command_input_fingerprint(input),
     do: :crypto.hash(:sha256, input)
+
+  defp authorize_user_effect(state, generation) do
+    cond do
+      generation != state.adapter_generation -> {:error, :stale_terminal_generation}
+      state.active_occupant != :user -> {:error, :agent_occupied}
+      true -> :ok
+    end
+  end
 end

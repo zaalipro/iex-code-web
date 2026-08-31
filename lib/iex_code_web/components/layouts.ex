@@ -15,7 +15,7 @@ defmodule IexCodeWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <div class="min-h-screen w-full bg-[#0d1117] text-[#f0f6fc] font-sans antialiased overflow-hidden flex flex-col">
+    <div class="min-h-screen w-full bg-[var(--sf-canvas-deep)] text-[var(--sf-text-primary)] font-sans antialiased overflow-hidden flex flex-col">
       {render_slot(@inner_block)}
       <.flash_group flash={@flash} />
     </div>
@@ -25,12 +25,20 @@ defmodule IexCodeWeb.Layouts do
   @doc "Renders a CSRF-protected administrator sign-out control."
   attr :id, :string, required: true
   attr :class, :string, default: nil
+  attr :hidden, :boolean, default: false
 
   def logout_button(assigns) do
     assigns = assign(assigns, :logout_form, to_form(%{}, as: :logout))
 
     ~H"""
-    <.form for={@logout_form} id={@id} action={~p"/logout"} method="post" class={@class}>
+    <.form
+      for={@logout_form}
+      id={@id}
+      action={~p"/logout"}
+      method="post"
+      class={@class}
+      hidden={@hidden}
+    >
       <button
         id={"#{@id}-button"}
         type="submit"

@@ -14,7 +14,9 @@ import TaskMoveReturn from "./hooks/task_move_return_hook.mjs"
 import LocalTime from "./hooks/local_time_hook"
 import CalendarDeleteFocus from "./hooks/calendar_delete_focus_hook"
 import {createModalFocus} from "./hooks/modal_focus_hook"
-import {resolveCommandPaletteFocusTarget} from "./hooks/command_palette_focus_return.mjs"
+import {commandPaletteShouldRestoreFocus, resolveCommandPaletteFocusTarget} from "./hooks/command_palette_focus_return.mjs"
+import CodeCopy from "./hooks/code_copy_hook.mjs"
+import {updateConnectionStatus} from "./connection_status.mjs"
 // modalSheetReturnId(this.el) and restoreModalFocus({ remain shared ModalFocus teardown contracts.
 import {applyTheme, setSystemTheme, setTheme} from "./theme.mjs"
 
@@ -93,34 +95,7 @@ const Hooks = {
       })
     }
   },
-  CodeCopy: {
-    mounted() {
-      // Snapshot the full innerHTML (icon + label) so the "Copied!" feedback
-      // can be restored without destroying child elements such as SVG icons.
-      this.originalHTML = this.el.innerHTML
-      this.resetTimer = null
-      this.el.setAttribute("aria-live", "polite")
-      this.showCopyStatus = (message) => {
-        this.el.textContent = message
-        clearTimeout(this.resetTimer)
-        this.resetTimer = setTimeout(() => {
-          this.el.innerHTML = this.originalHTML
-        }, 2000)
-      }
-      this.el.addEventListener("click", async () => {
-        const text = this.el.getAttribute("data-code") || ""
-        try {
-          await navigator.clipboard.writeText(text)
-          this.showCopyStatus("Copied")
-        } catch (_error) {
-          this.showCopyStatus("Copy failed")
-        }
-      })
-    },
-    destroyed() {
-      clearTimeout(this.resetTimer)
-    }
-  },
+  CodeCopy,
   CommandPalette: {
     mounted() {
       this.lastFocusedElement = null
@@ -204,7 +179,7 @@ const Hooks = {
       const paletteIsOpen = this.paletteIsOpen()
 
       if (paletteIsOpen && !this.paletteWasOpen) this.rememberFocus()
-      if (!paletteIsOpen && this.paletteWasOpen) this.restoreFocus()
+      if (!paletteIsOpen && this.paletteWasOpen && commandPaletteShouldRestoreFocus(document)) this.restoreFocus()
 
       this.paletteWasOpen = paletteIsOpen
     },
@@ -288,24 +263,16 @@ topbar.config({barColors: {0: "#ff5e3a"}, shadowColor: "rgba(0, 0, 0, 0.3)"})
 window.addEventListener("phx:page-loading-start", (_info) => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", (_info) => topbar.hide())
 
-function updateConnectionStatus(connected, reason) {
-  const status = document.getElementById("connection-status")
-  if (status) {
-    status.hidden = connected
-    status.dataset.state = connected ? "connected" : "reconnecting"
-    status.dataset.reason = reason
-  }
-  document.body.classList.toggle("phx-disconnected", !connected)
-}
+const setConnectionStatus = (connected, reason) => updateConnectionStatus(document, connected, reason)
 
 // Track the underlying Phoenix socket with its supported channel callbacks.
-liveSocket.socket.onOpen(() => updateConnectionStatus(true, "socket-open"))
-liveSocket.socket.onClose(() => updateConnectionStatus(false, "socket-close"))
-liveSocket.socket.onError(() => updateConnectionStatus(false, "socket-error"))
-window.addEventListener("offline", () => updateConnectionStatus(false, "offline"))
+liveSocket.socket.onOpen(() => setConnectionStatus(true, "socket-open"))
+liveSocket.socket.onClose(() => setConnectionStatus(false, "socket-close"))
+liveSocket.socket.onError(() => setConnectionStatus(false, "socket-error"))
+window.addEventListener("offline", () => setConnectionStatus(false, "offline"))
 window.addEventListener("online", () => {
   const connected = liveSocket.socket.isConnected()
-  updateConnectionStatus(connected, connected ? "socket-open" : "online-waiting")
+  setConnectionStatus(connected, connected ? "socket-open" : "online-waiting")
 })
 
 liveSocket.connect()

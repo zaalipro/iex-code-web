@@ -542,6 +542,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
             phx-hook="CodeCopy"
             phx-update="ignore"
             data-code={@diff_text}
+            data-copy-label="Copy selected diff"
             aria-label="Copy selected diff"
             class="sf-control px-2.5 py-1 text-xs font-mono transition-smooth flex items-center gap-1.5"
           >
@@ -1152,6 +1153,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 phx-hook="CodeCopy"
                 phx-update="ignore"
                 data-code={@current_text}
+                data-copy-label={"Copy #{@selected_file} contents"}
                 aria-label={"Copy #{@selected_file} contents"}
                 title="Copy file contents"
                 type="button"
@@ -1750,6 +1752,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                       phx-hook="CodeCopy"
                       phx-update="ignore"
                       data-code={code}
+                      data-copy-label="Copy code block"
                       id={code_copy_id(@namespace, code_index, lang, code)}
                       class="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-[#21262d] hover:bg-gray-700 text-gray-300 transition-smooth"
                       title="Copy code"
@@ -2042,6 +2045,8 @@ defmodule IexCodeWeb.WorkspaceComponents do
             data-sheet-return-id="command-palette-trigger"
             data-sheet-background-id="workspace-shell"
             data-sheet-return-owner="controller"
+            data-sheet-isolate-desktop="true"
+            data-modal-isolation="siblings"
             phx-hook="ResponsiveSheet"
             class="sf-chassis relative z-10 flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden"
             phx-click-away="close_command_palette"
@@ -2120,7 +2125,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 </div>
               <% else %>
                 <%= if @view_rows != [] or @deck_rows != [] do %>
-                  <section aria-labelledby="switchboard-instruments-heading">
+                  <section role="group" aria-labelledby="switchboard-instruments-heading">
                     <h3
                       id="switchboard-instruments-heading"
                       class="sf-metadata mb-2 text-xs font-semibold uppercase tracking-[0.16em]"
@@ -2150,6 +2155,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                 <%= for {{group_id, label}, rows} <- @other_groups do %>
                   <section
                     id={"switchboard-group-#{group_id}"}
+                    role="group"
                     aria-labelledby={"switchboard-#{group_id}-heading"}
                     class="mt-5"
                   >
@@ -2176,6 +2182,11 @@ defmodule IexCodeWeb.WorkspaceComponents do
               <span>↑↓ navigate · enter select · esc close</span><span>Signal Foundry</span>
             </div>
           </div>
+          <IexCodeWeb.Layouts.logout_button
+            id="workspace-logout-form"
+            class="hidden"
+            hidden={true}
+          />
         </div>
       <% end %>
     </div>
@@ -2188,55 +2199,59 @@ defmodule IexCodeWeb.WorkspaceComponents do
 
   defp palette_option(%{item: %{category: :account}} = assigns) do
     ~H"""
-    <div
+    <button
       id={"palette-item-#{@index}"}
+      type="button"
       role="option"
       aria-selected={to_string(@selected)}
       tabindex="-1"
       data-palette-item-id={@item.id}
+      phx-click="command_palette_select_item"
+      phx-value-index={@index}
       class={[
-        "flex min-h-12 items-center rounded-xl border px-3 transition-colors",
+        "flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 text-left transition-colors",
         @selected && "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)]",
         !@selected && "border-transparent hover:bg-[var(--sf-raised-control)]"
       ]}
     >
-      <IexCodeWeb.Layouts.logout_button id="workspace-logout-form" class="w-full" />
-    </div>
+      <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)]"><.icon
+        name={@item.icon}
+        class="size-4"
+      /></span>
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-sm font-semibold">{@item.title}</span>
+        <span class="block truncate text-xs text-[var(--sf-text-secondary)]">{@item.subtitle}</span>
+      </span>
+    </button>
     """
   end
 
   defp palette_option(%{item: %{id: "new-session"}} = assigns) do
     ~H"""
-    <div
+    <button
       id={"palette-item-#{@index}"}
+      type="button"
       role="option"
       aria-selected={to_string(@selected)}
       tabindex="-1"
       data-palette-item-id={@item.id}
+      phx-click="command_palette_select_item"
+      phx-value-index={@index}
       class={[
-        "rounded-xl border transition-colors",
+        "flex min-h-11 w-full items-center gap-3 rounded-xl border px-3 py-2 text-left text-[var(--sf-text-primary)] transition-colors",
         @selected && "border-[var(--sf-live-mark)] bg-[var(--sf-raised-control)]",
         !@selected && "border-transparent hover:bg-[var(--sf-raised-control)]"
       ]}
     >
-      <button
-        id="new-session-btn"
-        type="button"
-        phx-click={
-          JS.push("command_palette_select_item", page_loading: true, value: %{index: @index})
-        }
-        class="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[var(--sf-text-primary)]"
-      >
-        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)]"><.icon
-          name={@item.icon}
-          class="size-4"
-        /></span>
-        <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-semibold">{@item.title}</span>
-          <span class="block truncate text-xs text-[var(--sf-text-secondary)]">{@item.subtitle}</span>
-        </span>
-      </button>
-    </div>
+      <span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--sf-hairline)] bg-[var(--sf-raised-control)] text-[var(--sf-text-secondary)]"><.icon
+        name={@item.icon}
+        class="size-4"
+      /></span>
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-sm font-semibold">{@item.title}</span>
+        <span class="block truncate text-xs text-[var(--sf-text-secondary)]">{@item.subtitle}</span>
+      </span>
+    </button>
     """
   end
 

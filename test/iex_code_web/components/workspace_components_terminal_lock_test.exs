@@ -22,7 +22,11 @@ defmodule IexCodeWeb.WorkspaceComponentsTerminalLockTest do
 
     refute html =~ "run:other"
 
-    assert LazyHTML.query(document, "#terminal-xterm-container[data-monitor-only='true']")
+    assert LazyHTML.query(
+             document,
+             "#terminal-xterm-container[data-monitor-only='true'][data-input-locked='true']"
+           )
+
     assert LazyHTML.query(document, "#btn-quick-test[disabled]")
     assert LazyHTML.query(document, "#btn-terminal-restart[disabled]")
     assert LazyHTML.query(document, "#btn-terminal-kill[disabled]")

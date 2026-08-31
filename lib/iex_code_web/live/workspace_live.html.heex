@@ -2042,6 +2042,7 @@
                           phx-hook="CodeCopy"
                           phx-update="ignore"
                           data-code={msg.content}
+                          data-copy-label={"Copy message ##{idx + 1}"}
                           aria-label={"Copy message ##{idx + 1}"}
                           class="sf-control min-h-11 min-w-11 justify-center p-2"
                           title="Copy to clipboard"
@@ -2080,6 +2081,7 @@
                     data-sheet-close-event="close_chat_jump_sheet"
                     data-sheet-return-id="chat-jump-to-message"
                     data-sheet-background-id="chat-viewport"
+                    data-modal-isolation="siblings"
                     class="sf-chat-jump-sheet sf-chassis fixed inset-x-0 bottom-0 z-50 max-h-[min(85dvh,42rem)] rounded-b-none"
                   >
                     <div class="flex items-center justify-between border-b border-[var(--sf-hairline)] p-4">
@@ -2303,6 +2305,7 @@
             data-sheet-close-event="close_task_drawer"
             data-sheet-return-id={"task-card-#{@selected_task.id}"}
             data-sheet-background-id="kanban-board"
+            data-modal-isolation="siblings"
             class={["sf-task-detail-drawer absolute inset-y-0 right-0 z-40 flex h-full w-full max-w-none flex-col overflow-y-auto border-l border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] shadow-[0_24px_72px_-38px_var(--sf-shadow)] transition-smooth animate-in slide-in-from-right"]}
           >
             <%!-- Drawer Header --%>
@@ -3240,6 +3243,7 @@
                 phx-hook="CodeCopy"
                 phx-update="ignore"
                 data-code={expanded_msg.content}
+                data-copy-label="Copy expanded message"
                 class="sf-control flex min-h-11 items-center gap-1.5 px-2.5 font-mono text-xs"
               >
                 <.icon name="hero-clipboard-document" class="w-3.5 h-3.5" />

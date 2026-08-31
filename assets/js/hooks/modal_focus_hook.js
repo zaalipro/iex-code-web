@@ -2,8 +2,10 @@ import {responsiveSheetOwnsFocus} from "./responsive_sheet_hook.mjs"
 import {modalSheetReturnId, restoreModalFocus} from "./modal_focus_return.mjs"
 import {
   acquireModalBackground,
+  acquireModalIsolation,
   modalBackgroundId,
   releaseModalBackground,
+  releaseModalIsolation,
   topmostUsableModal
 } from "./modal_focus_background.mjs"
 import {createResponsiveModalFocusCoordinator} from "./responsive_modal_focus.mjs"
@@ -27,7 +29,11 @@ export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
           : getLastInteractionTarget()?.isConnected ? getLastInteractionTarget() : null
         this.previouslyFocusedId = this.previouslyFocused?.id || null
         this.background = document.getElementById(modalBackgroundId(this.el))
-        acquireModalBackground(this.background, this)
+        this.isolationTargets = acquireModalIsolation(this.el, this)
+        if (this.isolationTargets.length === 0) {
+          acquireModalBackground(this.background, this)
+          this.isolationTargets = [this.background]
+        }
         this.focusableSelector = [
           "a[href]",
           "button:not([disabled])",
@@ -83,7 +89,12 @@ export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
         document.removeEventListener("keydown", this.handleKeyDown, true)
         cancelAnimationFrame(this.initialFocusFrame)
         this.initialFocusFrame = null
-        releaseModalBackground(this.background, this)
+        if (this.isolationTargets.length === 1 && this.isolationTargets[0] === this.background && !this.el?.parentElement) {
+          releaseModalBackground(this.background, this)
+        } else {
+          releaseModalIsolation(this.isolationTargets, this)
+        }
+        this.isolationTargets = []
         this.desktopOwned = false
       }
       this.coordinator = createResponsiveModalFocusCoordinator({

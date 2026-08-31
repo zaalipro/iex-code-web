@@ -1,6 +1,8 @@
 import {formatLocalTime} from "../local_time.mjs"
+import {syncLocalTime} from "./ignored_host_semantics.mjs"
 
 function renderLocalTime(hook) {
+  syncLocalTime(hook.el)
   try {
     const locale = navigator.languages?.[0] || navigator.language
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone

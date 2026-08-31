@@ -4224,24 +4224,32 @@ defmodule IexCodeWeb.WorkspaceLive do
   def handle_event("confirm_terminal_action", _params, socket) do
     case authorize_terminal_confirmation(socket) do
       {:ok, :clear_terminal_history, socket} ->
-        :ok = TerminalServer.clear(socket.assigns.session.id)
+        generation = socket.assigns.pending_terminal_confirmation.adapter_generation
 
-        {:noreply,
-         socket
-         |> assign(:pending_terminal_confirmation, nil)
-         |> assign(:terminal_output, "")
-         |> assign(:terminal_history, [])
-         |> assign(:terminal_active_cmd, nil)
-         |> rebuild_instrument_summaries()}
+        case TerminalServer.clear_if_user(socket.assigns.session.id, generation) do
+          :ok ->
+            {:noreply,
+             socket
+             |> assign(:pending_terminal_confirmation, nil)
+             |> assign(:terminal_output, "")
+             |> assign(:terminal_history, [])
+             |> assign(:terminal_active_cmd, nil)
+             |> rebuild_instrument_summaries()}
+
+          {:error, _reason} ->
+            {:noreply, assign(socket, :pending_terminal_confirmation, nil)}
+        end
 
       {:ok, :restart_terminal_session, socket} ->
+        generation = socket.assigns.pending_terminal_confirmation.adapter_generation
+
         opts = [
           workspace_path: socket.assigns.project.root_path,
           cols: socket.assigns.terminal_cols,
           rows: socket.assigns.terminal_rows
         ]
 
-        case TerminalServer.restart(socket.assigns.session.id, opts) do
+        case TerminalServer.restart_if_user(socket.assigns.session.id, generation, opts) do
           {:ok, _pid} ->
             :ok = TerminalSession.attach_viewer(socket.assigns.session.id, self())
 
@@ -4264,7 +4272,8 @@ defmodule IexCodeWeb.WorkspaceLive do
         end
 
       {:ok, :interrupt_terminal, socket} ->
-        result = TerminalServer.send_signal(socket.assigns.session.id, :sigint)
+        generation = socket.assigns.pending_terminal_confirmation.adapter_generation
+        result = TerminalServer.interrupt_if_user(socket.assigns.session.id, generation)
 
         socket =
           socket

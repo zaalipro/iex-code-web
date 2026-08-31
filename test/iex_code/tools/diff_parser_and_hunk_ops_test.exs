@@ -419,6 +419,66 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
       refute staged_diff =~ "line 28 MODIFIED"
     end
 
+    test "strict hunk operations work in a linked worktree", %{tmp_dir: tmp_dir} do
+      linked = Path.join(System.tmp_dir!(), "iex-linked-#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf(linked) end)
+      main_snapshot = git_snapshot(tmp_dir)
+
+      {_output, 0} =
+        System.cmd("git", ["worktree", "add", "--detach", linked, "HEAD"], cd: tmp_dir)
+
+      file = Path.join(linked, "lib/sample.txt")
+      original = File.read!(file)
+      File.write!(file, String.replace(original, "line 2\n", "line 2 LINKED\n"))
+      {:ok, diff} = Git.diff(linked)
+      {:ok, authority} = HunkOps.capture_authority(linked, "lib/sample.txt", :unstaged)
+      {:ok, [file_diff]} = DiffParser.parse(diff)
+      [hunk | _] = file_diff.hunks
+
+      binding =
+        HunkOps.hunk_binding(
+          :unstaged,
+          :stage,
+          "hunk-1",
+          DiffParser.format_hunk_patch(file_diff, hunk)
+        )
+
+      assert {:ok, _} =
+               HunkOps.accept_hunk(linked, "lib/sample.txt", "hunk-1",
+                 diff: diff,
+                 expected_authority: authority,
+                 expected_hunk: binding
+               )
+
+      assert {:ok, staged} = Git.diff(linked, staged: true)
+      assert staged =~ "LINKED"
+
+      {:ok, authority2} = HunkOps.capture_authority(linked, "lib/sample.txt", :staged)
+      {:ok, staged_diff} = Git.diff(linked, staged: true)
+      {:ok, [staged_file]} = DiffParser.parse(staged_diff)
+      [staged_hunk | _] = staged_file.hunks
+
+      binding2 =
+        HunkOps.hunk_binding(
+          :staged,
+          :unstage,
+          "hunk-1",
+          DiffParser.format_hunk_patch(staged_file, staged_hunk)
+        )
+
+      assert {:ok, _} =
+               HunkOps.unstage_hunk(linked, "lib/sample.txt", "hunk-1",
+                 diff: staged_diff,
+                 expected_authority: authority2,
+                 expected_hunk: binding2
+               )
+
+      assert {:ok, _} = HunkOps.reject_hunk(linked, "lib/sample.txt", "hunk-1")
+      assert File.read!(file) == original
+      assert {:ok, ""} = Git.diff(linked, staged: true)
+      assert git_snapshot(tmp_dir) == main_snapshot
+    end
+
     test "unstage_hunk denies staged rename before applying a partial patch", %{tmp_dir: tmp_dir} do
       original = Path.join(tmp_dir, "lib/sample.txt")
       renamed = Path.join(tmp_dir, "lib/renamed.txt")
@@ -803,6 +863,83 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
 
       {entry, 0} = System.cmd("git", ["ls-files", "--stage", "--", "lib/sample.txt"], cd: tmp_dir)
       assert entry =~ "100644"
+    end
+
+    test "strict all-layer staged-only revert rolls back on publication failure", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "staged publication\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :all)
+      before = git_snapshot(tmp_dir)
+      bytes = File.read!(file)
+
+      assert {:error, {:index_publish_failed, :forced_publication_failure}} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all,
+                 expected_identity: identity,
+                 expected_authority: authority,
+                 _publish_index: fn _alternate, _official ->
+                   {:error, :forced_publication_failure}
+                 end
+               )
+
+      assert File.read!(file) == bytes
+      assert git_snapshot(tmp_dir) == before
+    end
+
+    test "strict all-layer staged-only revert rolls back index and worktree on effect failure", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "staged effect\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :all)
+      before = git_snapshot(tmp_dir)
+      bytes = File.read!(file)
+
+      assert {:error, {:index_effect_failed, :forced_effect_failure}} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all,
+                 expected_identity: identity,
+                 expected_authority: authority,
+                 _worktree_effect: fn -> {:error, :forced_effect_failure} end
+               )
+
+      assert File.read!(file) == bytes
+      assert git_snapshot(tmp_dir) == before
+    end
+
+    test "successful strict unstage is not reported as failed when diff refresh fails", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "line 1\nline 2 STAGED\nline 3\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, diff} = Git.diff(tmp_dir, staged: true)
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :staged)
+      {:ok, [file_diff]} = DiffParser.parse(diff)
+      [hunk | _] = file_diff.hunks
+
+      binding =
+        HunkOps.hunk_binding(
+          :staged,
+          :unstage,
+          "hunk-1",
+          DiffParser.format_hunk_patch(file_diff, hunk)
+        )
+
+      assert {:ok, ""} =
+               HunkOps.unstage_hunk(tmp_dir, "lib/sample.txt", "hunk-1",
+                 diff: diff,
+                 expected_authority: authority,
+                 expected_hunk: binding,
+                 _fetch_updated_diff: fn -> {:error, :forced_refresh_failure} end
+               )
+
+      assert {:ok, ""} = Git.diff(tmp_dir, staged: true)
+      assert File.read!(file) =~ "STAGED"
     end
 
     test "strict worktree hunk effect rejects a distant edit after final comparison", %{

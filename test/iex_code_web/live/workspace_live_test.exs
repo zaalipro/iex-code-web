@@ -90,7 +90,7 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     render_click(view, "toggle_command_palette", %{"category" => "sessions"})
 
     view
-    |> element("button#new-session-btn")
+    |> element("button[data-palette-item-id='new-session'][role='option']")
     |> render_click()
 
     assert render(view) =~ "Coding Session 2"

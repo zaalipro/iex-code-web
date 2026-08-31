@@ -1,6 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {resolveCommandPaletteFocusTarget} from "./command_palette_focus_return.mjs"
+import {
+  commandPaletteShouldRestoreFocus,
+  resolveCommandPaletteFocusTarget
+} from "./command_palette_focus_return.mjs"
 
 test("command palette focus return keeps a connected prior opener", () => {
   const opener = {isConnected: true}
@@ -30,4 +33,9 @@ test("command palette focus return is null when no fallback exists", () => {
   const document = {getElementById: () => null}
 
   assert.equal(resolveCommandPaletteFocusTarget({document}), null)
+})
+
+test("command palette does not restore its opener during a modal handoff", () => {
+  assert.equal(commandPaletteShouldRestoreFocus({querySelector: () => ({id: "new-modal"})}), false)
+  assert.equal(commandPaletteShouldRestoreFocus({querySelector: () => null}), true)
 })

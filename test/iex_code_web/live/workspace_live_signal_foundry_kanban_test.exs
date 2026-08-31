@@ -288,7 +288,7 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryKanbanTest do
 
     assert has_element?(
              view,
-             "aside#task-detail-drawer[phx-hook='ResponsiveSheet'][data-sheet-dialog='true'][aria-labelledby='task-detail-title'][tabindex='-1'][data-sheet-close-event='close_task_drawer'][data-sheet-return-id='task-card-#{task.id}'][data-sheet-background-id='kanban-board']"
+             "aside#task-detail-drawer[phx-hook='ResponsiveSheet'][data-sheet-dialog='true'][aria-labelledby='task-detail-title'][tabindex='-1'][data-sheet-close-event='close_task_drawer'][data-sheet-return-id='task-card-#{task.id}'][data-sheet-background-id='kanban-board'][data-modal-isolation='siblings']"
            )
 
     refute has_element?(view, "#task-detail-drawer[aria-modal='true']")

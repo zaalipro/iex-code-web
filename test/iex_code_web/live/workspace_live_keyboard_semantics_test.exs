@@ -219,7 +219,7 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
 
     assert has_element?(
              view,
-             "#chat-jump-sheet[phx-hook='ResponsiveSheet'][role='dialog'][aria-modal='true'][aria-labelledby='chat-jump-sheet-title'][tabindex='-1'][data-sheet-close-event='close_chat_jump_sheet'][data-sheet-return-id='chat-jump-to-message'][data-sheet-background-id='chat-viewport']"
+             "#chat-jump-sheet[phx-hook='ResponsiveSheet'][role='dialog'][aria-modal='true'][aria-labelledby='chat-jump-sheet-title'][tabindex='-1'][data-sheet-close-event='close_chat_jump_sheet'][data-sheet-return-id='chat-jump-to-message'][data-sheet-background-id='chat-viewport'][data-modal-isolation='siblings']"
            )
 
     assert has_element?(view, "#chat-jump-sheet-title", "Jump to message")
