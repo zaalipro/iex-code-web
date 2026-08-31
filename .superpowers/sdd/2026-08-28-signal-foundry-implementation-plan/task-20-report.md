@@ -96,3 +96,13 @@ mise exec -- mix test test/iex_code_web/signal_foundry_static_contract_test.exs 
 Additional source/build gates passed: `mix assets.build`, `mix compile`, scoped `mix format --check-formatted`, and `git diff --check`. The pre-existing failures in legacy assertions for diff/file component text remain outside this focused round.
 
 Task 15 low-level limitations remain parked and unchanged. Task 20 still does not run `mix precommit` or Ego Lite/browser checks; those gates remain with Tasks 21–22.
+
+## Fix Round 2
+
+Base: `b39f0a7105dce39925955eb72a2e280d6eb4fe02`
+
+- **RED:** the focused Mission Control render found four `role="progressbar"` nodes and verified none had a nonblank accessible name.
+- **GREEN:** every Swarm meter now exposes the stable agent-specific name `<AgentName> telemetry progress` while retaining its truthful value/min/max attributes.
+- **Verification:** workbench and static contracts passed (`12 tests, 0 failures`); scoped format and `git diff --check` passed.
+
+No other production behavior, Task 15 disposition, precommit gate, or browser gate changed.

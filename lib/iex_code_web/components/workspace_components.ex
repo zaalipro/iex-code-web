@@ -171,6 +171,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
             <div
               class="sf-swarm-progress"
               role="progressbar"
+              aria-label={"#{agent.name} telemetry progress"}
               aria-valuenow={progress}
               aria-valuemin="0"
               aria-valuemax="100"

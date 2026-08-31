@@ -150,6 +150,16 @@ defmodule IexCodeWeb.WorkspaceComponentsWorkbenchTest do
 
     refute Enum.any?(classes, &Regex.match?(~r/text-\[(?:10|11)px\]/i, &1))
     assert Enum.any?(classes, &(&1 == "sf-instrument"))
+
+    progressbars = LazyHTML.query(document, "[role='progressbar']")
+    assert Enum.count(progressbars) == 4
+
+    assert Enum.all?(progressbars, fn progressbar ->
+             case LazyHTML.attribute(progressbar, "aria-label") do
+               [label] -> String.trim(label) != ""
+               _missing -> false
+             end
+           end)
   end
 
   test "repeated identical code blocks keep unique caller-scoped CodeCopy hook IDs" do
