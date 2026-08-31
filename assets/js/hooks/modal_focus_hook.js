@@ -2,9 +2,11 @@ import {responsiveSheetOwnsFocus} from "./responsive_sheet_hook.mjs"
 import {modalSheetReturnId, restoreModalFocus} from "./modal_focus_return.mjs"
 import {
   acquireModalBackground,
+  acquireModalExposure,
   acquireModalIsolation,
   modalBackgroundId,
   releaseModalBackground,
+  releaseModalExposure,
   releaseModalIsolation,
   topmostUsableModal
 } from "./modal_focus_background.mjs"
@@ -29,6 +31,7 @@ export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
           : getLastInteractionTarget()?.isConnected ? getLastInteractionTarget() : null
         this.previouslyFocusedId = this.previouslyFocused?.id || null
         this.background = document.getElementById(modalBackgroundId(this.el))
+        this.exposureTargets = acquireModalExposure(this.el, this)
         this.isolationTargets = acquireModalIsolation(this.el, this)
         if (this.isolationTargets.length === 0) {
           acquireModalBackground(this.background, this)
@@ -94,6 +97,8 @@ export function createModalFocus({getLastInteractionTarget = () => null} = {}) {
         } else {
           releaseModalIsolation(this.isolationTargets, this)
         }
+        releaseModalExposure(this.exposureTargets, this)
+        this.exposureTargets = []
         this.isolationTargets = []
         this.desktopOwned = false
       }

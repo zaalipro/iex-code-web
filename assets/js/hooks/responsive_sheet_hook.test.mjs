@@ -221,6 +221,49 @@ test("desktop command palette isolates the full application background", () => {
   assert.equal(h.background.getAttribute("aria-hidden"), null)
 })
 
+test("updated reasserts desktop isolation after a LiveView patch strips owned attributes", () => {
+  const h = setup({mobile: false, isolateDesktop: true, fullIsolation: true})
+  h.hook.mounted()
+
+  h.background.inert = false
+  h.background.removeAttribute("aria-hidden")
+  h.trigger.inert = false
+  h.trigger.removeAttribute("aria-hidden")
+  h.hook.updated()
+
+  for (const target of [h.background, h.trigger]) {
+    assert.equal(target.inert, true, `${target.id} inert`)
+    assert.equal(target.getAttribute("aria-hidden"), "true", `${target.id} aria-hidden`)
+  }
+
+  h.hook.destroyed()
+  for (const target of [h.background, h.trigger]) {
+    assert.equal(target.inert, false, `${target.id} restored inert`)
+    assert.equal(target.getAttribute("aria-hidden"), null, `${target.id} restored aria-hidden`)
+  }
+})
+
+test("updated reconciles replacement isolation targets without leaking old ownership", () => {
+  const h = setup({mobile: false, isolateDesktop: true, fullIsolation: true})
+  h.hook.mounted()
+  const replacement = new FakeElement("goal-modal-wrapper")
+  replacement.setAttribute("aria-hidden", "server-state")
+  replacement.parentElement = h.root
+  replacement.setOwnerDocument(h.document)
+  h.root.children[h.root.children.indexOf(h.trigger)] = replacement
+
+  h.hook.updated()
+
+  assert.equal(h.trigger.inert, false)
+  assert.equal(h.trigger.getAttribute("aria-hidden"), null)
+  assert.equal(replacement.inert, true)
+  assert.equal(replacement.getAttribute("aria-hidden"), "true")
+
+  h.hook.destroyed()
+  assert.equal(replacement.inert, false)
+  assert.equal(replacement.getAttribute("aria-hidden"), "server-state")
+})
+
 test("639 to 640 and 640 to 639 expose exact sheet ownership boundaries", () => {
   const mobile = setup({viewportWidth: 639})
   mobile.hook.mounted()
@@ -390,6 +433,71 @@ test("mobile cancellation restores the full workspace shell and initiating delet
   assert.equal(effectivelyInert(h.missionControl), false)
   h.flushFrames()
   assert.deepEqual(h.trigger.focusCalls, [{preventScroll: true}])
+})
+
+test("mobile sibling isolation survives a LiveView patch and returns the exact nested trigger", () => {
+  const h = setup({mobile: true, confirmationTopology: true, fullIsolation: true})
+  h.hook.mounted()
+  h.flushFrames()
+
+  h.background.inert = false
+  h.background.removeAttribute("aria-hidden")
+  h.hook.updated()
+
+  assert.equal(h.background.inert, true)
+  assert.equal(h.background.getAttribute("aria-hidden"), "true")
+  assert.equal(effectivelyInert(h.trigger), true)
+  assert.equal(effectivelyAriaHidden(h.trigger), true)
+
+  h.document.emit("keydown", {key: "Escape"})
+  h.hook.destroyed()
+  assert.equal(effectivelyInert(h.trigger), false)
+  assert.equal(effectivelyAriaHidden(h.trigger), false)
+  h.flushFrames()
+
+  assert.deepEqual(h.pushed, [["close_sheet", {}]])
+  assert.deepEqual(h.trigger.focusCalls, [{preventScroll: true}])
+  assert.equal(h.document.activeElement, h.trigger)
+})
+
+test("nested mobile sheet remains exposed across its underlying sheet update and hands ownership back", () => {
+  const h = setup({mobile: true, fullIsolation: true})
+  h.hook.mounted()
+
+  const confirmation = new FakeElement("task-delete-confirmation", {dataset: {
+    sheetCloseEvent: "cancel_task_delete",
+    sheetReturnId: "open-sheet",
+    sheetBackgroundId: "workspace-shell"
+  }})
+  const confirmationButton = new FakeElement("confirm-task-delete")
+  confirmationButton.focusable = true
+  confirmation.append(confirmationButton)
+  h.root.append(confirmation)
+  confirmation.setOwnerDocument(h.document)
+
+  const confirmationHook = Object.create(ResponsiveSheet)
+  confirmationHook.el = confirmation
+  confirmationHook.pushEvent = () => {}
+  confirmationHook.mounted()
+  h.hook.updated()
+
+  assert.equal(effectivelyInert(confirmationButton), false)
+  assert.equal(effectivelyAriaHidden(confirmationButton), false)
+  assert.equal(h.background.inert, true)
+
+  confirmationHook.destroyed()
+  assert.equal(confirmation.inert, true)
+  assert.equal(confirmation.getAttribute("aria-hidden"), "true")
+
+  h.root.children = h.root.children.filter(child => child !== confirmation)
+  confirmation.parentElement = null
+  h.hook.updated()
+  assert.equal(confirmation.inert, false)
+  assert.equal(confirmation.getAttribute("aria-hidden"), null)
+
+  h.hook.destroyed()
+  assert.equal(h.background.inert, false)
+  assert.equal(h.background.getAttribute("aria-hidden"), null)
 })
 
 test("mobile success reads the updated stable return ID before teardown", () => {

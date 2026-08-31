@@ -1,7 +1,9 @@
 import {
   acquireModalBackground,
+  acquireModalExposure,
   acquireModalIsolation,
   releaseModalBackground,
+  releaseModalExposure,
   releaseModalIsolation
 } from "./modal_focus_background.mjs"
 
@@ -58,6 +60,7 @@ const ResponsiveSheet = {
     this.active = false
     this.background = null
     this.backgroundSnapshot = null
+    this.exposureTargets = []
     this.isolationTargets = []
     this.desktopIsolation = false
     this.closeSent = false
@@ -103,7 +106,8 @@ const ResponsiveSheet = {
 
     if (!mobile && datasets.sheetIsolateDesktop === "true") {
       if (this.active || (this.desktopIsolation && this.background !== nextBackground)) this.deactivate()
-      if (!this.desktopIsolation) this.activateDesktopIsolation(nextBackground)
+      if (this.desktopIsolation) this.refreshIsolation(nextBackground)
+      else this.activateDesktopIsolation(nextBackground)
       return
     }
 
@@ -113,7 +117,10 @@ const ResponsiveSheet = {
     }
 
     if ((this.active || this.desktopIsolation) && this.background !== nextBackground) this.deactivate()
-    if (this.active) return
+    if (this.active) {
+      this.refreshIsolation(nextBackground)
+      return
+    }
 
     this.activate(nextBackground)
   },
@@ -146,13 +153,38 @@ const ResponsiveSheet = {
   },
 
   acquireIsolation(background) {
-    this.isolationTargets = this.el?.dataset?.modalIsolation === "siblings"
+    this.exposureTargets = acquireModalExposure(this.el, this)
+    const targets = this.el?.dataset?.modalIsolation === "siblings"
       ? acquireModalIsolation(this.el, this)
       : []
-    if (this.isolationTargets.length === 0) {
+    if (targets.length === 0) {
       acquireModalBackground(background, this)
-      this.isolationTargets = [background]
+      targets.push(background)
     }
+    this.isolationTargets = targets
+  },
+
+  refreshIsolation(background) {
+    const previousExposureTargets = this.exposureTargets
+    const exposureTargets = acquireModalExposure(this.el, this)
+    const previousTargets = this.isolationTargets
+    const targets = this.el?.dataset?.modalIsolation === "siblings"
+      ? acquireModalIsolation(this.el, this)
+      : []
+    if (targets.length === 0) {
+      acquireModalBackground(background, this)
+      targets.push(background)
+    }
+
+    const retainedExposureTargets = new Set(exposureTargets)
+    releaseModalExposure(
+      previousExposureTargets.filter(target => !retainedExposureTargets.has(target)),
+      this
+    )
+    const retainedTargets = new Set(targets)
+    releaseModalIsolation(previousTargets.filter(target => !retainedTargets.has(target)), this)
+    this.exposureTargets = exposureTargets
+    this.isolationTargets = targets
   },
 
   releaseIsolation() {
@@ -161,6 +193,8 @@ const ResponsiveSheet = {
     } else {
       releaseModalIsolation(this.isolationTargets, this)
     }
+    releaseModalExposure(this.exposureTargets, this)
+    this.exposureTargets = []
     this.isolationTargets = []
     this.desktopIsolation = false
   },
