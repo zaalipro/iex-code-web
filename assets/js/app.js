@@ -99,6 +99,7 @@ const Hooks = {
   CommandPalette: {
     mounted() {
       this.lastFocusedElement = null
+      this.openingModal = null
       this.paletteWasOpen = this.paletteIsOpen()
 
       this.handleKeyDown = (e) => {
@@ -179,13 +180,24 @@ const Hooks = {
       const paletteIsOpen = this.paletteIsOpen()
 
       if (paletteIsOpen && !this.paletteWasOpen) this.rememberFocus()
-      if (!paletteIsOpen && this.paletteWasOpen && commandPaletteShouldRestoreFocus(document)) this.restoreFocus()
+      if (!paletteIsOpen && this.paletteWasOpen) {
+        if (commandPaletteShouldRestoreFocus({
+          document,
+          previouslyFocused: this.lastFocusedElement,
+          openingModal: this.openingModal
+        })) this.restoreFocus()
+        else this.forgetFocus()
+      }
 
       this.paletteWasOpen = paletteIsOpen
     },
     destroyed() {
       window.removeEventListener("keydown", this.handleKeyDown)
-      if (this.paletteWasOpen) this.restoreFocus()
+      if (this.paletteWasOpen && commandPaletteShouldRestoreFocus({
+        document,
+        previouslyFocused: this.lastFocusedElement,
+        openingModal: this.openingModal
+      })) this.restoreFocus()
     },
     paletteDialog() {
       return document.getElementById("command-palette-dialog")
@@ -204,15 +216,20 @@ const Hooks = {
         (!dialog || !dialog.contains(activeElement))
       ) {
         this.lastFocusedElement = activeElement
+        this.openingModal = activeElement.closest?.("[data-modal-focus]") || null
       }
     },
     restoreFocus() {
       const element = this.lastFocusedElement
-      this.lastFocusedElement = null
+      this.forgetFocus()
 
       requestAnimationFrame(() => {
         resolveCommandPaletteFocusTarget({document, previouslyFocused: element})?.focus()
       })
+    },
+    forgetFocus() {
+      this.lastFocusedElement = null
+      this.openingModal = null
     },
     trapFocus(event, dialog) {
       const focusable = Array.from(dialog.querySelectorAll(

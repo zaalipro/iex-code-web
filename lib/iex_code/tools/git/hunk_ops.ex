@@ -722,7 +722,7 @@ defmodule IexCode.Tools.Git.HunkOps do
                  verified_effect_patch(project_root, file_path, :staged, staged_effect),
                false <- patch == "",
                {:ok, worktree_snapshot} <-
-                 capture_worktree_snapshot(Path.expand(file_path, project_root)),
+                 capture_worktree_snapshot(project_root, file_path),
                {:ok, _output} <-
                  Git.apply_patch(
                    project_root,
@@ -770,11 +770,7 @@ defmodule IexCode.Tools.Git.HunkOps do
   end
 
   defp perform_published_worktree_revert(root, path, patch, worktree_snapshot, opts) do
-    effect =
-      case Keyword.get(opts, :_worktree_effect) do
-        fun when is_function(fun, 0) -> fun.()
-        _ -> exact_reverse_apply(root, patch, [])
-      end
+    effect = invoke_worktree_effect(root, patch, opts)
 
     case effect do
       :ok ->
@@ -784,7 +780,7 @@ defmodule IexCode.Tools.Git.HunkOps do
         :ok
 
       {:error, reason} ->
-        case restore_worktree_snapshot(Path.expand(path, root), worktree_snapshot) do
+        case restore_worktree_snapshot(root, path, worktree_snapshot) do
           :ok ->
             {:error, reason}
 
@@ -794,17 +790,133 @@ defmodule IexCode.Tools.Git.HunkOps do
     end
   end
 
-  defp capture_worktree_snapshot(path) do
-    case File.read(path) do
-      {:ok, bytes} -> {:ok, {:present, bytes}}
-      {:error, :enoent} -> {:ok, :absent}
-      {:error, reason} -> {:error, reason}
+  defp invoke_worktree_effect(root, patch, opts) do
+    try do
+      case Keyword.get(opts, :_worktree_effect) do
+        fun when is_function(fun, 0) -> fun.()
+        _ -> exact_reverse_apply(root, patch, [])
+      end
+    rescue
+      error -> {:error, {:raised, error.__struct__, Exception.message(error)}}
+    catch
+      kind, reason -> {:error, {kind, reason}}
     end
   end
 
-  defp restore_worktree_snapshot(path, {:present, bytes}), do: File.write(path, bytes)
+  defp capture_worktree_snapshot(root, path) do
+    case WorkspaceIdentity.capture(root, path,
+           max_bytes: 2 * 1_024 * 1_024,
+           return_content: true
+         ) do
+      {:ok, %{missing?: true, ancestors: ancestors}} ->
+        {:ok, %{state: :absent, ancestors: ancestors}}
 
-  defp restore_worktree_snapshot(path, :absent) do
+      {:ok, %{type: :regular, content: bytes, mode: mode, ancestors: ancestors}}
+      when is_binary(bytes) and is_integer(mode) ->
+        {:ok,
+         %{
+           state: :present,
+           bytes: bytes,
+           mode: Bitwise.band(mode, 0o7777),
+           ancestors: ancestors
+         }}
+
+      {:ok, _unsupported} ->
+        {:error, :unsupported_worktree_snapshot}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp restore_worktree_snapshot(root, path, snapshot) do
+    with :ok <- validate_snapshot_ancestors(root, path, snapshot.ancestors) do
+      case snapshot do
+        %{state: :present, bytes: bytes, mode: mode} ->
+          atomic_replace_regular(Path.join(root, path), bytes, mode)
+
+        %{state: :absent} ->
+          remove_lexical_path(Path.join(root, path))
+      end
+    end
+  end
+
+  defp validate_snapshot_ancestors(root, path, expected) do
+    components = path |> Path.split() |> Enum.drop(-1)
+
+    current =
+      components
+      |> Enum.with_index(1)
+      |> Enum.reduce_while({:ok, root, []}, fn {_component, count}, {:ok, _parent, entries} ->
+        ancestor = Path.join([root | Enum.take(components, count)])
+
+        case File.lstat(ancestor) do
+          {:ok, %{type: :symlink}} ->
+            {:halt, {:error, :symlink_ancestor}}
+
+          {:ok, stat} ->
+            entry =
+              {Path.relative_to(ancestor, root), stat.type, stat.mode, stat.size, stat.mtime,
+               stat.ctime, stat.inode, stat.major_device, stat.minor_device}
+
+            {:cont, {:ok, ancestor, [entry | entries]}}
+
+          {:error, reason} ->
+            {:halt, {:error, reason}}
+        end
+      end)
+
+    case current do
+      {:ok, _parent, entries} ->
+        current_identities = entries |> Enum.reverse() |> Enum.map(&stable_ancestor_identity/1)
+        expected_identities = Enum.map(expected, &stable_ancestor_identity/1)
+
+        if current_identities == expected_identities,
+          do: :ok,
+          else: {:error, :ancestor_identity_changed}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp stable_ancestor_identity(
+         {path, type, mode, _size, _mtime, _ctime, inode, major_device, minor_device}
+       ),
+       do: {path, type, mode, inode, major_device, minor_device}
+
+  defp stable_ancestor_identity(other), do: other
+
+  defp atomic_replace_regular(path, bytes, mode) do
+    temp =
+      Path.join(
+        Path.dirname(path),
+        ".#{Path.basename(path)}.iex-rollback-#{System.unique_integer([:positive, :monotonic])}"
+      )
+
+    try do
+      with {:ok, io} <- File.open(temp, [:write, :binary, :exclusive]) do
+        write_result =
+          with :ok <- IO.binwrite(io, bytes),
+               :ok <- File.chmod(temp, mode),
+               :ok <- :file.sync(io) do
+            :ok
+          end
+
+        close_result = File.close(io)
+
+        with :ok <- write_result,
+             :ok <- close_result,
+             :ok <- File.rename(temp, path) do
+          :ok
+        end
+      end
+    after
+      File.rm(temp)
+    end
+  end
+
+  defp remove_lexical_path(path) do
     case File.rm(path) do
       :ok -> :ok
       {:error, :enoent} -> :ok

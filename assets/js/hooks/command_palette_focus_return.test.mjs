@@ -35,7 +35,32 @@ test("command palette focus return is null when no fallback exists", () => {
   assert.equal(resolveCommandPaletteFocusTarget({document}), null)
 })
 
-test("command palette does not restore its opener during a modal handoff", () => {
-  assert.equal(commandPaletteShouldRestoreFocus({querySelector: () => ({id: "new-modal"})}), false)
-  assert.equal(commandPaletteShouldRestoreFocus({querySelector: () => null}), true)
+test("command palette distinguishes replacement modal handoff from dismissal to an existing modal", () => {
+  const opener = {isConnected: true}
+  const existingModal = {isConnected: true, contains: element => element === opener}
+  const replacementModal = {isConnected: true, contains: () => false}
+
+  assert.equal(commandPaletteShouldRestoreFocus({
+    document: {querySelectorAll: () => [existingModal]},
+    previouslyFocused: opener,
+    openingModal: existingModal
+  }), true)
+
+  assert.equal(commandPaletteShouldRestoreFocus({
+    document: {querySelectorAll: () => [replacementModal]},
+    previouslyFocused: opener,
+    openingModal: null
+  }), false)
+
+  assert.equal(commandPaletteShouldRestoreFocus({
+    document: {querySelectorAll: () => [existingModal, replacementModal]},
+    previouslyFocused: opener,
+    openingModal: existingModal
+  }), false)
+
+  assert.equal(commandPaletteShouldRestoreFocus({
+    document: {querySelectorAll: () => []},
+    previouslyFocused: opener,
+    openingModal: null
+  }), true)
 })

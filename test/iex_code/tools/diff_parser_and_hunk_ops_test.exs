@@ -473,7 +473,26 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
                  expected_hunk: binding2
                )
 
-      assert {:ok, _} = HunkOps.reject_hunk(linked, "lib/sample.txt", "hunk-1")
+      {:ok, authority3} = HunkOps.capture_authority(linked, "lib/sample.txt", :unstaged)
+      {:ok, unstaged_diff} = Git.diff(linked)
+      {:ok, [unstaged_file]} = DiffParser.parse(unstaged_diff)
+      [unstaged_hunk | _] = unstaged_file.hunks
+
+      binding3 =
+        HunkOps.hunk_binding(
+          :unstaged,
+          :reject,
+          "hunk-1",
+          DiffParser.format_hunk_patch(unstaged_file, unstaged_hunk)
+        )
+
+      assert {:ok, _} =
+               HunkOps.reject_hunk(linked, "lib/sample.txt", "hunk-1",
+                 diff: unstaged_diff,
+                 expected_authority: authority3,
+                 expected_hunk: binding3
+               )
+
       assert File.read!(file) == original
       assert {:ok, ""} = Git.diff(linked, staged: true)
       assert git_snapshot(tmp_dir) == main_snapshot
@@ -926,6 +945,80 @@ defmodule IexCode.Tools.DiffParserAndHunkOpsTest do
                  expected_identity: identity,
                  expected_authority: authority,
                  _worktree_effect: fn -> {:error, :forced_effect_failure} end
+               )
+
+      assert File.read!(file) == bytes
+      assert git_snapshot(tmp_dir) == before
+    end
+
+    test "strict all-layer rollback never follows a swapped final symlink", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+
+      external =
+        Path.join(System.tmp_dir!(), "iex-external-#{System.unique_integer([:positive])}.txt")
+
+      on_exit(fn -> File.rm(external) end)
+      File.write!(external, "external-safe\n")
+      File.write!(file, "staged symlink rollback\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :all)
+      before = git_snapshot(tmp_dir)
+
+      assert {:error, {:index_effect_failed, _reason}} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all,
+                 expected_identity: identity,
+                 expected_authority: authority,
+                 _worktree_effect: fn ->
+                   File.rm!(file)
+                   File.ln_s!(external, file)
+                   {:error, :forced_effect_failure}
+                 end
+               )
+
+      assert File.read!(external) == "external-safe\n"
+      assert git_snapshot(tmp_dir) == before
+    end
+
+    test "strict all-layer rollback restores the original regular-file mode", %{tmp_dir: tmp_dir} do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "staged mode rollback\n")
+      File.chmod!(file, 0o600)
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :all)
+      before = git_snapshot(tmp_dir)
+
+      assert {:error, {:index_effect_failed, _reason}} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all,
+                 expected_identity: identity,
+                 expected_authority: authority,
+                 _worktree_effect: fn ->
+                   File.chmod!(file, 0o777)
+                   {:error, :forced_effect_failure}
+                 end
+               )
+
+      assert Bitwise.band(File.stat!(file).mode, 0o777) == 0o600
+      assert git_snapshot(tmp_dir) == before
+    end
+
+    test "strict all-layer rollback catches exceptional effects and restores the index", %{
+      tmp_dir: tmp_dir
+    } do
+      file = Path.join(tmp_dir, "lib/sample.txt")
+      File.write!(file, "staged exceptional rollback\n")
+      assert :ok = Git.stage("lib/sample.txt", tmp_dir)
+      {:ok, identity} = IexCode.WorkspaceIdentity.capture(tmp_dir, "lib/sample.txt")
+      {:ok, authority} = HunkOps.capture_authority(tmp_dir, "lib/sample.txt", :all)
+      before = git_snapshot(tmp_dir)
+      bytes = File.read!(file)
+
+      assert {:error, {:index_effect_failed, _reason}} =
+               HunkOps.revert_file(tmp_dir, "lib/sample.txt", :all,
+                 expected_identity: identity,
+                 expected_authority: authority,
+                 _worktree_effect: fn -> raise "forced exceptional effect" end
                )
 
       assert File.read!(file) == bytes

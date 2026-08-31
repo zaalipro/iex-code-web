@@ -912,7 +912,7 @@ defmodule IexCode.Tools.Git do
                      :ok <- :file.sync(alternate_io),
                      :ok <- File.close(alternate_io),
                      :ok <- publish_index(alternate, index_path, opts) do
-                  case after_index_publish(success, opts) do
+                  case safely_after_index_publish(success, opts) do
                     {:ok, final_result} ->
                       final_result
 
@@ -961,6 +961,16 @@ defmodule IexCode.Tools.Git do
     case Keyword.get(opts, :after_publish) do
       fun when is_function(fun, 1) -> fun.(success)
       _ -> {:ok, success}
+    end
+  end
+
+  defp safely_after_index_publish(success, opts) do
+    try do
+      after_index_publish(success, opts)
+    rescue
+      error -> {:error, {:raised, error.__struct__, Exception.message(error)}}
+    catch
+      kind, reason -> {:error, {kind, reason}}
     end
   end
 
