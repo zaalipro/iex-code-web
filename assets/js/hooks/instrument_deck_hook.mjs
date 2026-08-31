@@ -11,6 +11,8 @@ const SURFACES = new Set([
 
 const LAST_INSTRUMENT_PREFIX = "iexcode:last-instrument:"
 const DECK_STATE_PREFIX = "iexcode:deck-state:"
+const RESTORE_SCROLL_TOLERANCE = 2
+const RESTORE_FRAME_LIMIT = 4
 
 const closedSurface = value => typeof value === "string" && SURFACES.has(value)
 const cardId = surface => `instrument-card-${surface}`
@@ -168,6 +170,8 @@ export const createInstrumentDeckHook = (provided = {}) => ({
     this.pendingPopState = null
     this.popRestorePending = false
     this.restoreFrame = null
+    this.restoreFramesRemaining = 0
+    this.restoreFocusOrigin = null
 
     this.handleClick = event => this.captureClick(event)
     this.handlePageLoadingStart = event => this.capturePageLoading(event)
@@ -198,7 +202,11 @@ export const createInstrumentDeckHook = (provided = {}) => ({
 
     if (
       nextView === "deck" &&
-      (contextChanged || previousView !== "deck" || this.popRestorePending)
+      (
+        contextChanged ||
+        previousView !== "deck" ||
+        (this.popRestorePending && this.restoreFrame === null)
+      )
     ) {
       this.scheduleRestore()
     }
@@ -216,6 +224,8 @@ export const createInstrumentDeckHook = (provided = {}) => ({
       this.runtime?.cancelAnimationFrame?.(this.restoreFrame)
       this.restoreFrame = null
     }
+    this.restoreFramesRemaining = 0
+    this.restoreFocusOrigin = null
   },
 
   syncContext() {
@@ -342,6 +352,12 @@ export const createInstrumentDeckHook = (provided = {}) => ({
     if (this.restoreFrame !== null) this.runtime.cancelAnimationFrame?.(this.restoreFrame)
     if (typeof this.runtime.requestAnimationFrame !== "function") return
 
+    this.restoreFramesRemaining = RESTORE_FRAME_LIMIT
+    this.restoreFocusOrigin = this.runtime.document?.activeElement || null
+    this.queueRestoreFrame()
+  },
+
+  queueRestoreFrame() {
     this.restoreFrame = this.runtime.requestAnimationFrame(() => {
       this.restoreFrame = null
       this.restoreDeck()
@@ -359,17 +375,30 @@ export const createInstrumentDeckHook = (provided = {}) => ({
 
     scroller.scrollTop = saved.scrollTop
 
-    let focusTarget = null
-    if (saved.focusedInstrumentId) {
-      const candidate = this.el?.querySelector?.(`#${saved.focusedInstrumentId}`)
-      if (visible(candidate)) focusTarget = candidate
+    this.restoreFramesRemaining -= 1
+    if (
+      Math.abs(scroller.scrollTop - saved.scrollTop) > RESTORE_SCROLL_TOLERANCE &&
+      this.restoreFramesRemaining > 0
+    ) {
+      this.queueRestoreFrame()
+      return false
     }
-    focusTarget ||= this.el?.querySelector?.("#instrument-deck-heading")
-    if (!visible(focusTarget)) focusTarget = scroller
-    focusTarget?.focus?.({preventScroll: true})
+
+    if ((this.runtime.document?.activeElement || null) === this.restoreFocusOrigin) {
+      let focusTarget = null
+      if (saved.focusedInstrumentId) {
+        const candidate = this.el?.querySelector?.(`#${saved.focusedInstrumentId}`)
+        if (visible(candidate)) focusTarget = candidate
+      }
+      focusTarget ||= this.el?.querySelector?.("#instrument-deck-heading")
+      if (!visible(focusTarget)) focusTarget = scroller
+      focusTarget?.focus?.({preventScroll: true})
+    }
 
     this.pendingPopState = null
     this.popRestorePending = false
+    this.restoreFramesRemaining = 0
+    this.restoreFocusOrigin = null
     if (
       this.deckStateKey &&
       this.previousDeckStateKey &&

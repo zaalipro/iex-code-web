@@ -317,6 +317,36 @@ test("popstate validates target history after a project/session dataset change",
   assert.deepEqual(h.order.at(-1), ["focus", "instrument-card-calendar", {preventScroll: true}])
 })
 
+test("Back restoration keeps its queued frame through intervening deck render updates", () => {
+  const key = "iexcode:deck-state:project-1:session-1"
+  const h = setup({
+    activeView: "terminal",
+    includeDeck: false,
+    stored: {[key]: state(22, "instrument-card-chat")}
+  })
+  h.hook.mounted()
+  h.window.emit("popstate", {state: {iexcodeDeckState: {
+    storageKey: key,
+    scrollTop: 1_839,
+    focusedInstrumentId: "instrument-card-terminal",
+    capturedAt: 7
+  }}})
+  h.shell.dataset.activeView = "deck"
+  h.shell.append(h.deck)
+  h.hook.updated()
+  const queuedFrameId = [...h.frames.keys()][0]
+
+  h.hook.updated()
+  h.hook.updated()
+  h.hook.updated()
+
+  assert.deepEqual(h.cancelled, [])
+  assert.deepEqual([...h.frames.keys()], [queuedFrameId])
+  h.flushFrame()
+  assert.equal(h.deck.scrollTop, 1_839)
+  assert.deepEqual(h.order.at(-1), ["focus", "instrument-card-terminal", {preventScroll: true}])
+})
+
 test("restoration scrolls before focus and falls back card to heading then scroller", () => {
   const key = "iexcode:deck-state:project-1:session-1"
   const h = setup({stored: {[key]: state(44, "instrument-card-files")}})
@@ -345,6 +375,77 @@ test("restoration scrolls before focus and falls back card to heading then scrol
   h.hook.updated()
   h.flushFrame()
   assert.deepEqual(h.order.at(-1), ["focus", "instrument-deck", {preventScroll: true}])
+})
+
+test("narrow workbench return waits for responsive scroll range before restoring scroll and focus", () => {
+  const key = "iexcode:deck-state:project-1:session-1"
+  const h = setup({
+    activeView: "terminal",
+    includeDeck: false,
+    stored: {[key]: state(1_839, "instrument-card-terminal")}
+  })
+  let scrollTop = 0
+  let maxScrollTop = 0
+
+  Object.defineProperties(h.deck, {
+    clientHeight: {get() { return 482 }},
+    scrollHeight: {get() { return 482 + maxScrollTop }},
+    scrollTop: {
+      get() { return scrollTop },
+      set(value) { scrollTop = Math.min(Math.max(value, 0), maxScrollTop) }
+    }
+  })
+
+  h.hook.mounted()
+  h.shell.dataset.activeView = "deck"
+  h.shell.append(h.deck)
+  h.hook.updated()
+  h.flushFrame()
+
+  assert.equal(h.deck.scrollTop, 0)
+  assert.equal(h.order.some(entry => entry[0] === "focus"), false)
+  assert.equal(h.frames.size, 1)
+
+  maxScrollTop = 1_839
+  h.flushFrame()
+
+  assert.equal(h.deck.scrollTop, 1_839)
+  assert.deepEqual(h.order.at(-1), ["focus", "instrument-card-terminal", {preventScroll: true}])
+})
+
+test("responsive scroll retry does not steal focus acquired after the deck transition", () => {
+  const key = "iexcode:deck-state:project-1:session-1"
+  const h = setup({
+    activeView: "terminal",
+    includeDeck: false,
+    stored: {[key]: state(1_839, "instrument-card-terminal")}
+  })
+  let scrollTop = 0
+  let maxScrollTop = 0
+
+  Object.defineProperties(h.deck, {
+    clientHeight: {get() { return 482 }},
+    scrollHeight: {get() { return 482 + maxScrollTop }},
+    scrollTop: {
+      get() { return scrollTop },
+      set(value) { scrollTop = Math.min(Math.max(value, 0), maxScrollTop) }
+    }
+  })
+
+  h.hook.mounted()
+  h.shell.dataset.activeView = "deck"
+  h.shell.append(h.deck)
+  h.hook.updated()
+  h.flushFrame()
+
+  const newMission = new FakeElement("new-mission-button")
+  h.shell.append(newMission)
+  h.document.activeElement = newMission
+  maxScrollTop = 1_839
+  h.flushFrame()
+
+  assert.equal(h.deck.scrollTop, 1_839)
+  assert.equal(h.order.some(entry => entry[0] === "focus"), false)
 })
 
 test("malformed saved state sanitizes scroll/focus independently and rejects invalid timestamps", () => {
