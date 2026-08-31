@@ -22,7 +22,7 @@ defmodule IexCodeWeb.Challenger2M3StressTest do
 
       # Switch to swarm tab to view subagent cards
       view
-      |> element("button[phx-value-tab='swarm']")
+      |> element("#instrument-card-swarm")
       |> render_click()
 
       agents = [
@@ -168,12 +168,11 @@ defmodule IexCodeWeb.Challenger2M3StressTest do
       # Execute 70 rapid tab switches
       for _cycle <- 1..10 do
         for tab <- tabs do
-          html =
-            view
-            |> element("button[phx-value-tab='#{tab}']")
-            |> render_click()
+          html = render_patch(view, "/sessions/#{session.id}?view=#{tab}")
 
           assert is_binary(html)
+          assert has_element?(view, "#workspace-shell[data-active-view='#{tab}']")
+          assert has_element?(view, "#instrument-workbench-#{tab}")
         end
       end
 
@@ -236,7 +235,7 @@ defmodule IexCodeWeb.Challenger2M3StressTest do
 
       # Switch to terminal tab
       view
-      |> element("button[phx-value-tab='terminal']")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Run 5 commands in rapid sequence, awaiting each command's exit marker
@@ -269,9 +268,15 @@ defmodule IexCodeWeb.Challenger2M3StressTest do
       assert html =~ "quick_2"
 
       # Clear terminal
-      html = render_click(view, "clear_terminal")
-      refute html =~ "BURST_TEST_LINE_1"
-      refute html =~ "quick_1"
+      render_click(view, "clear_terminal")
+      assert has_element?(view, "#terminal-clear-confirmation")
+      render_click(view, "confirm_terminal_action", %{})
+      _ = :sys.get_state(view.pid)
+
+      refute has_element?(view, "#terminal-clear-confirmation")
+      refute has_element?(view, "[id^='terminal-command-trace-']")
+      assert has_element?(view, "#instrument-workbench-terminal-status", "No command yet")
+      assert has_element?(view, "#btn-terminal-replay[disabled]")
     end
   end
 
@@ -309,7 +314,7 @@ defmodule IexCodeWeb.Challenger2M3StressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("button[phx-value-tab='swarm']")
+      |> element("#instrument-card-swarm")
       |> render_click()
 
       # Expand all operations from top to bottom
@@ -361,7 +366,7 @@ defmodule IexCodeWeb.Challenger2M3StressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("button[phx-value-tab='swarm']")
+      |> element("#instrument-card-swarm")
       |> render_click()
 
       # Expand root
@@ -402,7 +407,7 @@ defmodule IexCodeWeb.Challenger2M3StressTest do
 
       # Switch to changes tab
       view
-      |> element("button[phx-value-tab='changes']")
+      |> element("#instrument-card-changes")
       |> render_click()
 
       # Test component rendering with massive diff

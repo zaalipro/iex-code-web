@@ -5,6 +5,7 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
 
   alias IexCode.{Sessions, Kanban}
   alias IexCode.Engine.OperationManager
+  alias IexCode.Tools.TerminalServer
 
   # ============================================================================
   # 1. Rapid-Fire Button Clicks, Multi-Dropdown Floods & Tab Switching
@@ -186,7 +187,11 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
 
       # 7. Revert buffer 4
       render_click(view, "select_file", %{"path" => "lib/worker_4.ex"})
-      render_click(view, "revert_file_buffer", %{})
+      assert has_element?(view, "#file-buffer-revert-trigger")
+      view |> element("#file-buffer-revert-trigger") |> render_click()
+      assert has_element?(view, "#file-buffer-revert-confirmation-dialog[role='dialog']")
+      view |> element("#confirm-file-confirmation", "Revert changes") |> render_click()
+      assert has_element?(view, "#files-buffer-signal", "Saved")
       disk_content_4 = File.read!(Path.join(path, "lib/worker_4.ex"))
       assert disk_content_4 =~ "def original_val, do: 4"
 
@@ -212,7 +217,7 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
 
       # Save when no buffer is active -> harmless no-op
       render_click(view, "save_file", %{"content" => "orphaned text"})
-      render_click(view, "revert_file_buffer", %{})
+      refute has_element?(view, "#file-buffer-revert-trigger")
       assert Process.alive?(view.pid)
     end
   end
@@ -290,7 +295,9 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      render_click(view, "switch_tab", %{"tab" => "terminal"})
+      view |> element("#instrument-card-terminal") |> render_click()
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "session:#{session.id}:terminal")
+      wait_for_terminal_running(session.id)
 
       # 1. Empty and whitespace command handling
       render_click(view, "run_terminal_command", %{"command" => ""})
@@ -305,8 +312,8 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
         "true || false",
         "echo -n 'no newline'",
         "printf 'formatted %s %d\\n' output 42",
-        "exit 0",
-        "exit 2",
+        "sh -c 'exit 0'",
+        "sh -c 'exit 2'",
         "echo 'unicode test: 🚀 🐝 ⚡'",
         "head -n 2 mix.exs",
         "echo 'multi-flag' -a -b -c",
@@ -325,17 +332,48 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
         assert is_binary(html)
       end
 
+      wait_for_terminal_idle(session.id)
+
       # 3. Replay terminal command
-      html_replay = render_click(view, "replay_terminal_command", %{})
-      assert is_binary(html_replay)
+      view |> element("#btn-terminal-replay:not([disabled])") |> render_click()
 
-      # 4. Stop terminal command
-      html_stop = render_click(view, "stop_terminal_command", %{})
-      assert html_stop =~ "Terminal command stopped" or html_stop =~ "Command Interrupted"
+      wait_for_terminal_idle(session.id)
 
-      # 5. Clear terminal
-      html_cleared = render_click(view, "clear_terminal", %{})
-      refute html_cleared =~ "TEST_METASYMBOL_1"
+      # 4. Interrupt a real foreground process through the visible, confirmed control.
+      view
+      |> form("#terminal-form", %{"command" => "sleep 30"})
+      |> render_submit()
+
+      assert has_element?(view, "#btn-terminal-kill:not([disabled])", "Interrupt")
+      view |> element("#btn-terminal-kill") |> render_click()
+
+      assert has_element?(
+               view,
+               "#terminal-interrupt-confirmation-dialog[role='dialog'][aria-modal='true']",
+               "Interrupt the foreground process?"
+             )
+
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+
+      assert_receive {:terminal_command_completed,
+                      %{
+                        session_id: interrupted_session_id,
+                        command: "sleep 30",
+                        exit_code: exit_code
+                      }},
+                     5_000
+
+      assert interrupted_session_id == session.id
+      assert exit_code != 0
+      assert {:ok, %{active_command_id: nil}} = TerminalServer.get_state(session.id)
+
+      # 5. Clear terminal through its destructive-action confirmation.
+      view |> element("#btn-terminal-clear") |> render_click()
+      assert has_element?(view, "#terminal-clear-confirmation-dialog[role='dialog']")
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+      assert {:ok, %{command_history: []}} = TerminalServer.get_state(session.id)
+      assert has_element?(view, "#btn-terminal-replay[disabled]")
+      refute has_element?(view, "[id^='terminal-command-trace-']")
 
       assert Process.alive?(view.pid)
     end
@@ -543,6 +581,54 @@ defmodule IexCodeWeb.AdversarialUiStressTest do
       assert assigns.session_tokens >= 0
       assert length(assigns.messages) >= 100
       assert Process.alive?(view.pid)
+    end
+  end
+
+  defp wait_for_terminal_running(session_id),
+    do: wait_for_terminal_state(session_id, &(&1.status == :running), "to start", 10_000)
+
+  defp wait_for_terminal_idle(session_id),
+    do:
+      wait_for_terminal_state(
+        session_id,
+        &(is_nil(&1.active_command_id) and &1.queued_command_count == 0),
+        "command queue to drain",
+        30_000
+      )
+
+  defp wait_for_terminal_state(session_id, match?, description, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_terminal_state(session_id, match?, description, deadline)
+  end
+
+  defp do_wait_for_terminal_state(session_id, match?, description, deadline) do
+    state = TerminalServer.get_state(session_id)
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    ready? =
+      case state do
+        {:ok, terminal_state} -> match?.(terminal_state)
+        _ -> false
+      end
+
+    cond do
+      ready? ->
+        :ok
+
+      remaining <= 0 ->
+        flunk("timed out waiting for terminal #{description}: #{inspect(state)}")
+
+      true ->
+        receive do
+          {:terminal_status, %{session_id: ^session_id}} ->
+            do_wait_for_terminal_state(session_id, match?, description, deadline)
+
+          {:terminal_command_completed, %{session_id: ^session_id}} ->
+            do_wait_for_terminal_state(session_id, match?, description, deadline)
+        after
+          min(50, remaining) ->
+            do_wait_for_terminal_state(session_id, match?, description, deadline)
+        end
     end
   end
 end

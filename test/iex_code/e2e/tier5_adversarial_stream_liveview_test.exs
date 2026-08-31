@@ -335,15 +335,42 @@ defmodule IexCode.E2E.Tier5AdversarialStreamLiveviewTest do
         {:terminal_output, session.id, "STDOUT: multi-mount sync"}
       )
 
-      # Verify all 3 views receive updates and render cleanly
-      assert render(view1) =~ "STDOUT: multi-mount sync"
-      assert render(view2) =~ "STDOUT: multi-mount sync"
-      assert render(view3) =~ "STDOUT: multi-mount sync"
+      # xterm owns visible output. Verify every mount receives the server push instead of
+      # expecting terminal bytes to be visible on the Instrument Deck.
+      for view <- [view1, view2, view3] do
+        _ = :sys.get_state(view.pid)
+        assert_push_event(view, "terminal_output", %{data: "STDOUT: multi-mount sync"})
+      end
 
-      # Execute actions from different mounts concurrently
-      render_hook(view1, "switch_tab", %{"tab" => "swarm"})
-      render_hook(view2, "switch_tab", %{"tab" => "terminal"})
-      render_hook(view3, "switch_tab", %{"tab" => "kanban"})
+      # Execute canonical Instrument Deck actions from different mounts.
+      view1 |> element("#instrument-card-swarm") |> render_click()
+      view2 |> element("#instrument-card-terminal") |> render_click()
+      view3 |> element("#instrument-card-kanban") |> render_click()
+
+      # The hidden server-rendered buffer hydrates xterm after navigation and remains
+      # available under inactive Terminal Scope hosts.
+      assert has_element?(
+               view1,
+               "#instrument-workbench-terminal[hidden] #terminal-rendered-output.hidden",
+               "STDOUT: multi-mount sync"
+             )
+
+      assert has_element?(
+               view2,
+               "#terminal-xterm-container[phx-hook='TerminalHook'][data-terminal-active='true']"
+             )
+
+      assert has_element?(
+               view2,
+               "#terminal-rendered-output.hidden",
+               "STDOUT: multi-mount sync"
+             )
+
+      assert has_element?(
+               view3,
+               "#instrument-workbench-terminal[hidden] #terminal-rendered-output.hidden",
+               "STDOUT: multi-mount sync"
+             )
 
       assert Process.alive?(view1.pid)
       assert Process.alive?(view2.pid)

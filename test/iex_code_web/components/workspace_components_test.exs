@@ -225,13 +225,19 @@ defmodule IexCodeWeb.WorkspaceComponentsTest do
         <.diff_viewer diff_text={@diff_text} diff_mode={@diff_mode} file_path={@file_path} />
         """)
 
-      assert html =~ "lib/calc.ex"
-      assert html =~ "bg-emerald-950/40"
-      assert html =~ "bg-rose-950/40"
-      assert html =~ "text-emerald-300"
-      assert html =~ "text-rose-300"
-      assert html =~ "def add(a, b), do: a + b"
-      assert html =~ "def add(a, b), do: a - b"
+      document = LazyHTML.from_fragment(html)
+
+      assert Enum.count(LazyHTML.query(document, "#diff-viewer-container")) == 1
+      assert LazyHTML.text(document) =~ "lib/calc.ex"
+      assert html =~ "border-[var(--sf-success-text)]"
+      assert html =~ "bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)]"
+      assert html =~ "text-[var(--sf-success-text)]"
+      assert html =~ "border-[var(--sf-live-mark)]"
+      assert html =~ "bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)]"
+      assert html =~ "text-[var(--sf-live-text)]"
+      refute html =~ "emerald"
+      assert LazyHTML.text(document) =~ "def add(a, b), do: a + b"
+      assert LazyHTML.text(document) =~ "def add(a, b), do: a - b"
     end
 
     test "renders side-by-side split diff mode" do
@@ -276,10 +282,18 @@ defmodule IexCodeWeb.WorkspaceComponentsTest do
         />
         """)
 
-      assert html =~ "1 files"
-      assert html =~ "lib/engine.ex"
-      refute html =~ "lib/app.ex"
-      assert html =~ "Select a workspace file on the left to preview contents"
+      document = LazyHTML.from_fragment(html)
+
+      retained_count =
+        document
+        |> LazyHTML.query("#file-filter-form + div > span")
+        |> LazyHTML.text()
+        |> String.trim()
+
+      assert retained_count == "1 retained matches"
+      assert LazyHTML.text(document) =~ "lib/engine.ex"
+      refute LazyHTML.text(document) =~ "lib/app.ex"
+      assert LazyHTML.text(document) =~ "Select a workspace file on the left to preview contents"
     end
 
     test "renders selected file content and copy button" do

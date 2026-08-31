@@ -110,10 +110,14 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       view
       |> render_hook("filter_files", %{"filter" => "deep_mod"})
 
-      # In filtered view, matching files are displayed directly
-      rendered = render(view)
-      assert rendered =~ "deep_mod.ex"
-      assert rendered =~ "1 files"
+      # In filtered view, the retained match is displayed directly and the
+      # File Atlas reports the bounded result count.
+      assert has_element?(
+               view,
+               "#file-tree-list button[phx-click='select_file'][phx-value-path='lib/demo/deep/nested/deep_mod.ex']"
+             )
+
+      assert has_element?(view, "#file-tree-panel", "1 retained matches")
 
       # Clear filter
       view
@@ -139,9 +143,9 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       |> element("#instrument-card-files")
       |> render_click()
 
-      rendered = render(view)
-      assert rendered =~ "0 files"
-      assert rendered =~ "Select a workspace file on the left"
+      assert has_element?(view, "#file-tree-panel", "0 files indexed")
+      assert has_element?(view, "#file-tree-empty", "No files discovered.")
+      assert has_element?(view, "#file-editor-empty", "Select a workspace file on the left")
     end
   end
 
@@ -165,16 +169,16 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       view
       |> render_hook("select_file", %{"path" => "lib/demo/sample.ex"})
 
-      assert render(view) =~ "sample.ex"
-      assert render(view) =~ "defmodule Demo.Sample do"
-      refute render(view) =~ "Unsaved Changes"
+      assert has_element?(view, "#files-selected-signal", "lib/demo/sample.ex")
+      assert has_element?(view, "#code-editor-textarea", "defmodule Demo.Sample do")
+      assert has_element?(view, "#files-buffer-signal", "Saved")
 
       # Open file 2: config/config.exs
       view
       |> render_hook("select_file", %{"path" => "config/config.exs"})
 
-      assert render(view) =~ "config.exs"
-      assert render(view) =~ "import Config"
+      assert has_element?(view, "#files-selected-signal", "config/config.exs")
+      assert has_element?(view, "#code-editor-textarea", "import Config")
 
       # Modify config/config.exs content (dirty change)
       dirty_config = "import Config\nconfig :iex_code, port: 9999, env: :test\n"
@@ -182,29 +186,31 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       view
       |> render_hook("file_content_changed", %{"content" => dirty_config})
 
-      assert render(view) =~ "Unsaved Changes"
-      assert render(view) =~ "● Unsaved Changes"
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
+      assert has_element?(view, ".sf-file-atlas-dirty", "Unsaved changes")
 
       # Switch back to file 1 (sample.ex)
       view
       |> render_hook("select_file", %{"path" => "lib/demo/sample.ex"})
 
       # sample.ex is clean
-      refute render(view) =~ "Unsaved Changes"
+      assert has_element?(view, "#files-selected-signal", "lib/demo/sample.ex")
+      assert has_element?(view, "#files-buffer-signal", "Saved")
 
       # Switch back to file 2 (config.exs) -> dirty content must be preserved!
       view
       |> render_hook("select_file", %{"path" => "config/config.exs"})
 
-      assert render(view) =~ "Unsaved Changes"
-      assert render(view) =~ "port: 9999"
+      assert has_element?(view, "#files-selected-signal", "config/config.exs")
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
+      assert has_element?(view, "#code-editor-textarea", "port: 9999")
 
       # Save file 2 to disk
       view
       |> render_hook("save_file", %{"content" => dirty_config})
 
-      assert render(view) =~ "Saved config/config.exs"
-      refute render(view) =~ "Unsaved Changes"
+      assert has_element?(view, "#flash-group", "Saved config/config.exs")
+      assert has_element?(view, "#files-buffer-signal", "Saved")
 
       # Verify disk file was actually written natively
       disk_content = File.read!(Path.join(path, "config/config.exs"))
@@ -214,22 +220,29 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       view
       |> render_hook("file_content_changed", %{"content" => "corrupted content"})
 
-      assert render(view) =~ "Unsaved Changes"
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
 
-      # Click revert
+      # Request and confirm the destructive revert.
       view
-      |> render_hook("revert_file_buffer", %{})
+      |> element("#file-buffer-revert-trigger")
+      |> render_click()
 
-      assert render(view) =~ "Reverted unsaved edits in config/config.exs"
-      refute render(view) =~ "Unsaved Changes"
-      assert render(view) =~ "port: 9999"
+      assert has_element?(view, "#file-buffer-revert-confirmation-dialog[role='dialog']")
+
+      view
+      |> element("#confirm-file-confirmation[phx-click='revert_file_buffer']")
+      |> render_click()
+
+      assert has_element?(view, "#flash-group", "Reverted unsaved edits in config/config.exs")
+      assert has_element?(view, "#files-buffer-signal", "Saved")
+      assert has_element?(view, "#code-editor-textarea", "port: 9999")
 
       # Close buffer tab
       view
       |> render_hook("close_file_buffer", %{"path" => "config/config.exs"})
 
       # Active file should fall back to sample.ex
-      assert render(view) =~ "sample.ex"
+      assert has_element?(view, "#files-selected-signal", "lib/demo/sample.ex")
     end
   end
 
@@ -248,8 +261,11 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       view
       |> render_hook("insert_code_to_editor", %{"code" => "def test_no_buffer, do: :ok"})
 
-      rendered = render(view)
-      assert rendered =~ "No active file buffer. Open a file in the editor first."
+      assert has_element?(
+               view,
+               "#flash-group",
+               "No active file buffer. Open a file in the editor first."
+             )
     end
 
     test "inserts multiline Elixir snippet with complex sigils, quotes, curlies, and string interpolation",
@@ -287,17 +303,17 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       view
       |> render_hook("insert_code_to_editor", %{"code" => complex_snippet})
 
-      rendered = render(view)
-      assert rendered =~ "Inserted snippet into lib/demo/sample.ex"
-      assert rendered =~ "● Unsaved Changes"
-      assert rendered =~ "render_widget(assigns)"
-      assert rendered =~ "phx-no-curly-interpolation"
+      assert has_element?(view, "#flash-group", "Inserted snippet into lib/demo/sample.ex")
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
+      assert has_element?(view, ".sf-file-atlas-dirty", "Unsaved changes")
+      assert has_element?(view, "#code-editor-textarea", "render_widget(assigns)")
+      assert has_element?(view, "#code-editor-textarea", "phx-no-curly-interpolation")
 
       # Save the buffer with the inserted code
       view
       |> render_hook("save_file", %{})
 
-      assert render(view) =~ "Saved lib/demo/sample.ex"
+      assert has_element?(view, "#flash-group", "Saved lib/demo/sample.ex")
 
       # Verify disk file contains verbatim snippet without escaping flaws
       saved_disk = File.read!(Path.join(path, "lib/demo/sample.ex"))
@@ -325,10 +341,9 @@ defmodule IexCodeWeb.Live.Challenger2ExplorerEditorChatLiveStressTest do
       view |> render_hook("insert_code_to_editor", %{"code" => snippet2})
       view |> render_hook("insert_code_to_editor", %{"code" => snippet3})
 
-      rendered = render(view)
-      assert rendered =~ "snippet_one"
-      assert rendered =~ "snippet_two"
-      assert rendered =~ "snippet_three"
+      assert has_element?(view, "#code-editor-textarea", "snippet_one")
+      assert has_element?(view, "#code-editor-textarea", "snippet_two")
+      assert has_element?(view, "#code-editor-textarea", "snippet_three")
     end
   end
 end

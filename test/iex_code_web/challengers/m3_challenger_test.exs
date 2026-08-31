@@ -211,8 +211,15 @@ defmodule IexCodeWeb.M3ChallengerTest do
         """)
 
       assert html_inline =~ "MultiPatch (30 files)"
-      assert html_inline =~ "text-emerald-300"
-      assert html_inline =~ "text-rose-300"
+      assert html_inline =~ "border-[var(--sf-success-text)]"
+
+      assert html_inline =~
+               "bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)]"
+
+      assert html_inline =~ "text-[var(--sf-success-text)]"
+      assert html_inline =~ "border-[var(--sf-live-mark)]"
+      assert html_inline =~ "bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)]"
+      assert html_inline =~ "text-[var(--sf-live-text)]"
 
       # Split Mode
       assigns = %{diff_text: large_diff, diff_mode: "split", file_path: "MultiPatch (30 files)"}
@@ -244,7 +251,12 @@ defmodule IexCodeWeb.M3ChallengerTest do
         <.diff_viewer diff_text={@diff_text} diff_mode={@diff_mode} file_path={@file_path} />
         """)
 
-      assert html_add =~ "bg-emerald-950/40"
+      assert html_add =~ "border-[var(--sf-success-text)]"
+
+      assert html_add =~
+               "bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)]"
+
+      assert html_add =~ "text-[var(--sf-success-text)]"
 
       # 2. Pure deletion
       deletion_diff = """
@@ -263,7 +275,9 @@ defmodule IexCodeWeb.M3ChallengerTest do
         <.diff_viewer diff_text={@diff_text} diff_mode={@diff_mode} file_path={@file_path} />
         """)
 
-      assert html_del =~ "bg-rose-950/40"
+      assert html_del =~ "border-[var(--sf-live-mark)]"
+      assert html_del =~ "bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)]"
+      assert html_del =~ "text-[var(--sf-live-text)]"
 
       # 3. Binary diff & No newline at end of file
       binary_diff = """
@@ -433,7 +447,7 @@ defmodule IexCodeWeb.M3ChallengerTest do
 
       # Switch to swarm tab
       view
-      |> element("button[phx-value-tab='swarm']")
+      |> element("#instrument-card-swarm")
       |> render_click()
 
       # Send 50 operation start/progress/completed bursts
@@ -505,10 +519,10 @@ defmodule IexCodeWeb.M3ChallengerTest do
       tabs = ["kanban", "swarm", "calendar", "changes", "chat", "files", "terminal"]
 
       for tab <- tabs do
-        # Trigger tab switch
-        view
-        |> element("button[phx-value-tab='#{tab}']")
-        |> render_click()
+        # Patch through the canonical workbench URL while telemetry is in flight.
+        render_patch(view, "/sessions/#{session.id}?view=#{tab}")
+        assert has_element?(view, "#workspace-shell[data-active-view='#{tab}']")
+        assert has_element?(view, "#instrument-workbench-#{tab}")
 
         # Send concurrent telemetry event during tab display
         op = %Operation{
@@ -538,7 +552,7 @@ defmodule IexCodeWeb.M3ChallengerTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("button[phx-value-tab='terminal']")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # 1. Successful multi-line output
@@ -564,7 +578,7 @@ defmodule IexCodeWeb.M3ChallengerTest do
 
       # Switch to files tab
       view
-      |> element("button[phx-value-tab='files']")
+      |> element("#instrument-card-files")
       |> render_click()
 
       # Search with regex special chars

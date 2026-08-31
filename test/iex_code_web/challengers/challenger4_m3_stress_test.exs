@@ -23,7 +23,7 @@ defmodule IexCodeWeb.Challenger4M3StressTest do
 
       # Navigate to swarm view
       view
-      |> element("button[phx-value-tab='swarm']")
+      |> element("#instrument-card-swarm")
       |> render_click()
 
       subagents = [
@@ -155,8 +155,8 @@ defmodule IexCodeWeb.Challenger4M3StressTest do
       {:ok, view2, _} = live(conn, ~p"/sessions/#{session.id}")
 
       # Both views switch to swarm tab
-      view1 |> element("button[phx-value-tab='swarm']") |> render_click()
-      view2 |> element("button[phx-value-tab='swarm']") |> render_click()
+      view1 |> element("#instrument-card-swarm") |> render_click()
+      view2 |> element("#instrument-card-swarm") |> render_click()
 
       # Create 4 operations
       agents = ["PlannerAgent", "ExplorerAgent", "CoderAgent", "VerifierAgent"]
@@ -257,8 +257,17 @@ defmodule IexCodeWeb.Challenger4M3StressTest do
 
       # Send a valid terminal output and verify it renders properly
       send(view.pid, {:terminal_output, session.id, "RECOVERY_OUTPUT_AFTER_NIL_TEST"})
-      html = render(view)
-      assert html =~ "RECOVERY_OUTPUT_AFTER_NIL_TEST"
+      _ = :sys.get_state(view.pid)
+
+      assert_push_event(view, "terminal_output", %{data: "RECOVERY_OUTPUT_AFTER_NIL_TEST"})
+
+      view |> element("#instrument-card-terminal") |> render_click()
+
+      assert has_element?(
+               view,
+               "#terminal-rendered-output.hidden",
+               "RECOVERY_OUTPUT_AFTER_NIL_TEST"
+             )
     end
 
     test "resilient to nil fields in operations and telemetry maps", %{
@@ -270,7 +279,7 @@ defmodule IexCodeWeb.Challenger4M3StressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       # View swarm tab
-      view |> element("button[phx-value-tab='swarm']") |> render_click()
+      view |> element("#instrument-card-swarm") |> render_click()
 
       # Operation struct with all fields nil except ID
       op_with_nils = %Operation{
@@ -481,24 +490,37 @@ defmodule IexCodeWeb.Challenger4M3StressTest do
         end)
 
       # Concurrently interact with the LiveView
-      # 1. Switch to terminal tab
-      view |> element("button[phx-value-tab='terminal']") |> render_click()
+      # 1. Open Terminal Scope from the canonical Instrument Deck
+      view |> element("#instrument-card-terminal") |> render_click()
 
       # 2. Run terminal command
-      html_term =
-        view
-        |> form("#terminal-form", %{"command" => "echo 'INTERACTIVE_TERMINAL_CMD_SUCCESS'"})
-        |> render_submit()
+      view
+      |> form("#terminal-form", %{"command" => "echo 'INTERACTIVE_TERMINAL_CMD_SUCCESS'"})
+      |> render_submit()
 
-      assert html_term =~ "INTERACTIVE_TERMINAL_CMD_SUCCESS"
+      assert has_element?(
+               view,
+               "#terminal-rendered-output.hidden",
+               "INTERACTIVE_TERMINAL_CMD_SUCCESS"
+             )
 
-      # 3. Switch to files tab and select file
-      view |> element("button[phx-value-tab='files']") |> render_click()
+      # 3. Return through the deck before opening File Atlas and selecting a file
+      view |> element("#return-to-instrument-deck-terminal") |> render_click()
+      view |> element("#instrument-card-files") |> render_click()
       html_file = render_click(view, "select_file", %{"path" => "lib/active_module.ex"})
       assert html_file =~ "defmodule ActiveModule"
 
       # Wait for background flood
       Task.await(flood_task, 5_000)
+      _ = :sys.get_state(view.pid)
+
+      assert_push_event(view, "terminal_output", %{data: "Stream background log #50"})
+
+      assert has_element?(
+               view,
+               "#instrument-workbench-terminal[hidden] #terminal-rendered-output.hidden",
+               "Stream background log #50"
+             )
 
       # Verify LiveView process state remains consistent
       assert Process.alive?(view.pid)

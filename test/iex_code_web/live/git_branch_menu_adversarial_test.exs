@@ -36,35 +36,53 @@ defmodule IexCodeWeb.GitBranchMenuAdversarialTest do
       render_click(view, "switch_tab", %{"tab" => "changes"})
 
       # Initially branch menu is not open
-      html_initial = render(view)
-      refute html_initial =~ "Branches ("
+      refute has_element?(view, "#changes-branch-menu")
 
       # Toggle branch menu open
       render_click(view, "toggle_branch_menu")
-      html_open = render(view)
 
       # Verify branch menu header and branches list are rendered
-      assert html_open =~ "Branches ("
-      assert html_open =~ "main"
-      assert html_open =~ "feature/payments"
-      assert html_open =~ "fix/login-crash"
+      assert has_element?(
+               view,
+               "#changes-branch-menu[role='region'][aria-labelledby='changes-branch-menu-title']"
+             )
 
-      # Verify active branch styling and checkmark on main (b.current? == true)
-      assert html_open =~ "text-emerald-400 font-bold"
+      assert has_element?(view, "#changes-branch-menu-title", "Branches")
+      assert has_element?(view, "#changes-branch-menu button[phx-value-branch='main']", "main")
+
+      assert has_element?(
+               view,
+               "#changes-branch-menu button[phx-value-branch='feature/payments']",
+               "feature/payments"
+             )
+
+      assert has_element?(
+               view,
+               "#changes-branch-menu button[phx-value-branch='fix/login-crash']",
+               "fix/login-crash"
+             )
+
+      # Verify the active branch is exposed with the current semantic label.
+      assert has_element?(
+               view,
+               "#changes-branch-menu button[phx-value-branch='main'] [aria-label='Current branch']"
+             )
 
       # Toggle branch menu closed
       render_click(view, "toggle_branch_menu")
-      html_closed = render(view)
-      refute html_closed =~ "Branches ("
+      refute has_element?(view, "#changes-branch-menu")
 
       # Switch branch to feature/payments
       render_click(view, "switch_git_branch", %{"branch" => "feature/payments"})
 
       # Toggle menu open again and verify feature/payments is current
       render_click(view, "toggle_branch_menu")
-      html_payments = render(view)
-      assert html_payments =~ "Branches ("
-      assert html_payments =~ "feature/payments"
+      assert has_element?(view, "#changes-branch-menu-title", "Branches")
+
+      assert has_element?(
+               view,
+               "#changes-branch-menu button[phx-value-branch='feature/payments'] [aria-label='Current branch']"
+             )
 
       # Verify current branch in git matches
       assert {:ok, "feature/payments"} = Git.current_branch(path)

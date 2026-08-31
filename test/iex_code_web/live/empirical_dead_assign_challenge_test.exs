@@ -68,8 +68,9 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
       assert_redirect(view, "/sessions/#{session.id}/settings#execution")
     end
 
-    test "verifies dynamic rendering of credits, canvas files, and calendar stats without static placeholders",
+    test "verifies dynamic Change Ledger and calendar facts without static placeholders",
          %{conn: conn, workspace_path: path} do
+      init_git_repo!(path)
       project = create_project_fixture(%{root_path: path})
       session = create_session_fixture(project)
 
@@ -79,16 +80,29 @@ defmodule IexCodeWeb.EmpiricalDeadAssignChallengeTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # Switch to Changes tab and verify canvas reflects dynamic project files/diffs
+      # Switch to Changes and verify the canonical chassis reflects the real
+      # bounded working-tree facts.
       render_click(view, "switch_tab", %{"tab" => "changes"})
-      changes_html = render(view)
 
-      # Dynamic Canvas header
-      assert changes_html =~ "Canvas"
-      # Refute the old hardcoded fake files
-      refute changes_html =~ "pr-1781-walkthrough.html"
-      refute changes_html =~ "pr-5567-proof-of-history.html"
-      refute changes_html =~ "pr-22-toll-express.html"
+      assert has_element?(
+               view,
+               "#instrument-workbench-changes[data-workbench-surface='changes']"
+             )
+
+      assert has_element?(view, "#changes-primary")
+      assert has_element?(view, "#changes-staging-panel", "Staging ledger")
+
+      assert has_element?(
+               view,
+               "#changes-signal-panel[data-summary-status='active']",
+               "2 changes"
+             )
+
+      assert has_element?(view, "#changes-signal-panel", "Branch")
+      assert has_element?(view, "#changes-signal-panel", "main")
+      refute has_element?(view, "#instrument-workbench-changes", "pr-1781-walkthrough.html")
+      refute has_element?(view, "#instrument-workbench-changes", "pr-5567-proof-of-history.html")
+      refute has_element?(view, "#instrument-workbench-changes", "pr-22-toll-express.html")
 
       # Switch to Calendar and verify the factual chassis presentations.
       render_click(view, "switch_tab", %{"tab" => "calendar"})

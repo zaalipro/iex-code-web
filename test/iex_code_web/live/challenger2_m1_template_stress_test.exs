@@ -23,14 +23,20 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      tabs = ["kanban", "swarm", "research", "calendar", "changes", "chat", "files", "terminal"]
+      instruments = ["kanban", "swarm", "calendar", "changes", "chat", "files", "terminal"]
 
-      for tab <- tabs do
-        html = render_click(view, "switch_tab", %{"tab" => tab})
+      for instrument <- instruments do
+        html = render_patch(view, "/sessions/#{session.id}?view=#{instrument}")
 
         assert is_binary(html)
+        assert has_element?(view, "#workspace-shell[data-active-view='#{instrument}']")
+        assert has_element?(view, "#instrument-workbench-#{instrument}")
         assert Process.alive?(view.pid)
       end
+
+      render_patch(view, "/sessions/#{session.id}/research")
+      assert has_element?(view, "#workspace-shell[data-active-view='research']")
+      assert has_element?(view, "#instrument-workbench-research")
     end
 
     test "renders Settings modal with zero, mid-range, and extreme credit values without crashing",
@@ -57,16 +63,21 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # Switch to swarm tab
-      html = render_click(view, "switch_tab", %{"tab" => "swarm"})
-      assert html =~ "MULTI-AGENT SWARM HARNESS ACTIVE"
-      assert html =~ "TOKENS"
-      assert html =~ "ITERATION"
+      # Open the canonical Active Mission workbench without relying on retired tabs.
+      render_patch(view, "/sessions/#{session.id}?view=swarm")
+      assert has_element?(view, "#instrument-workbench-swarm[data-workbench-surface='swarm']")
+      assert has_element?(view, "#mission-control-hero-title", "Mission Control")
+      assert has_element?(view, "#interactive-role-templates")
 
       # Trigger swarm stage change to iteration 5
       send(view.pid, {:swarm_stage_changed, %{stage: :coder, iteration: 5}})
-      html = render(view)
-      assert html =~ "ITERATION 5/3"
+      _ = :sys.get_state(view.pid)
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.active_stage == :coder
+      assert assigns.swarm_iteration == 5
+      assert assigns.max_retries == 3
+      assert has_element?(view, "#interactive-role-templates")
     end
 
     test "handles scheduled tab dynamic counters with empty and populated tasks", %{
@@ -79,7 +90,7 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       # Switch to the factual responsive calendar presentations.
-      render_click(view, "switch_tab", %{"tab" => "calendar"})
+      render_patch(view, "/sessions/#{session.id}?view=calendar")
       assert has_element?(view, "#instrument-workbench-calendar")
       assert has_element?(view, "#calendar-desktop-agenda")
       assert has_element?(view, "#calendar-mobile-agenda[data-mobile-default='true']")
@@ -99,10 +110,13 @@ defmodule IexCodeWeb.Challenger2M1TemplateStressTest do
 
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      # Switch to changes tab
-      html = render_click(view, "switch_tab", %{"tab" => "changes"})
-      assert html =~ "All Changes"
-      assert html =~ "Canvas ·"
+      # Open the canonical Change Ledger workbench and its bounded diff surface.
+      render_patch(view, "/sessions/#{session.id}?view=changes")
+      assert has_element?(view, "#instrument-workbench-changes[data-workbench-surface='changes']")
+      assert has_element?(view, "#instrument-workbench-changes-title", "Change Ledger")
+      assert has_element?(view, "#changes-layout")
+      assert has_element?(view, "#changes-diff-panel[aria-label='Selected diff']")
+      assert has_element?(view, "#diff-viewer-container", "No patch or diff selected")
     end
   end
 

@@ -722,8 +722,17 @@ defmodule IexCodeWeb.WorkspaceLiveSignalFoundryCalendarTest do
     assert css =~ "max-height: calc(100dvh"
     assert css =~ ".calendar-focus-return-target:focus-visible"
 
-    assert template =~
-             ~s|<h3 id="calendar-focus-return-target" phx-hook="CalendarDeleteFocus" tabindex="-1" class="calendar-focus-return-target">|
+    assert [focus_return_tag] =
+             Regex.run(
+               ~r/<h3\b(?=[^>]*\bid\s*=\s*"calendar-focus-return-target")[^>]*>/s,
+               template
+             )
+
+    assert focus_return_tag =~ ~r/\bphx-hook\s*=\s*"CalendarDeleteFocus"/
+    assert focus_return_tag =~ ~r/\btabindex\s*=\s*"-1"/
+
+    assert focus_return_tag =~
+             ~r/\bclass\s*=\s*(?:"[^"]*\bcalendar-focus-return-target\b[^"]*"|\{[^>]*\bcalendar-focus-return-target\b[^>]*\})/s
 
     assert template =~ "[overflow-wrap:anywhere]"
   end

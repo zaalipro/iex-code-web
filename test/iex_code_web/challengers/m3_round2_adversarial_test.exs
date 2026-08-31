@@ -38,8 +38,12 @@ defmodule IexCodeWeb.M3Round2AdversarialTest do
 
       assert html =~ "+  def greet(name), do:" or html =~ "Welcome, "
       refute html =~ "{line}"
-      assert html =~ "bg-emerald-950/40"
-      assert html =~ "bg-rose-950/40"
+      assert html =~ "border-[var(--sf-success-text)]"
+      assert html =~ "bg-[color-mix(in_srgb,var(--sf-success-mark)_12%,transparent)]"
+      assert html =~ "text-[var(--sf-success-text)]"
+      assert html =~ "border-[var(--sf-live-mark)]"
+      assert html =~ "bg-[color-mix(in_srgb,var(--sf-live-mark)_10%,transparent)]"
+      assert html =~ "text-[var(--sf-live-text)]"
     end
 
     test "split mode renders exact line code on both sides and does not emit literal {line}" do
@@ -152,6 +156,9 @@ defmodule IexCodeWeb.M3Round2AdversarialTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
+      render_patch(view, "/sessions/#{session.id}?view=files")
+      assert has_element?(view, "#instrument-workbench-files[data-workbench-surface='files']")
+
       traversal_payloads = [
         "../etc/passwd",
         "../../etc/shadow",
@@ -163,8 +170,13 @@ defmodule IexCodeWeb.M3Round2AdversarialTest do
       ]
 
       for payload <- traversal_payloads do
-        html = render_click(view, "select_file", %{"path" => payload})
-        assert html =~ "Invalid file path"
+        # Browser URL decoding turns encoded separators into traversal segments
+        # before the LiveView event reaches the server.
+        event_path = URI.decode(payload)
+        render_click(view, "select_file", %{"path" => event_path})
+        assert has_element?(view, "#flash-error", "Invalid file path")
+        assert has_element?(view, "#workspace-shell[data-active-view='files']")
+        assert is_nil(:sys.get_state(view.pid).socket.assigns.selected_file)
       end
     end
 
@@ -197,7 +209,7 @@ defmodule IexCodeWeb.M3Round2AdversarialTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("button[phx-value-tab='terminal']")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       # Send various non-binary and malformed messages
@@ -245,7 +257,7 @@ defmodule IexCodeWeb.M3Round2AdversarialTest do
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
       view
-      |> element("button[phx-value-tab='terminal']")
+      |> element("#instrument-card-terminal")
       |> render_click()
 
       view

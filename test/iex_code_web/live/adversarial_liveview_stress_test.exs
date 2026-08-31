@@ -4,6 +4,7 @@ defmodule IexCodeWeb.AdversarialLiveviewStressTest do
   @moduletag timeout: 180_000
 
   alias IexCode.{Sessions, Kanban}
+  alias IexCode.Tools.TerminalServer
 
   # ============================================================================
   # 1. Inline Editor: Path Traversal, Corrupted Paths & Multi-Buffer Isolation
@@ -86,8 +87,22 @@ defmodule IexCodeWeb.AdversarialLiveviewStressTest do
 
       # 4. Revert buffer 2
       render_click(view, "select_file", %{"path" => "lib/file_2.ex"})
-      html = render_click(view, "revert_file_buffer")
-      assert html =~ "Reverted unsaved edits in lib/file_2.ex"
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
+
+      view |> element("#file-buffer-revert-trigger") |> render_click()
+
+      assert has_element?(
+               view,
+               "#file-buffer-revert-confirmation-dialog[role='dialog'][aria-modal='true']",
+               "Revert unsaved changes?"
+             )
+
+      view |> element("#confirm-file-confirmation", "Revert changes") |> render_click()
+
+      assert has_element?(view, "#flash-info", "Reverted unsaved edits in lib/file_2.ex")
+      assert has_element?(view, "#files-buffer-signal", "Saved")
+      assert has_element?(view, "#code-editor-textarea", "defmodule File2")
+      refute has_element?(view, "#file-buffer-revert-trigger")
 
       # 5. Close active buffer (file 2) -> file 1 should become active
       render_click(view, "close_file_buffer", %{"path" => "lib/file_2.ex"})
@@ -173,7 +188,8 @@ defmodule IexCodeWeb.AdversarialLiveviewStressTest do
       session = create_session_fixture(project)
       {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
 
-      render_click(view, "switch_tab", %{"tab" => "terminal"})
+      view |> element("#instrument-card-terminal") |> render_click()
+      wait_for_terminal(view, &(&1 =~ "data-terminal-active=\"true\""))
 
       # 1. Empty and whitespace commands (should be ignored cleanly)
       render_click(view, "run_terminal", %{"command" => ""})
@@ -195,27 +211,60 @@ defmodule IexCodeWeb.AdversarialLiveviewStressTest do
       special_commands = [
         "echo 'hello && world || true'",
         "echo \"quotes 'and' double quotes\"",
-        "exit 1",
+        "sh -c 'exit 1'",
         "ls non_existent_dir_12345",
         "echo -n 'no_trailing_newline'"
       ]
 
-      for cmd <- special_commands do
+      for {cmd, offset} <- Enum.with_index(special_commands, 1) do
         html = render_click(view, "run_terminal", %{"command" => cmd})
         assert is_binary(html)
+        wait_for_terminal(view, &(count_exit_markers(&1) >= 25 + offset))
       end
 
+      wait_for_terminal(view, &(count_exit_markers(&1) >= 30))
+
       # 4. Test replaying terminal command
-      html_replay = render_click(view, "replay_terminal_command")
-      assert is_binary(html_replay)
+      view |> element("#btn-terminal-replay:not([disabled])") |> render_click()
+      wait_for_terminal(view, &(count_exit_markers(&1) >= 31))
 
-      # 5. Test stopping terminal command
-      html_stopped = render_click(view, "stop_terminal_command")
-      assert html_stopped =~ "Terminal command stopped" or html_stopped =~ "Command Interrupted"
+      # 5. Interrupt a real foreground process through the visible, confirmed control.
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "session:#{session.id}:terminal")
 
-      # 6. Clear terminal output
-      html_cleared = render_click(view, "clear_terminal")
-      refute html_cleared =~ "TEST_STREAM_CMD_1"
+      view
+      |> form("#terminal-form", %{"command" => "sleep 30"})
+      |> render_submit()
+
+      assert has_element?(view, "#btn-terminal-kill:not([disabled])", "Interrupt")
+      view |> element("#btn-terminal-kill") |> render_click()
+
+      assert has_element?(
+               view,
+               "#terminal-interrupt-confirmation-dialog[role='dialog'][aria-modal='true']",
+               "Interrupt the foreground process?"
+             )
+
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+
+      assert_receive {:terminal_command_completed,
+                      %{
+                        session_id: interrupted_session_id,
+                        command: "sleep 30",
+                        exit_code: exit_code
+                      }},
+                     5_000
+
+      assert interrupted_session_id == session.id
+      assert exit_code != 0
+      assert {:ok, %{active_command_id: nil}} = TerminalServer.get_state(session.id)
+
+      # 6. Clear terminal output through its destructive-action confirmation.
+      view |> element("#btn-terminal-clear") |> render_click()
+      assert has_element?(view, "#terminal-clear-confirmation-dialog[role='dialog']")
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+      assert {:ok, %{command_history: []}} = TerminalServer.get_state(session.id)
+      assert has_element?(view, "#btn-terminal-replay[disabled]")
+      refute has_element?(view, "[id^='terminal-command-trace-']")
 
       assert Process.alive?(view.pid)
     end

@@ -1,8 +1,8 @@
 defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
   use IexCode.E2E.Case, async: false
   @moduletag mock_llm: true
-  alias IexCode.{Sessions, Kanban}
-  alias IexCode.Engine.SessionServer
+  alias IexCode.{Kanban, Runs, Sessions}
+  alias IexCode.Tools.TerminalServer
 
   setup %{conn: conn, workspace_path: path} do
     project = create_project_fixture(%{root_path: path})
@@ -52,26 +52,37 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
 
       # 3. Simulate content modification (dirty state)
       new_code = "defmodule DemoWorker do\n  def work, do: :modified_result\nend\n"
-      html = render_hook(view, "file_content_changed", %{"content" => new_code})
+      render_hook(view, "file_content_changed", %{"content" => new_code})
 
-      assert html =~ "Unsaved Changes"
-      assert has_element?(view, "button[phx-click='save_file']")
-      assert has_element?(view, "button[phx-click='revert_file_buffer']")
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
+      assert has_element?(view, ".sf-file-atlas-dirty", "Unsaved changes")
+      assert has_element?(view, "#save-file-btn[phx-click='save_file']")
+      assert has_element?(view, "#file-buffer-revert-trigger")
 
       # 4. Save file to disk
-      render_hook(view, "save_file", %{"content" => new_code})
+      view |> element("#save-file-btn") |> render_click()
 
       saved_disk_content = File.read!(Path.join(path, "lib/demo_worker.ex"))
       assert saved_disk_content == new_code
-      refute render(view) =~ "● Unsaved Changes"
+      assert has_element?(view, "#files-buffer-signal", "Saved")
+      refute has_element?(view, ".sf-file-atlas-dirty")
 
       # 5. Revert unsaved edits test
       render_hook(view, "file_content_changed", %{"content" => "temporary broken code"})
-      assert render(view) =~ "Unsaved Changes"
+      assert has_element?(view, "#files-buffer-signal", "Unsaved changes")
 
-      view |> element("button[phx-click='revert_file_buffer']") |> render_click()
-      refute render(view) =~ "temporary broken code"
-      assert render(view) =~ "def work, do: :modified_result"
+      view |> element("#file-buffer-revert-trigger") |> render_click()
+
+      assert has_element?(
+               view,
+               "#file-buffer-revert-confirmation-dialog[role='dialog'][aria-modal='true']",
+               "Revert unsaved changes?"
+             )
+
+      view |> element("#confirm-file-confirmation", "Revert changes") |> render_click()
+      assert has_element?(view, "#files-buffer-signal", "Saved")
+      assert has_element?(view, "#code-editor-textarea", "def work, do: :modified_result")
+      refute has_element?(view, "#code-editor-textarea", "temporary broken code")
 
       # 6. Close buffer
       view
@@ -331,104 +342,86 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
       assert run.metadata["goal_description"] == "Never duplicate this durable execution"
     end
 
-    test "pauses, resumes, and cancels active session execution", %{
+    test "pauses, resumes, and cancels the selected durable execution", %{
       view: view,
+      project: project,
       session: session
     } do
-      # 1. Switch to Swarm tab
+      Process.register(self(), IexCode.RunDispatcherTestReceiver)
+
+      on_exit(fn ->
+        if Process.whereis(IexCode.RunDispatcherTestReceiver) == self(),
+          do: Process.unregister(IexCode.RunDispatcherTestReceiver)
+      end)
+
+      start_run_dispatcher!()
+
+      {:ok, run} =
+        Runs.create_run_with_steps(
+          %{
+            project_id: project.id,
+            session_id: session.id,
+            objective: "Exercise selected mission lifecycle controls",
+            kind: "analysis",
+            mode: "single",
+            status: "queued",
+            max_attempts: 3
+          },
+          [
+            %{key: "prepare", kind: "prepare", title: "Prepare mission", status: "ready"},
+            %{
+              key: "execute",
+              kind: "execute",
+              title: "Execute mission",
+              status: "pending",
+              position: 1,
+              depends_on: ["prepare"]
+            }
+          ]
+        )
+
+      send(Process.whereis(IexCode.Runs.RunDispatcher), :drain)
+      _ = :sys.get_state(Process.whereis(IexCode.Runs.RunDispatcher))
+      assert_receive {:test_run_started, run_id, _worker_pid}, 2_000
+      assert run_id == run.id
+
+      # 1. Switch to the selected run's execution controls.
       view |> element("#instrument-card-swarm") |> render_click()
       view |> element("#mission-control-mode-execution") |> render_click()
       assert has_element?(view, "#mission-control-panel-execution:not([hidden])")
-
-      # Start a real interactive coordinator so the rendered pause control is
-      # backed by an active session owner rather than an event-only shortcut.
-      assert :ok = SessionServer.send_prompt(session.id, "/swarm Hold this session open")
       _ = :sys.get_state(view.pid)
 
+      current_run = Runs.get_run!(run.id)
+
+      assert current_run.status == "running",
+             "expected test run to start, got #{current_run.status}: #{inspect(current_run.error_message)} #{inspect(current_run.error_details)}"
+
+      assert has_element?(view, "#async-run-detail[data-run-status='running']")
+      assert has_element?(view, "#pause-async-run[phx-click='pause_async_run']", "Pause")
+
+      # 2. Pause the selected durable run and verify the persisted outcome.
+      view |> element("#pause-async-run") |> render_click()
+      assert Runs.get_run!(run.id).status == "paused"
+      assert has_element?(view, "#async-run-detail[data-run-status='paused']")
+      assert has_element?(view, "#resume-async-run[phx-click='resume_async_run']", "Resume")
+
+      # 3. Resume the selected durable run and verify its current control.
+      view |> element("#resume-async-run") |> render_click()
+      assert Runs.get_run!(run.id).status == "running"
+      assert has_element?(view, "#async-run-detail[data-run-status='running']")
+      assert has_element?(view, "#pause-async-run")
+
+      # 4. Cancellation uses the browser confirmation contract and persists.
       assert has_element?(
                view,
-               "#mission-control-panel-execution button[phx-click='pause_session']"
+               "#cancel-async-run[phx-click='cancel_async_run'][data-confirm='Cancel this run? Execution will stop after the request is persisted.']",
+               "Cancel"
              )
 
-      assert has_element?(
-               view,
-               "#mission-control-panel-execution button[phx-click='open_cancel_modal']"
-             )
-
-      assert has_element?(
-               view,
-               "#mission-control-panel-execution #steering-form[phx-submit='send_steering']"
-             )
-
-      # 2. Pause session
-      view
-      |> element("#mission-control-panel-execution button[phx-click='pause_session']")
-      |> render_click()
-
-      assert has_element?(view, "#interactive-session-status", "Session status · PAUSED")
-
-      assert has_element?(
-               view,
-               "#mission-control-panel-execution button[phx-click='resume_session']"
-             )
-
-      # 3. Resume session. The mock coordinator may finish before this render;
-      # either durable RUNNING or the safe IDLE terminal race must agree with
-      # the state-specific control shown next.
-      view
-      |> element("#mission-control-panel-execution button[phx-click='resume_session']")
-      |> render_click()
-
-      resumed_status = Sessions.get_session!(session.id).status
-      assert resumed_status in ["running", "idle"]
-
-      case resumed_status do
-        "running" ->
-          assert has_element?(view, "#interactive-session-status", "Session status · RUNNING")
-
-          assert has_element?(
-                   view,
-                   "#mission-control-panel-execution button[phx-click='pause_session']"
-                 )
-
-        "idle" ->
-          assert has_element?(view, "#interactive-session-status", "Session status · IDLE")
-
-          assert has_element?(
-                   view,
-                   "#mission-control-panel-execution button[phx-click='resume_session']"
-                 )
-      end
-
-      # 4. Open cancel modal
-      view
-      |> element("#mission-control-panel-execution button[phx-click='open_cancel_modal']")
-      |> render_click()
-
-      assert has_element?(view, "#cancel-session-modal[role='dialog'][aria-modal='true']")
-      assert has_element?(view, "#cancel-session-modal-title", "Stop & Cancel Session")
-
-      assert has_element?(
-               view,
-               "#cancel-session-modal button[phx-click='cancel_session'][phx-value-mode='rollback']",
-               "Rollback Snapshots"
-             )
-
-      assert has_element?(
-               view,
-               "#cancel-session-modal button[phx-click='cancel_session'][phx-value-mode='commit']",
-               "Commit Changes"
-             )
-
-      # 5. Cancel with rollback
-      view
-      |> element(
-        "#cancel-session-modal button[phx-click='cancel_session'][phx-value-mode='rollback']"
-      )
-      |> render_click()
-
-      refute has_element?(view, "#cancel-session-modal")
-      assert has_element?(view, "#flash-info", "Session stopped")
+      view |> element("#cancel-async-run") |> render_click()
+      assert Runs.get_run!(run.id).status == "cancelled"
+      assert has_element?(view, "#async-run-detail[data-run-status='cancelled']")
+      refute has_element?(view, "#cancel-async-run")
     end
 
     test "delivers real-time steering directive to active swarm", %{view: view} do
@@ -509,21 +502,41 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
 
     test "executes terminal commands, handles replay and stop", %{view: view} do
       view |> element("#instrument-card-terminal") |> render_click()
+      session_id = :sys.get_state(view.pid).socket.assigns.session.id
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "session:#{session_id}:terminal")
 
       # Execute terminal command
       view
       |> form("#terminal-form", %{"command" => "echo 'hello terminal runner'"})
       |> render_submit()
 
-      assert Process.alive?(view.pid)
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command: "echo 'hello terminal runner'"}},
+                     5_000
+
+      assert has_element?(view, "#btn-terminal-replay:not([disabled])")
 
       # Replay command
-      render_click(view, "replay_terminal_command")
-      assert Process.alive?(view.pid)
+      view |> element("#btn-terminal-replay") |> render_click()
 
-      # Stop terminal command
-      render_click(view, "stop_terminal_command")
-      assert Process.alive?(view.pid)
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command: "echo 'hello terminal runner'"}},
+                     5_000
+
+      # Interrupt a real foreground process through the visible, confirmed control.
+      view |> form("#terminal-form", %{"command" => "sleep 30"}) |> render_submit()
+      assert has_element?(view, "#btn-terminal-kill:not([disabled])", "Interrupt")
+      view |> element("#btn-terminal-kill") |> render_click()
+      assert has_element?(view, "#terminal-interrupt-confirmation-dialog[role='dialog']")
+      view |> element("#confirm-terminal-confirmation") |> render_click()
+
+      assert_receive {:terminal_command_completed,
+                      %{session_id: ^session_id, command: "sleep 30", exit_code: exit_code}},
+                     5_000
+
+      assert exit_code != 0
+      assert {:ok, %{active_command_id: nil}} = TerminalServer.get_state(session_id)
+      assert has_element?(view, "#flash-info", "Foreground process interrupted")
     end
 
     test "renders thinking traces with collapsible disclosure and markdown", %{

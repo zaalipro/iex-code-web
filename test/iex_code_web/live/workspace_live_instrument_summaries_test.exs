@@ -410,7 +410,7 @@ defmodule IexCodeWeb.WorkspaceLiveInstrumentSummariesTest do
            ].secondary
   end
 
-  test "File Atlas receives bounded Git relation for success truncation and error", %{
+  test "File Atlas receives bounded Git relation and retains it after a refresh error", %{
     conn: conn,
     workspace_path: path
   } do
@@ -433,9 +433,11 @@ defmodule IexCodeWeb.WorkspaceLiveInstrumentSummariesTest do
     send(truncated_task, {:git_status_reply, {:ok, %{status | truncated?: true}}})
     _ = :sys.get_state(view.pid)
 
-    assert %{label: "Git", value: "Git status truncated"} in assigns(view).instrument_summaries[
+    assert %{label: "Git", value: "Bounded Git status"} in assigns(view).instrument_summaries[
              "files"
            ].secondary
+
+    assert has_element?(view, "#files-git-signal", "Git Bounded Git status")
 
     render_click(view, "refresh_git_summary", %{})
     assert_receive {:git_status_requested, error_task, ^path, _opts}
@@ -443,9 +445,11 @@ defmodule IexCodeWeb.WorkspaceLiveInstrumentSummariesTest do
     send(runtime_task, {:runtime_snapshot_reply, %{state: :idle}})
     _ = :sys.get_state(view.pid)
 
-    assert %{label: "Git", value: "Git unavailable"} in assigns(view).instrument_summaries[
+    assert %{label: "Git", value: "Bounded Git status"} in assigns(view).instrument_summaries[
              "files"
            ].secondary
+
+    assert has_element?(view, "#files-git-signal", "Git Bounded Git status")
   end
 
   test "active mission selection is status-prioritized and independent of selected workbench run",
