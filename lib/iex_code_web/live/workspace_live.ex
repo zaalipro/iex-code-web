@@ -1513,26 +1513,6 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   def handle_event("confirm_calendar_task_delete", _params, socket), do: {:noreply, socket}
 
-  defp delete_authorized_scheduled_task(socket, task) do
-    case Kanban.delete_task(task) do
-      {:ok, _deleted} ->
-        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
-
-        {:noreply,
-         socket
-         |> assign(:tasks, tasks)
-         |> assign(:show_scheduled_task_modal, false)
-         |> assign(:selected_scheduled_task, nil)
-         |> assign(:pending_calendar_task_delete, nil)
-         |> refresh_kanban_summary()
-         |> push_event("calendar_delete_focus", %{id: "calendar-focus-return-target"})
-         |> put_flash(:info, "Scheduled task removed")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to remove task: #{inspect(reason)}")}
-    end
-  end
-
   @impl true
   def handle_event("set_task_schedule_type", %{"type" => type}, socket) do
     {:noreply,
@@ -1871,32 +1851,6 @@ defmodule IexCodeWeb.WorkspaceLive do
       _ ->
         {:noreply, assign(socket, :pending_file_confirmation, nil)}
     end
-  end
-
-  defp close_clean_file_buffer(socket, path) do
-    buffers = Enum.reject(socket.assigns.open_buffers, &(&1.path == path))
-
-    {selected, content, dirty_content, is_dirty} =
-      if socket.assigns.selected_file == path do
-        case buffers do
-          [first | _] ->
-            {first.path, first.content, first.dirty_content, first.dirty?}
-
-          [] ->
-            {nil, nil, nil, false}
-        end
-      else
-        {socket.assigns.selected_file, socket.assigns.file_content, socket.assigns.dirty_content,
-         socket.assigns.is_dirty?}
-      end
-
-    socket
-    |> assign(:open_buffers, buffers)
-    |> assign(:selected_file, selected)
-    |> assign(:file_content, content)
-    |> assign(:dirty_content, dirty_content)
-    |> assign(:is_dirty?, is_dirty)
-    |> rebuild_instrument_summaries()
   end
 
   @impl true
@@ -2406,39 +2360,11 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   def handle_event("create_git_branch", _params, socket), do: {:noreply, socket}
 
-  defp valid_git_branch_name?(name) when is_binary(name) and name != "" do
-    not String.starts_with?(name, "-") and
-      not String.contains?(name, ["..", "@{", " ", "~", "^", ":", "?", "*", "[", "\\"]) and
-      not String.ends_with?(name, ["/", ".", ".lock"])
-  end
-
-  defp valid_git_branch_name?(_), do: false
-
   @impl true
   def handle_event("git_fetch", _params, %{assigns: %{active_view: "changes"}} = socket),
     do: perform_git_fetch(socket)
 
   def handle_event("git_fetch", _params, socket), do: {:noreply, socket}
-
-  defp perform_git_fetch(socket) do
-    root = socket.assigns.project.root_path
-
-    case with_ui_mutation_lock(socket, fn -> Git.fetch(root) end) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:pending_git_confirmation, nil)
-         |> refresh_git_state()
-         |> put_flash(:info, "Fetched latest remote updates")}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:pending_git_confirmation, nil)
-         |> refresh_git_state()
-         |> put_flash(:error, "Fetch failed: #{ui_mutation_error(reason)}")}
-    end
-  end
 
   @impl true
   def handle_event("git_pull", _params, socket) do
@@ -3163,61 +3089,6 @@ defmodule IexCodeWeb.WorkspaceLive do
     {:noreply, put_flash(socket, :error, "Invalid task move request")}
   end
 
-  defp perform_task_move(socket, id, status, interaction) do
-    case scoped_task(socket, id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Task not found")}
-
-      task ->
-        if explicit_task_move_allowed?(socket, task, status, interaction) do
-          persist_task_move(socket, task, status, interaction)
-        else
-          {:noreply, put_flash(socket, :error, "Invalid task status")}
-        end
-    end
-  end
-
-  defp explicit_task_move_allowed?(_socket, _task, _status, :pointer), do: true
-
-  defp explicit_task_move_allowed?(socket, task, status, :explicit) do
-    socket.assigns.active_view == "kanban" and socket.assigns.moving_task_id == task.id and
-      status in Kanban.Task.statuses()
-  end
-
-  defp persist_task_move(socket, task, status, interaction) do
-    case Kanban.move_task_status(task, status) do
-      {:ok, updated} ->
-        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
-
-        selected =
-          if socket.assigns.selected_task && socket.assigns.selected_task.id == task.id,
-            do: updated,
-            else: socket.assigns.selected_task
-
-        {:noreply,
-         socket
-         |> assign(:tasks, tasks)
-         |> assign(:selected_task, selected)
-         |> assign(:expanded_task_status, updated.status)
-         |> finish_task_move(updated, interaction)
-         |> refresh_kanban_summary()}
-
-      {:error, _reason} ->
-        {:noreply, put_flash(socket, :error, "Invalid task status")}
-    end
-  end
-
-  defp finish_task_move(socket, updated, :explicit) do
-    socket
-    |> clear_task_move_state()
-    |> assign(:task_move_announcement, "Moved #{updated.title} to #{updated.status}")
-    |> push_event("focus_task", %{id: "task-card-#{updated.id}"})
-  end
-
-  defp finish_task_move(socket, updated, :pointer) do
-    assign(socket, :task_move_announcement, "Moved #{updated.title} to #{updated.status}")
-  end
-
   @impl true
   def handle_event("update_task_priority", %{"id" => id, "priority" => priority}, socket) do
     case Kanban.get_task(socket.assigns.project.id, id) do
@@ -3503,24 +3374,6 @@ defmodule IexCodeWeb.WorkspaceLive do
 
       _ ->
         {:noreply, socket}
-    end
-  end
-
-  defp delete_authorized_task(socket, task) do
-    case Kanban.delete_task(task) do
-      {:ok, _deleted} ->
-        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
-
-        {:noreply,
-         socket
-         |> assign(:tasks, tasks)
-         |> assign(:selected_task, nil)
-         |> assign(:show_task_drawer, false)
-         |> refresh_kanban_summary()
-         |> put_flash(:info, "Task deleted")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to delete task: #{inspect(reason)}")}
     end
   end
 
@@ -4219,38 +4072,6 @@ defmodule IexCodeWeb.WorkspaceLive do
 
   def handle_event("delete_session", _params, socket), do: {:noreply, socket}
 
-  defp delete_authorized_session(socket, session) do
-    stop_session_server(session.id)
-
-    case Sessions.delete_session(session) do
-      {:ok, _} ->
-        case Sessions.list_sessions_for_project(socket.assigns.project.id) do
-          [] ->
-            case Sessions.create_session(%{
-                   project_id: socket.assigns.project.id,
-                   title: "Coding Session 1"
-                 }) do
-              {:ok, replacement} ->
-                {:noreply, push_patch(socket, to: ~p"/sessions/#{replacement.id}")}
-
-              {:error, reason} ->
-                {:noreply,
-                 put_flash(
-                   socket,
-                   :error,
-                   "Failed to create replacement session: #{inspect(reason)}"
-                 )}
-            end
-
-          [next | _] ->
-            {:noreply, push_patch(socket, to: ~p"/sessions/#{next.id}")}
-        end
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to delete session: #{inspect(reason)}")}
-    end
-  end
-
   # ============================================================================
   # Event Handlers: Terminal Integration & PTY Control
   # ============================================================================
@@ -4621,6 +4442,185 @@ defmodule IexCodeWeb.WorkspaceLive do
   @impl true
   def handle_event(_event, _params, socket) do
     {:noreply, socket}
+  end
+
+  defp delete_authorized_scheduled_task(socket, task) do
+    case Kanban.delete_task(task) do
+      {:ok, _deleted} ->
+        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+        {:noreply,
+         socket
+         |> assign(:tasks, tasks)
+         |> assign(:show_scheduled_task_modal, false)
+         |> assign(:selected_scheduled_task, nil)
+         |> assign(:pending_calendar_task_delete, nil)
+         |> refresh_kanban_summary()
+         |> push_event("calendar_delete_focus", %{id: "calendar-focus-return-target"})
+         |> put_flash(:info, "Scheduled task removed")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to remove task: #{inspect(reason)}")}
+    end
+  end
+
+  defp close_clean_file_buffer(socket, path) do
+    buffers = Enum.reject(socket.assigns.open_buffers, &(&1.path == path))
+
+    {selected, content, dirty_content, is_dirty} =
+      if socket.assigns.selected_file == path do
+        case buffers do
+          [first | _] ->
+            {first.path, first.content, first.dirty_content, first.dirty?}
+
+          [] ->
+            {nil, nil, nil, false}
+        end
+      else
+        {socket.assigns.selected_file, socket.assigns.file_content, socket.assigns.dirty_content,
+         socket.assigns.is_dirty?}
+      end
+
+    socket
+    |> assign(:open_buffers, buffers)
+    |> assign(:selected_file, selected)
+    |> assign(:file_content, content)
+    |> assign(:dirty_content, dirty_content)
+    |> assign(:is_dirty?, is_dirty)
+    |> rebuild_instrument_summaries()
+  end
+
+  defp valid_git_branch_name?(name) when is_binary(name) and name != "" do
+    not String.starts_with?(name, "-") and
+      not String.contains?(name, ["..", "@{", " ", "~", "^", ":", "?", "*", "[", "\\"]) and
+      not String.ends_with?(name, ["/", ".", ".lock"])
+  end
+
+  defp valid_git_branch_name?(_), do: false
+
+  defp perform_git_fetch(socket) do
+    root = socket.assigns.project.root_path
+
+    case with_ui_mutation_lock(socket, fn -> Git.fetch(root) end) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(:pending_git_confirmation, nil)
+         |> refresh_git_state()
+         |> put_flash(:info, "Fetched latest remote updates")}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> assign(:pending_git_confirmation, nil)
+         |> refresh_git_state()
+         |> put_flash(:error, "Fetch failed: #{ui_mutation_error(reason)}")}
+    end
+  end
+
+  defp perform_task_move(socket, id, status, interaction) do
+    case scoped_task(socket, id) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Task not found")}
+
+      task ->
+        if explicit_task_move_allowed?(socket, task, status, interaction) do
+          persist_task_move(socket, task, status, interaction)
+        else
+          {:noreply, put_flash(socket, :error, "Invalid task status")}
+        end
+    end
+  end
+
+  defp explicit_task_move_allowed?(_socket, _task, _status, :pointer), do: true
+
+  defp explicit_task_move_allowed?(socket, task, status, :explicit) do
+    socket.assigns.active_view == "kanban" and socket.assigns.moving_task_id == task.id and
+      status in Kanban.Task.statuses()
+  end
+
+  defp persist_task_move(socket, task, status, interaction) do
+    case Kanban.move_task_status(task, status) do
+      {:ok, updated} ->
+        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+        selected =
+          if socket.assigns.selected_task && socket.assigns.selected_task.id == task.id,
+            do: updated,
+            else: socket.assigns.selected_task
+
+        {:noreply,
+         socket
+         |> assign(:tasks, tasks)
+         |> assign(:selected_task, selected)
+         |> assign(:expanded_task_status, updated.status)
+         |> finish_task_move(updated, interaction)
+         |> refresh_kanban_summary()}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Invalid task status")}
+    end
+  end
+
+  defp finish_task_move(socket, updated, :explicit) do
+    socket
+    |> clear_task_move_state()
+    |> assign(:task_move_announcement, "Moved #{updated.title} to #{updated.status}")
+    |> push_event("focus_task", %{id: "task-card-#{updated.id}"})
+  end
+
+  defp finish_task_move(socket, updated, :pointer) do
+    assign(socket, :task_move_announcement, "Moved #{updated.title} to #{updated.status}")
+  end
+
+  defp delete_authorized_task(socket, task) do
+    case Kanban.delete_task(task) do
+      {:ok, _deleted} ->
+        tasks = Kanban.list_tasks(socket.assigns.project.id, socket.assigns.kanban_filter)
+
+        {:noreply,
+         socket
+         |> assign(:tasks, tasks)
+         |> assign(:selected_task, nil)
+         |> assign(:show_task_drawer, false)
+         |> refresh_kanban_summary()
+         |> put_flash(:info, "Task deleted")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to delete task: #{inspect(reason)}")}
+    end
+  end
+
+  defp delete_authorized_session(socket, session) do
+    stop_session_server(session.id)
+
+    case Sessions.delete_session(session) do
+      {:ok, _} ->
+        case Sessions.list_sessions_for_project(socket.assigns.project.id) do
+          [] ->
+            case Sessions.create_session(%{
+                   project_id: socket.assigns.project.id,
+                   title: "Coding Session 1"
+                 }) do
+              {:ok, replacement} ->
+                {:noreply, push_patch(socket, to: ~p"/sessions/#{replacement.id}")}
+
+              {:error, reason} ->
+                {:noreply,
+                 put_flash(
+                   socket,
+                   :error,
+                   "Failed to create replacement session: #{inspect(reason)}"
+                 )}
+            end
+
+          [next | _] ->
+            {:noreply, push_patch(socket, to: ~p"/sessions/#{next.id}")}
+        end
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to delete session: #{inspect(reason)}")}
+    end
   end
 
   # ============================================================================
