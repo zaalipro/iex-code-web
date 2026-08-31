@@ -56,6 +56,24 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     refute has_element?(view, "#workspace-desktop-tabs")
   end
 
+  test "deck and canonical workbenches keep unique hook IDs and in-document references", %{
+    view: view,
+    session: session
+  } do
+    assert_document_integrity(view)
+
+    for surface <- ~w(swarm kanban calendar changes chat files terminal) do
+      render_patch(view, "/sessions/#{session.id}")
+      view |> element("#instrument-card-#{surface}") |> render_click()
+      assert_document_integrity(view)
+      assert has_element?(view, "#instrument-workbench-#{surface}.sf-chassis")
+    end
+
+    render_patch(view, "/sessions/#{session.id}/research")
+    assert_document_integrity(view)
+    assert has_element?(view, "#instrument-workbench-research.sf-chassis")
+  end
+
   test "kanban channels and sibling task movement controls are keyboard semantic", %{
     view: view,
     task: task
@@ -274,5 +292,59 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
     view.pid
     |> :sys.get_state()
     |> then(& &1.socket.assigns)
+  end
+
+  defp assert_document_integrity(view) do
+    document = view |> render() |> LazyHTML.from_fragment()
+
+    ids =
+      document
+      |> LazyHTML.query("[id]")
+      |> Enum.flat_map(&(LazyHTML.attribute(&1, "id") || []))
+
+    assert ids == Enum.uniq(ids)
+
+    hook_nodes = LazyHTML.query(document, "[phx-hook]")
+
+    hook_ids =
+      hook_nodes
+      |> Enum.flat_map(&(LazyHTML.attribute(&1, "id") || []))
+
+    assert length(hook_ids) == Enum.count(hook_nodes)
+    assert hook_ids == Enum.uniq(hook_ids)
+    refute Enum.any?(hook_ids, &(&1 in [nil, ""]))
+
+    for node <- hook_nodes do
+      [hook] = LazyHTML.attribute(node, "phx-hook")
+      ignored? = LazyHTML.attribute(node, "phx-update") == ["ignore"]
+
+      if hook in ["TerminalHook", "LocalTime", "CodeCopy"] do
+        assert ignored?, "#{hook} must isolate its owned DOM"
+      else
+        refute ignored?, "#{hook} must leave LiveView-owned DOM patchable"
+      end
+    end
+
+    for node <- LazyHTML.query(document, "[aria-labelledby], [aria-describedby], label[for]") do
+      for attr <- ["aria-labelledby", "aria-describedby", "for"],
+          value <- LazyHTML.attribute(node, attr),
+          ref <- String.split(value, ~r/\s+/, trim: true) do
+        assert ref in ids, "missing in-document #{attr} reference ##{ref}"
+      end
+    end
+
+    for node <- LazyHTML.query(document, "[aria-controls][aria-expanded='true']"),
+        value <- LazyHTML.attribute(node, "aria-controls"),
+        ref <- String.split(value, ~r/\s+/, trim: true) do
+      assert ref in ids, "missing expanded aria-controls reference ##{ref}"
+    end
+
+    for selector <- [
+          ":is(a[href], button, input:not([type='hidden']), select, textarea, [role='button'], [tabindex]:not([tabindex='-1'])) :is(a[href], button, input:not([type='hidden']), select, textarea, [role='button'], [tabindex]:not([tabindex='-1']))",
+          "form form"
+        ] do
+      assert Enum.empty?(LazyHTML.query(document, selector)),
+             "nested interactive controls: #{selector}"
+    end
   end
 end

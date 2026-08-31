@@ -2270,7 +2270,7 @@
 }
 
 @media (pointer: coarse) {
-  :where(.sf-instrument:is(a, button, [role="button"]), .sf-control, .sf-pill, .sf-command-dock :is(a, button, input, textarea, select), .sf-focus-surface :is(a, button, input, textarea, select)) {
+  :where(.sf-instrument:is(a, button, [role="button"]), .sf-control, .sf-pill, .sf-command-dock :is(a, button, input, textarea, select), .sf-focus-surface :is(a, button, input, textarea, select), .sf-chassis :is(a, button, input, textarea, select), [id^="instrument-workbench-"] :is(a, button, input, textarea, select)) {
     min-width: 44px;
     min-height: 44px;
   }

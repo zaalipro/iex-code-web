@@ -51,7 +51,9 @@
               id="resume-instrument"
               patch={@resume_instrument.path}
               data-surface={@resume_instrument.surface}
-              class="sf-focus-surface absolute right-5 top-5 z-10 rounded-full border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-4 py-2 text-xs font-semibold tracking-wide text-[var(--sf-text-primary)] transition-colors hover:bg-[var(--sf-raised-control)] md:right-7 md:top-7"
+              class={[
+                "sf-focus-surface absolute right-5 top-5 z-10 rounded-full border border-[var(--sf-hairline)] bg-[var(--sf-instrument-raised)] px-4 py-2 text-xs font-semibold tracking-wide text-[var(--sf-text-primary)] transition-colors hover:bg-[var(--sf-raised-control)] md:right-7 md:top-7"
+              ]}
             >
               Resume {@resume_instrument.title}
             </.link>
@@ -2038,6 +2040,7 @@
                           id={"copy-msg-btn-#{msg_id}"}
                           type="button"
                           phx-hook="CodeCopy"
+                          phx-update="ignore"
                           data-code={msg.content}
                           aria-label={"Copy message ##{idx + 1}"}
                           class="sf-control min-h-11 min-w-11 justify-center p-2"
@@ -3235,6 +3238,7 @@
                 id="copy-expanded-msg-btn"
                 type="button"
                 phx-hook="CodeCopy"
+                phx-update="ignore"
                 data-code={expanded_msg.content}
                 class="sf-control flex min-h-11 items-center gap-1.5 px-2.5 font-mono text-xs"
               >

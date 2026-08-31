@@ -183,6 +183,38 @@ defmodule IexCodeWeb.InstrumentComponentsTest do
     end
   end
 
+  test "deck controls keep scoped Signal Foundry classes, unique IDs, and quiet live semantics" do
+    document = render_deck()
+
+    ids =
+      document
+      |> LazyHTML.query("#instrument-deck [id]")
+      |> Enum.flat_map(&(LazyHTML.attribute(&1, "id") || []))
+
+    assert ids == Enum.uniq(ids)
+
+    classes =
+      document
+      |> LazyHTML.query("#instrument-deck [class]")
+      |> Enum.flat_map(&(LazyHTML.attribute(&1, "class") || []))
+      |> Enum.flat_map(&String.split/1)
+
+    refute Enum.any?(
+             classes,
+             &Regex.match?(
+               ~r/rainbow|neon|drop-shadow|^(?:bg-gradient|bg-(?:linear|radial|conic)|from-|via-|to-)/i,
+               &1
+             )
+           )
+
+    assert Enum.empty?(
+             LazyHTML.query(
+               document,
+               "#instrument-deck [aria-live], #instrument-deck [role='status'], #instrument-deck [role='log']"
+             )
+           )
+  end
+
   test "nil primary fallbacks distinguish valid empty, standby, ready, and error states" do
     cases = [
       {"kanban", :empty, "No tasks yet"},

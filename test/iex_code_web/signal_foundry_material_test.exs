@@ -50,8 +50,8 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
   end
 
   test "defines explicit and system-default Signal Foundry theme tokens", %{css: css} do
-    dark_tokens = css_block(css, ~s|:root[data-theme="dark"]|)
-    light_tokens = css_block(css, ~s|:root[data-theme="light"]|)
+    dark_tokens = theme_token_block(css, "dark")
+    light_tokens = theme_token_block(css, "light")
 
     for declaration <- [
           "--sf-canvas-ambient: #171514",
@@ -107,7 +107,10 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
       media_block =
         css
         |> at_rule_blocks("@media (prefers-color-scheme: #{scheme})")
-        |> Enum.find(&String.contains?(&1, ":root:not([data-theme])"))
+        |> Enum.find(
+          &(String.contains?(&1, ":root:not([data-theme])") and
+              String.contains?(&1, "--sf-canvas-ambient"))
+        )
 
       assert media_block, "missing no-theme #{scheme} media default"
 
@@ -230,14 +233,16 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
   test "raises Signal Foundry touch targets to 44px on coarse pointers", %{css: css} do
     coarse_pointer =
       at_rule_blocks(css, "@media (pointer: coarse)")
-      |> Enum.find(&String.contains?(&1, "min-height: 44px"))
+      |> Enum.find(
+        &(String.contains?(&1, ".sf-instrument") and String.contains?(&1, "min-height: 44px"))
+      )
 
     assert coarse_pointer
 
     target_rule =
       css_block(
         coarse_pointer,
-        ~s|:where(.sf-instrument:is(a, button, [role="button"]), .sf-control, .sf-pill, .sf-command-dock :is(a, button, input, textarea, select), .sf-focus-surface :is(a, button, input, textarea, select))|
+        ~s|:where(.sf-instrument:is(a, button, [role="button"]), .sf-control, .sf-pill, .sf-command-dock :is(a, button, input, textarea, select), .sf-focus-surface :is(a, button, input, textarea, select), .sf-chassis :is(a, button, input, textarea, select), [id^="instrument-workbench-"] :is(a, button, input, textarea, select))|
       )
 
     assert target_rule =~ "min-width: 44px"
@@ -315,6 +320,21 @@ defmodule IexCodeWeb.SignalFoundryMaterialTest do
 
       [_all_css] ->
         flunk("missing CSS block for #{prelude}")
+    end
+  end
+
+  defp theme_token_block(css, theme) do
+    selector = ~s|:root[data-theme="#{theme}"]|
+
+    css
+    |> then(
+      &Regex.scan(~r/#{Regex.escape(selector)}\s*\{([^{}]*)\}/s, &1, capture: :all_but_first)
+    )
+    |> Enum.map(&List.first/1)
+    |> Enum.find(&String.contains?(&1, "--sf-canvas-ambient"))
+    |> case do
+      nil -> flunk("missing Signal Foundry #{theme} token block")
+      block -> block
     end
   end
 end

@@ -57,6 +57,13 @@ defmodule IexCodeWeb.WorkspaceComponentsWorkbenchTest do
              "#instrument-workbench-chat-status[role='status'][aria-live='polite']"
            )
 
+    assert Enum.count(
+             LazyHTML.query(
+               doc,
+               "#instrument-workbench-chat [role='status'][aria-live='polite']"
+             )
+           ) == 1
+
     assert LazyHTML.text(doc) =~ "Ready"
     assert matches?(doc, "#primary-one")
     refute matches?(doc, "#primary-two")
@@ -66,6 +73,23 @@ defmodule IexCodeWeb.WorkspaceComponentsWorkbenchTest do
     assert matches?(doc, "[data-workbench-command-dock] #command-dock")
     refute matches?(doc, "nav")
     refute matches?(doc, "form")
+
+    ids =
+      doc
+      |> LazyHTML.query("#instrument-workbench-chat [id]")
+      |> Enum.flat_map(&(LazyHTML.attribute(&1, "id") || []))
+
+    assert ids == Enum.uniq(ids)
+
+    for selector <- [
+          "a[href] a[href]",
+          "a[href] button",
+          "button a[href]",
+          "button button",
+          "form form"
+        ] do
+      refute matches?(doc, "#instrument-workbench-chat #{selector}")
+    end
 
     assert matches?(
              doc,

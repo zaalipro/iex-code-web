@@ -570,6 +570,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
             id="copy-diff-btn"
             type="button"
             phx-hook="CodeCopy"
+            phx-update="ignore"
             data-code={@diff_text}
             aria-label="Copy selected diff"
             class="sf-control px-2.5 py-1 text-xs font-mono transition-smooth flex items-center gap-1.5"
@@ -1179,6 +1180,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
               <button
                 id="copy-file-btn"
                 phx-hook="CodeCopy"
+                phx-update="ignore"
                 data-code={@current_text}
                 aria-label={"Copy #{@selected_file} contents"}
                 title="Copy file contents"
@@ -1775,6 +1777,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                     <button
                       type="button"
                       phx-hook="CodeCopy"
+                      phx-update="ignore"
                       data-code={code}
                       id={"copy-code-" <> to_string(:erlang.phash2({lang, code}))}
                       class="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-[#21262d] hover:bg-gray-700 text-gray-300 transition-smooth"
