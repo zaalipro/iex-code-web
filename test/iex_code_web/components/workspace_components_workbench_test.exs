@@ -124,6 +124,58 @@ defmodule IexCodeWeb.WorkspaceComponentsWorkbenchTest do
     assert matches?(doc, "[data-workbench-primary-field] #only-field")
   end
 
+  test "mission control children use shared matte tokens and readable chrome" do
+    assigns = %{operations: [], expanded_ops: MapSet.new()}
+
+    html =
+      rendered_to_string(~H"""
+      <section id="instrument-workbench-swarm">
+        <.subagent_cards operations={@operations} />
+        <.operation_tree operations={@operations} expanded_ops={@expanded_ops} />
+      </section>
+      """)
+
+    document = LazyHTML.from_fragment(html)
+
+    classes =
+      document
+      |> LazyHTML.query("#instrument-workbench-swarm [class]")
+      |> Enum.flat_map(&(LazyHTML.attribute(&1, "class") || []))
+      |> Enum.flat_map(&String.split/1)
+
+    refute Enum.any?(
+             classes,
+             &Regex.match?(~r/bg-\[#|ring-(?!focus)|shadow-\[|transition-all/i, &1)
+           )
+
+    refute Enum.any?(classes, &Regex.match?(~r/text-\[(?:10|11)px\]/i, &1))
+    assert Enum.any?(classes, &(&1 == "sf-instrument"))
+  end
+
+  test "repeated identical code blocks keep unique caller-scoped CodeCopy hook IDs" do
+    assigns = %{
+      content: "```elixir\nIO.puts(\"same\")\n```\n\n```elixir\nIO.puts(\"same\")\n```",
+      namespace: "message-42"
+    }
+
+    html =
+      rendered_to_string(~H"""
+      <section>
+        <.markdown_content content={@content} namespace={@namespace} />
+        <.markdown_content content={@content} namespace="message-43" />
+      </section>
+      """)
+
+    document = LazyHTML.from_fragment(html)
+    hooks = LazyHTML.query(document, "[phx-hook='CodeCopy'][phx-update='ignore'][data-code]")
+    ids = Enum.flat_map(hooks, &(LazyHTML.attribute(&1, "id") || []))
+
+    assert length(ids) == 4
+    assert ids == Enum.uniq(ids)
+    assert Enum.count(ids, &String.starts_with?(&1, "copy-code-message-42-")) == 2
+    assert Enum.count(ids, &String.starts_with?(&1, "copy-code-message-43-")) == 2
+  end
+
   defp matches?(document, selector) do
     document |> LazyHTML.query(selector) |> LazyHTML.to_tree() != []
   end

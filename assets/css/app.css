@@ -98,7 +98,7 @@
   top: 1.1rem;
   width: 0.65rem;
   height: 1px;
-  background-color: #2a313c;
+  background-color: var(--sf-hairline);
 }
 .tree-node-connector::after {
   content: "";
@@ -107,10 +107,200 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background-color: #2a313c;
+  background-color: var(--sf-hairline);
 }
 .tree-node-connector:last-child::after {
   height: 1.1rem;
+}
+
+/* Mission Control role telemetry ----------------------------------------- */
+.sf-swarm-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.sf-swarm-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  border: 1px solid var(--sf-hairline);
+  border-radius: 18px;
+  background: var(--sf-instrument);
+  box-shadow: inset 0 1px 0 var(--sf-inset-highlight), 0 18px 42px -32px var(--sf-shadow);
+  color: var(--sf-text-primary);
+  transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+
+.sf-swarm-card:hover { border-color: color-mix(in srgb, var(--sf-focus-ring) 34%, var(--sf-hairline)); }
+.sf-swarm-card--running { border-color: color-mix(in srgb, var(--sf-live-mark) 48%, var(--sf-hairline)); }
+.sf-swarm-card--active { border-color: color-mix(in srgb, var(--sf-focus-ring) 52%, var(--sf-hairline)); }
+
+.sf-swarm-live-mark {
+  height: 2px;
+  background: var(--sf-live-mark);
+  opacity: 0.78;
+}
+
+.sf-swarm-card__header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1rem 0;
+}
+
+.sf-swarm-role {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--sf-topology-text);
+  font-family: "Doto", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.sf-swarm-card__badges { display: flex; min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; }
+
+.sf-swarm-badge,
+.sf-swarm-status,
+.sf-swarm-stage {
+  display: inline-flex;
+  min-height: 1.75rem;
+  align-items: center;
+  border: 1px solid var(--sf-hairline);
+  border-radius: 8px;
+  padding: 0.22rem 0.5rem;
+  font-family: "Doto", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+}
+
+.sf-swarm-badge--owner {
+  max-width: 12rem;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--sf-success-mark) 9%, transparent);
+  color: var(--sf-success-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-swarm-status--running,
+.sf-swarm-status--failed {
+  border-color: color-mix(in srgb, var(--sf-live-mark) 42%, transparent);
+  background: color-mix(in srgb, var(--sf-live-mark) 10%, transparent);
+  color: var(--sf-live-text);
+}
+
+.sf-swarm-status--complete {
+  border-color: color-mix(in srgb, var(--sf-success-mark) 42%, transparent);
+  background: color-mix(in srgb, var(--sf-success-mark) 10%, transparent);
+  color: var(--sf-success-text);
+}
+
+.sf-swarm-status--idle { background: var(--sf-raised-control); color: var(--sf-text-secondary); }
+
+.sf-swarm-description {
+  min-height: 3rem;
+  margin: 0.75rem 1rem 0;
+  overflow: hidden;
+  color: var(--sf-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.sf-swarm-stage-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.65rem 1rem 0; }
+.sf-swarm-stage--active { border-color: color-mix(in srgb, var(--sf-topology-text) 38%, transparent); background: color-mix(in srgb, var(--sf-topology-text) 10%, transparent); color: var(--sf-topology-text); }
+.sf-swarm-stage--failed { border-color: color-mix(in srgb, var(--sf-live-mark) 38%, transparent); background: color-mix(in srgb, var(--sf-live-mark) 9%, transparent); color: var(--sf-live-text); }
+.sf-swarm-stage-caption { color: var(--sf-text-secondary); font-size: 0.75rem; }
+
+.sf-swarm-card__footer { margin-top: 1rem; border-top: 1px solid var(--sf-hairline); padding: 0.75rem 1rem 1rem; }
+.sf-swarm-card__metrics { display: flex; align-items: center; justify-content: space-between; color: var(--sf-text-secondary); font-family: "Doto", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+.sf-swarm-card__metrics strong { color: var(--sf-text-primary); font-weight: 650; }
+.sf-swarm-progress-label--complete { color: var(--sf-success-text); }
+.sf-swarm-progress { height: 0.35rem; margin-top: 0.55rem; overflow: hidden; border-radius: 999px; background: var(--sf-raised-control); }
+.sf-swarm-progress__fill { height: 100%; border-radius: inherit; background: var(--sf-topology-text); transition: width 240ms ease, background-color 180ms ease; }
+.sf-swarm-progress__fill--running { background: var(--sf-live-mark); }
+.sf-swarm-progress__fill--complete { background: var(--sf-success-mark); }
+
+/* Mission Control operation hierarchy ----------------------------------- */
+.sf-operation-tree {
+  display: grid;
+  gap: 1rem;
+  border: 1px solid var(--sf-hairline);
+  border-radius: 22px;
+  background: var(--sf-instrument);
+  box-shadow: inset 0 1px 0 var(--sf-inset-highlight), 0 18px 48px -36px var(--sf-shadow);
+  padding: 1.25rem;
+  color: var(--sf-text-primary);
+}
+
+.sf-operation-tree__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--sf-hairline); padding-bottom: 0.85rem; }
+.sf-operation-tree__heading { min-width: 0; }
+.sf-operation-tree__title { display: flex; align-items: center; gap: 0.5rem; color: var(--sf-text-primary); font-family: "Doto", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9375rem; font-weight: 650; }
+.sf-operation-tree__count { border: 1px solid var(--sf-hairline); border-radius: 8px; background: var(--sf-raised-control); padding: 0.2rem 0.45rem; color: var(--sf-text-secondary); font-size: 0.75rem; font-weight: 500; }
+.sf-operation-tree__stats { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 0.45rem; color: var(--sf-text-secondary); font-family: "Doto", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+.sf-operation-tree__stats > span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.sf-operation-tree__failure { color: var(--sf-live-text); }
+.sf-operation-tree__dot { width: 0.45rem; height: 0.45rem; border-radius: 999px; background: var(--sf-text-secondary); }
+.sf-operation-tree__dot--complete { background: var(--sf-success-mark); }
+.sf-operation-tree__dot--running { background: var(--sf-live-mark); }
+.sf-operation-tree__dot--failed { background: var(--sf-live-mark); }
+.sf-operation-tree__clear { min-height: 2.75rem; gap: 0.35rem; color: var(--sf-text-secondary); font-size: 0.75rem; }
+.sf-operation-tree__clear:hover { color: var(--sf-live-text); }
+.sf-operation-tree__nodes { display: grid; gap: 0.55rem; font-family: "Doto", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sf-operation-tree__empty { border: 1px dashed var(--sf-hairline); border-radius: 14px; padding: 2rem 1rem; color: var(--sf-text-secondary); font-size: 0.8125rem; text-align: center; }
+.sf-operation-node { border: 1px solid var(--sf-hairline); border-radius: 14px; background: var(--sf-instrument-raised); padding: 0.75rem; transition: border-color 180ms ease, background-color 180ms ease; }
+.sf-operation-node:hover { border-color: color-mix(in srgb, var(--sf-focus-ring) 34%, var(--sf-hairline)); }
+.sf-operation-node--running { border-color: color-mix(in srgb, var(--sf-live-mark) 42%, var(--sf-hairline)); }
+.sf-operation-node--failed { border-color: color-mix(in srgb, var(--sf-live-mark) 42%, var(--sf-hairline)); background: color-mix(in srgb, var(--sf-live-mark) 5%, var(--sf-instrument-raised)); }
+.sf-operation-node__row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.sf-operation-node__identity { display: flex; min-width: 0; flex: 1; align-items: center; gap: 0.55rem; }
+.sf-operation-node__toggle,
+.sf-operation-node__inspect { min-height: 2.25rem; min-width: 2.25rem; justify-content: center; padding: 0.35rem; color: var(--sf-text-secondary); }
+.sf-operation-node__status { width: 0.55rem; height: 0.55rem; flex: none; border-radius: 999px; background: var(--sf-text-secondary); }
+.sf-operation-node__status--complete { background: var(--sf-success-mark); }
+.sf-operation-node__status--running { background: var(--sf-live-mark); }
+.sf-operation-node__status--failed { background: var(--sf-live-mark); }
+.sf-operation-node__agent { flex: none; color: var(--sf-text-primary); font-size: 0.8125rem; font-weight: 650; }
+.sf-operation-node__type { flex: none; border: 1px solid var(--sf-hairline); border-radius: 7px; background: var(--sf-raised-control); padding: 0.2rem 0.4rem; color: var(--sf-text-secondary); font-size: 0.75rem; }
+.sf-operation-node__title { min-width: 0; overflow: hidden; color: var(--sf-text-secondary); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
+.sf-operation-node__metrics { display: flex; flex: none; align-items: center; gap: 0.65rem; color: var(--sf-text-secondary); font-size: 0.75rem; }
+.sf-operation-node__pid { max-width: 10rem; overflow: hidden; border: 1px solid color-mix(in srgb, var(--sf-success-mark) 35%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--sf-success-mark) 8%, transparent); padding: 0.2rem 0.4rem; color: var(--sf-success-text); text-overflow: ellipsis; white-space: nowrap; }
+.sf-operation-node__details { display: grid; gap: 0.55rem; margin-top: 0.75rem; border-top: 1px solid var(--sf-hairline); padding-top: 0.75rem; color: var(--sf-text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+.sf-operation-node__error,
+.sf-operation-node__result,
+.sf-operation-node__params { border: 1px solid var(--sf-hairline); border-radius: 10px; padding: 0.65rem; white-space: pre-wrap; }
+.sf-operation-node__error { border-color: color-mix(in srgb, var(--sf-live-mark) 36%, transparent); background: color-mix(in srgb, var(--sf-live-mark) 8%, transparent); color: var(--sf-live-text); }
+.sf-operation-node__error strong,
+.sf-operation-node__result strong { display: block; margin-bottom: 0.2rem; color: var(--sf-text-primary); }
+.sf-operation-node__result { max-height: 12rem; overflow-y: auto; background: var(--sf-code-surface); color: var(--sf-code-text); }
+.sf-operation-node__params { background: var(--sf-raised-control); }
+
+@media (min-width: 48rem) {
+  .sf-swarm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 80rem) {
+  .sf-swarm-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 39.99rem) {
+  .sf-operation-tree { padding: 1rem; }
+  .sf-operation-node__row { align-items: flex-start; }
+  .sf-operation-node__metrics { gap: 0.35rem; }
+  .sf-operation-node__metrics > span { display: none; }
 }
 
 /* Subtle smooth fade transitions */

@@ -2033,7 +2033,7 @@
                         />
                       <% end %>
                       <div class="sf-chat-prose">
-                        <.markdown_content content={msg.content} />
+                        <.markdown_content content={msg.content} namespace={"chat-message-#{msg_id}"} />
                       </div>
                       <footer class="sf-chat-message-actions">
                         <button
@@ -3258,7 +3258,10 @@
         </div>
         <div id="expanded-message-body" class="sf-chat-prose sf-sheet-scroll flex-1 p-6">
           <%= if expanded_msg do %>
-            <.markdown_content content={expanded_msg.content} />
+            <.markdown_content
+              content={expanded_msg.content}
+              namespace={"expanded-message-#{expanded_msg.id}"}
+            />
           <% end %>
         </div>
       </div>

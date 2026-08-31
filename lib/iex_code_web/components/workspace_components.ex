@@ -38,59 +38,35 @@ defmodule IexCodeWeb.WorkspaceComponents do
         key: :planner,
         title: "Planner",
         desc: "Architecture decomposition & milestone planning",
-        icon: "hero-map",
-        color: "purple",
-        bg_color: "bg-purple-500",
-        text_color: "text-purple-400",
-        border_color: "border-purple-500/50",
-        shadow: "shadow-[0_0_10px_rgba(168,85,247,0.5)]",
-        shadow_tint: "shadow-purple-500/10"
+        icon: "hero-map"
       },
       %{
         name: "ExplorerAgent",
         key: :explorer,
         title: "Explorer",
         desc: "AST code discovery, file tree inspection, symbol lookups",
-        icon: "hero-magnifying-glass",
-        color: "cyan",
-        bg_color: "bg-cyan-500",
-        text_color: "text-cyan-400",
-        border_color: "border-cyan-500/50",
-        shadow: "shadow-[0_0_10px_rgba(6,182,212,0.5)]",
-        shadow_tint: "shadow-cyan-500/10"
+        icon: "hero-magnifying-glass"
       },
       %{
         name: "CoderAgent",
         key: :coder,
         title: "Coder",
         desc: "MultiPatch fuzzy patch formulation & atomic file generation",
-        icon: "hero-code-bracket",
-        color: "amber",
-        bg_color: "bg-amber-500",
-        text_color: "text-amber-400",
-        border_color: "border-amber-500/50",
-        shadow: "shadow-[0_0_10px_rgba(245,158,11,0.5)]",
-        shadow_tint: "shadow-amber-500/10"
+        icon: "hero-code-bracket"
       },
       %{
         name: "VerifierAgent",
         key: :verifier,
         title: "Verifier",
         desc: "ExUnit test runner, compiler backtrace parser & AutoFix loop",
-        icon: "hero-check-badge",
-        color: "emerald",
-        bg_color: "bg-emerald-500",
-        text_color: "text-emerald-400",
-        border_color: "border-emerald-500/50",
-        shadow: "shadow-[0_0_10px_rgba(34,197,94,0.5)]",
-        shadow_tint: "shadow-emerald-500/10"
+        icon: "hero-check-badge"
       }
     ]
 
     assigns = assign(assigns, :agents, agents)
 
     ~H"""
-    <div id="subagent-cards-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+    <div id="subagent-cards-grid" class="sf-swarm-grid">
       <%= for agent <- @agents do %>
         <% op = latest_op_for_agent(@operations, agent.name)
 
@@ -126,54 +102,38 @@ defmodule IexCodeWeb.WorkspaceComponents do
         <div
           id={"subagent-card-#{agent.key}"}
           class={[
-            "bg-[#11151c] border rounded-2xl p-4 flex flex-col justify-between transition-smooth relative overflow-hidden",
-            normalized_status == "running" && "#{agent.border_color} shadow-lg #{agent.shadow_tint}",
-            normalized_status != "running" && "border-[#21262d] hover:border-[#30363d]",
-            is_active && "ring-1 ring-cyan-500/40"
+            "sf-instrument sf-swarm-card",
+            normalized_status == "running" && "sf-swarm-card--running",
+            is_active && "sf-swarm-card--active"
           ]}
         >
-          <!-- Active neon top line -->
           <%= if normalized_status == "running" do %>
-            <div class={[
-              "absolute top-0 left-0 right-0 h-0.5",
-              agent.bg_color,
-              agent.shadow,
-              "animate-pulse"
-            ]}>
-            </div>
+            <div class="sf-swarm-live-mark" aria-hidden="true"></div>
           <% end %>
 
           <div>
             <!-- Header -->
-            <div class="flex items-center justify-between mb-2">
-              <span class={[
-                "font-mono text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5",
-                agent.text_color
-              ]}>
-                <.icon name={agent.icon} class="w-4 h-4" />
+            <div class="sf-swarm-card__header">
+              <span class="sf-swarm-role">
+                <.icon name={agent.icon} class="h-4 w-4" />
                 {agent.name}
               </span>
-              <div class="flex items-center gap-1.5">
+              <div class="sf-swarm-card__badges">
                 <%= if pid_str do %>
                   <span
-                    class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 truncate max-w-[90px]"
+                    class="sf-swarm-badge sf-swarm-badge--owner"
                     title={pid_str}
                   >
                     {pid_str}
                   </span>
                 <% else %>
-                  <span class="text-[10px] font-mono text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                  <span class="sf-swarm-badge sf-swarm-badge--owner">
                     Role template · OTP Supervised when active
                   </span>
                 <% end %>
                 <span class={[
-                  "text-[10px] font-mono px-1.5 py-0.5 rounded border font-semibold",
-                  normalized_status == "running" &&
-                    "text-amber-400 bg-amber-500/10 border-amber-500/30 animate-pulse",
-                  normalized_status == "completed" &&
-                    "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
-                  normalized_status == "failed" && "text-rose-400 bg-rose-500/10 border-rose-500/30",
-                  normalized_status == "idle" && "text-gray-400 bg-[#161b22] border-[#21262d]"
+                  "sf-swarm-status",
+                  swarm_status_class(normalized_status)
                 ]}>
                   {String.upcase(normalized_status)}
                 </span>
@@ -181,43 +141,45 @@ defmodule IexCodeWeb.WorkspaceComponents do
             </div>
 
             <!-- Role & Activity -->
-            <p class="text-[11px] text-gray-400 font-mono mb-2 line-clamp-2">
+            <p class="sf-swarm-description">
               {current_msg}
             </p>
 
             <!-- Active Stage / Agent indicator -->
             <%= if is_active do %>
-              <div class="flex items-center gap-1.5 mb-2">
+              <div class="sf-swarm-stage-row">
                 <span class={[
-                  "text-[10px] font-mono px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider",
-                  stage_failed && "text-rose-400 bg-rose-500/10 border-rose-500/30",
-                  not stage_failed && "text-cyan-300 bg-cyan-500/10 border-cyan-500/30"
+                  "sf-swarm-stage",
+                  stage_failed && "sf-swarm-stage--failed",
+                  not stage_failed && "sf-swarm-stage--active"
                 ]}>
                   Stage: {stage_label}
                 </span>
-                <span class="text-[10px] font-mono text-gray-500">Active Agent</span>
+                <span class="sf-swarm-stage-caption">Active Agent</span>
               </div>
             <% end %>
           </div>
 
           <!-- Progress & Latency Footer -->
-          <div class="pt-3 border-t border-[#21262d] space-y-1.5">
-            <div class="flex justify-between items-center text-[11px] font-mono text-gray-400">
-              <span class="text-[10px] text-gray-500">Latency:
-              <strong class="text-gray-300">{duration}</strong></span>
-              <span class={[
-                "font-semibold",
-                if(normalized_status == "completed", do: "text-emerald-400", else: "text-gray-300")
-              ]}>
+          <div class="sf-swarm-card__footer">
+            <div class="sf-swarm-card__metrics">
+              <span>Latency: <strong>{duration}</strong></span>
+              <span class={normalized_status == "completed" && "sf-swarm-progress-label--complete"}>
                 {progress}%
               </span>
             </div>
-            <div class="w-full bg-[#1c2128] h-1.5 rounded-full overflow-hidden">
+            <div
+              class="sf-swarm-progress"
+              role="progressbar"
+              aria-valuenow={progress}
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
               <div
                 class={[
-                  "h-full rounded-full transition-all duration-300 ease-out",
-                  agent.bg_color,
-                  normalized_status == "running" && agent.shadow
+                  "sf-swarm-progress__fill",
+                  normalized_status == "running" && "sf-swarm-progress__fill--running",
+                  normalized_status == "completed" && "sf-swarm-progress__fill--complete"
                 ]}
                 style={"width: #{max(progress, if(normalized_status == "running", do: 10, else: 0))}%"}
               >
@@ -229,6 +191,11 @@ defmodule IexCodeWeb.WorkspaceComponents do
     </div>
     """
   end
+
+  defp swarm_status_class("running"), do: "sf-swarm-status--running"
+  defp swarm_status_class("completed"), do: "sf-swarm-status--complete"
+  defp swarm_status_class("failed"), do: "sf-swarm-status--failed"
+  defp swarm_status_class(_), do: "sf-swarm-status--idle"
 
   defp latest_op_for_agent(operations, agent_name) do
     short_name = String.replace(agent_name, "Agent", "")
@@ -258,41 +225,41 @@ defmodule IexCodeWeb.WorkspaceComponents do
     ~H"""
     <div
       id="operation-tree-root"
-      class="bg-[#11151c] border border-[#21262d] rounded-2xl p-5 space-y-4"
+      class="sf-operation-tree"
     >
       <!-- Tree Header -->
-      <div class="flex items-center justify-between pb-3 border-b border-[#21262d]">
-        <div class="flex items-center gap-3">
-          <h3 class="text-sm font-semibold text-white font-mono flex items-center gap-2">
-            <.icon name="hero-list-bullet" class="w-4 h-4 text-emerald-400" /> Execution Hierarchy
-            <span class="px-2 py-0.5 rounded-full bg-[#1c2128] text-xs text-gray-400 border border-[#30363d]">
+      <div class="sf-operation-tree__header">
+        <div class="sf-operation-tree__heading">
+          <h3 class="sf-operation-tree__title">
+            <.icon name="hero-list-bullet" class="h-4 w-4 sf-topology-text" /> Execution Hierarchy
+            <span class="sf-operation-tree__count">
               {@stats.total} ops
             </span>
           </h3>
-          <div class="hidden sm:flex items-center gap-2 text-[11px] font-mono text-gray-400">
-            <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> {@stats.completed} done</span>
-            <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> {@stats.running} running</span>
+          <div class="sf-operation-tree__stats">
+            <span><span class="sf-operation-tree__dot sf-operation-tree__dot--complete"></span> {@stats.completed} done</span>
+            <span><span class="sf-operation-tree__dot sf-operation-tree__dot--running"></span> {@stats.running} running</span>
             <%= if @stats.failed > 0 do %>
-              <span class="flex items-center gap-1 text-rose-400"><span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> {@stats.failed} failed</span>
+              <span class="sf-operation-tree__failure"><span class="sf-operation-tree__dot sf-operation-tree__dot--failed"></span> {@stats.failed} failed</span>
             <% end %>
           </div>
         </div>
 
         <button
           phx-click="clear_operations"
-          class="text-xs font-mono text-gray-500 hover:text-rose-400 transition-smooth flex items-center gap-1"
+          class="sf-control sf-operation-tree__clear"
         >
-          <.icon name="hero-trash" class="w-3.5 h-3.5" /> Clear Operations
+          <.icon name="hero-trash" class="h-3.5 w-3.5" /> Clear Operations
         </button>
       </div>
 
       <!-- Tree Nodes List -->
       <%= if @tree == [] do %>
-        <div class="p-8 text-center text-gray-500 font-mono text-xs border border-dashed border-[#21262d] rounded-xl">
+        <div class="sf-operation-tree__empty">
           No operations recorded in this session.
         </div>
       <% else %>
-        <div class="space-y-2 font-mono text-xs">
+        <div class="sf-operation-tree__nodes">
           <%= for root_op <- @tree do %>
             <.tree_node op={root_op} depth={0} expanded_ops={@expanded_ops} />
           <% end %>
@@ -317,25 +284,22 @@ defmodule IexCodeWeb.WorkspaceComponents do
     ~H"""
     <div class={["relative", @depth > 0 && "pl-6 tree-node-connector"]}>
       <div class={[
-        "p-3 rounded-xl border transition-smooth",
-        @op.status == "running" && "bg-[#161b22] border-amber-500/40 shadow-sm",
-        @op.status == "failed" && "bg-[#1a1215] border-rose-500/40",
-        @op.status != "running" && @op.status != "failed" &&
-          "bg-[#161b22] border-[#21262d] hover:border-[#38404a]"
+        "sf-operation-node",
+        operation_status_class(@op.status)
       ]}>
         <!-- Top Row: Status, Agent, Title, Metrics, Chevron -->
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2.5 min-w-0 flex-1">
+        <div class="sf-operation-node__row">
+          <div class="sf-operation-node__identity">
             <!-- Expand / Collapse chevron if children exist -->
             <%= if @has_children do %>
               <button
                 phx-click="toggle_op_detail"
                 phx-value-id={@op.id}
-                class="text-gray-400 hover:text-white transition-smooth"
+                class="sf-control sf-operation-node__toggle"
               >
                 <.icon
                   name={if(@is_expanded, do: "hero-chevron-down", else: "hero-chevron-right")}
-                  class="w-3.5 h-3.5"
+                  class="h-3.5 w-3.5"
                 />
               </button>
             <% else %>
@@ -344,70 +308,66 @@ defmodule IexCodeWeb.WorkspaceComponents do
 
             <!-- Status Dot -->
             <span class={[
-              "w-2 h-2 rounded-full shrink-0",
-              @op.status == "completed" && "bg-emerald-400",
-              @op.status == "running" &&
-                "bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.6)]",
-              @op.status == "failed" && "bg-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.6)]",
-              @op.status == "pending" && "bg-gray-500"
+              "sf-operation-node__status",
+              operation_status_dot_class(@op.status)
             ]}></span>
 
             <!-- Agent Tag -->
-            <span class="font-bold text-white shrink-0 text-xs">
+            <span class="sf-operation-node__agent">
               {@op.agent_name || "System"}
             </span>
 
             <!-- Operation Type Badge -->
-            <span class="text-[10px] text-gray-400 bg-[#0d1117] border border-[#21262d] px-1.5 py-0.5 rounded shrink-0">
+            <span class="sf-operation-node__type">
               {@op.op_type}
             </span>
 
             <!-- Title -->
-            <span class="text-gray-300 truncate text-xs">
+            <span class="sf-operation-node__title">
               {@op.title}
             </span>
           </div>
 
           <!-- Right side metrics -->
-          <div class="flex items-center gap-3 text-[11px] text-gray-400 shrink-0">
+          <div class="sf-operation-node__metrics">
             <%= if @op.duration_ms do %>
-              <span class="text-gray-400">{@op.duration_ms}ms</span>
+              <span>{@op.duration_ms}ms</span>
             <% end %>
             <%= if @op.pid_str do %>
-              <span class="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 text-[10px]">
+              <span class="sf-operation-node__pid">
                 {@op.pid_str}
               </span>
             <% end %>
             <button
               phx-click="toggle_op_detail"
               phx-value-id={@op.id}
-              class="text-gray-400 hover:text-white p-1 rounded transition-smooth"
+              class="sf-control sf-operation-node__inspect"
               title="Inspect Details"
             >
-              <.icon name="hero-ellipsis-horizontal" class="w-3.5 h-3.5" />
+              <.icon name="hero-ellipsis-horizontal" class="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
 
         <!-- Detail Drawer (Parameters, Error, Result) -->
         <%= if @is_expanded do %>
-          <div class="mt-3 pt-3 border-t border-[#21262d] space-y-2 text-[11px] font-mono animate-in fade-in">
+          <div class="sf-operation-node__details">
             <%= if @op.error_message do %>
-              <div class="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/30 text-rose-300 whitespace-pre-wrap">
-                <strong class="text-rose-400">Error:</strong> {@op.error_message}
+              <div class="sf-operation-node__error">
+                <strong>Error:</strong> {@op.error_message}
               </div>
             <% end %>
 
             <%= if @op.result do %>
-              <div class="p-2.5 rounded-lg bg-[#0d1117] border border-[#21262d] text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                <strong class="text-gray-400 block mb-1">Result:</strong>
+              <div class="sf-operation-node__result">
+                <strong>Result:</strong>
                 {@op.result}
               </div>
             <% end %>
 
             <%= if @op.params && @op.params != %{} do %>
-              <div class="p-2 rounded bg-[#0d1117] border border-[#21262d] text-gray-400">
-                <span class="text-gray-500">Params:</span> {inspect(@op.params)}
+              <div class="sf-operation-node__params">
+                <span>Params:</span> {inspect(@op.params)}
               </div>
             <% end %>
           </div>
@@ -425,6 +385,15 @@ defmodule IexCodeWeb.WorkspaceComponents do
     </div>
     """
   end
+
+  defp operation_status_class("running"), do: "sf-operation-node--running"
+  defp operation_status_class("failed"), do: "sf-operation-node--failed"
+  defp operation_status_class(_), do: "sf-operation-node--quiet"
+
+  defp operation_status_dot_class("completed"), do: "sf-operation-node__status--complete"
+  defp operation_status_dot_class("running"), do: "sf-operation-node__status--running"
+  defp operation_status_dot_class("failed"), do: "sf-operation-node__status--failed"
+  defp operation_status_dot_class(_), do: "sf-operation-node__status--pending"
 
   # ============================================================================
   # F7: Interactive Code Diff Hunk Viewer (<.interactive_diff_viewer>, <.diff_viewer>)
@@ -1740,11 +1709,12 @@ defmodule IexCodeWeb.WorkspaceComponents do
   Renders markdown text with formatted code blocks, bold/italics, bullet points, headers, and code copy buttons.
   """
   attr :content, :string, required: true
+  attr :namespace, :string, required: true
 
   def markdown_content(assigns) do
     # Separate <think> blocks if present in content
     {reasoning, main_body} = extract_think_blocks(assigns.content)
-    chunks = parse_markdown_chunks(main_body)
+    chunks = parse_markdown_chunks(main_body) |> index_code_chunks()
     assigns = assign(assigns, reasoning: reasoning, chunks: chunks)
 
     ~H"""
@@ -1759,7 +1729,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
               <div class="whitespace-pre-wrap">
                 {text}
               </div>
-            <% {:code, lang, code} -> %>
+            <% {:code, lang, code, code_index} -> %>
               <div class="rounded-xl border border-[#30363d] bg-[#0d1117] overflow-hidden my-2.5 shadow-sm">
                 <div class="flex items-center justify-between px-3 py-1.5 bg-[#161b22] border-b border-[#21262d] text-xs font-mono text-gray-400">
                   <span class="text-cyan-400 font-bold uppercase tracking-wider text-[11px]">{lang}</span>
@@ -1779,7 +1749,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
                       phx-hook="CodeCopy"
                       phx-update="ignore"
                       data-code={code}
-                      id={"copy-code-" <> to_string(:erlang.phash2({lang, code}))}
+                      id={code_copy_id(@namespace, code_index, lang, code)}
                       class="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded bg-[#21262d] hover:bg-gray-700 text-gray-300 transition-smooth"
                       title="Copy code"
                     >
@@ -1795,6 +1765,28 @@ defmodule IexCodeWeb.WorkspaceComponents do
       </div>
     </div>
     """
+  end
+
+  defp index_code_chunks(chunks) do
+    {indexed, _next_index} =
+      Enum.map_reduce(chunks, 0, fn
+        {:code, lang, code}, index -> {{:code, lang, code, index}, index + 1}
+        chunk, index -> {chunk, index}
+      end)
+
+    indexed
+  end
+
+  defp code_copy_id(namespace, code_index, lang, code) do
+    owner =
+      namespace
+      |> to_string()
+      |> String.replace(~r/[^A-Za-z0-9_-]+/, "-")
+      |> String.trim("-")
+
+    owner = if owner == "", do: "markdown", else: owner
+    digest = :erlang.phash2({lang, code})
+    "copy-code-#{owner}-#{code_index}-#{digest}"
   end
 
   defp parse_markdown_chunks(text) when is_binary(text) do
@@ -1835,7 +1827,7 @@ defmodule IexCodeWeb.WorkspaceComponents do
               {acc, start + len}
           end)
 
-        remaining = String.slice(text, last_idx..-1)
+        remaining = binary_part(text, last_idx, byte_size(text) - last_idx)
 
         final_chunks =
           if remaining && remaining != "" do

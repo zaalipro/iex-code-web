@@ -346,5 +346,53 @@ defmodule IexCodeWeb.WorkspaceLiveKeyboardSemanticsTest do
       assert Enum.empty?(LazyHTML.query(document, selector)),
              "nested interactive controls: #{selector}"
     end
+
+    for root <- LazyHTML.query(document, "[id^='instrument-workbench-']") do
+      violations =
+        root
+        |> LazyHTML.to_tree()
+        |> Enum.flat_map(&workbench_class_tokens/1)
+        |> Enum.filter(&legacy_workbench_class?/1)
+
+      assert violations == [],
+             "legacy visual classes in canonical workbench: #{inspect(Enum.uniq(violations))}"
+    end
+  end
+
+  defp workbench_class_tokens(node), do: workbench_class_tokens(node, false)
+
+  defp workbench_class_tokens({tag, attrs, children}, allowed_surface?) do
+    classes =
+      attrs
+      |> Enum.find_value("", fn
+        {"class", value} -> value
+        _attribute -> nil
+      end)
+      |> String.split()
+
+    allowed_surface? =
+      allowed_surface? or tag in ["code", "pre"] or
+        Enum.any?(attrs, fn
+          {"id", id} ->
+            id == "diff-viewer-container" or String.starts_with?(id, "terminal-xterm-")
+
+          _attribute ->
+            false
+        end) or
+        Enum.any?(classes, &(&1 in ["sf-code-surface", "sf-terminal-xterm", "xterm"]))
+
+    own_classes = if allowed_surface?, do: [], else: classes
+
+    own_classes ++
+      Enum.flat_map(children, fn child -> workbench_class_tokens(child, allowed_surface?) end)
+  end
+
+  defp workbench_class_tokens(_text, _allowed_surface?), do: []
+
+  defp legacy_workbench_class?(class) do
+    Regex.match?(
+      ~r/(?:rainbow|neon|drop-shadow)|^(?:bg-\[#(?:11151c|161b22|1a1215|1c2128|0d1117)\]|border-\[#(?:21262d|30363d|38404a)\]|hover:border-\[#(?:30363d|38404a)\]|ring-(?!focus)|shadow-\[0_0|transition-all$)/i,
+      class
+    )
   end
 end
