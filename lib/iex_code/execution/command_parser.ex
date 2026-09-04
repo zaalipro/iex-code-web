@@ -59,6 +59,17 @@ defmodule IexCode.Execution.CommandParser do
       command: "/help",
       usage: "/help",
       summary: "Show command usage and execution semantics."
+    },
+    %{
+      command: "/create-workflow",
+      usage: "/create-workflow [prompt]",
+      summary:
+        "Open interactive workflow builder assistant with optional natural language objective."
+    },
+    %{
+      command: "/workflows",
+      usage: "/workflows",
+      summary: "Open the project workflows workspace view and library."
     }
   ]
   @supported_commands Enum.map(@command_help, & &1.command)
@@ -204,6 +215,27 @@ defmodule IexCode.Execution.CommandParser do
 
   defp parse_command("/help" = command, _arguments, _source),
     do: error(:unexpected_arguments, "/help does not accept arguments", command)
+
+  defp parse_command("/create-workflow" = command, arguments, source) do
+    objective = String.trim(arguments)
+
+    {:ok,
+     intent(
+       :create_workflow,
+       if(objective == "", do: nil, else: objective),
+       :none,
+       :workflow,
+       source,
+       raw_command: command
+     )}
+  end
+
+  defp parse_command("/workflows" = command, "", source) do
+    {:ok, intent(:navigate, "workflows", :none, :navigation, source, raw_command: command)}
+  end
+
+  defp parse_command("/workflows" = command, _arguments, _source),
+    do: error(:unexpected_arguments, "/workflows does not accept arguments", command)
 
   defp parse_command(command, _arguments, _source), do: unknown_command(command)
 

@@ -4,1302 +4,1342 @@
     class="settings-page sf-ambient-field min-h-dvh"
   >
     <div id="settings-calibration-bench" class="sf-chassis">
-    <header class="settings-page-header">
-      <div class="mx-auto flex max-w-[90rem] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <div class="flex items-center justify-between gap-4">
-          <.link
-            id="settings-return-workspace"
-            navigate={@return_path}
-            data-settings-navigation
-            data-unsaved-confirm={
-              @settings_status in [:dirty, :error] &&
-                "Discard your unsaved settings and return to the workspace?"
-            }
-            class="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-2 text-sm font-medium settings-text-secondary transition-colors active:translate-y-px settings-focusable"
-          >
-            <.icon name="hero-arrow-left" class="h-4 w-4" /> Return to workspace
-          </.link>
-          <Layouts.logout_button id="settings-logout-form" />
-        </div>
-
-        <div class="flex flex-col gap-5 lg:flex-row lg:flex-wrap lg:items-end lg:justify-between xl:flex-nowrap">
-          <div class="max-w-3xl">
-            <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] settings-live-text">
-              Local application control
-            </p>
-            <p id="settings-bench-identity" class="settings-bench-identity">Calibration Bench</p>
-            <h1 class="mt-2 text-3xl font-semibold tracking-[-0.035em] settings-text-primary sm:text-4xl">
-              Settings
-            </h1>
-            <p class="mt-3 max-w-[68ch] text-sm leading-6 settings-text-secondary">
-              These global defaults seed run setup when a workspace loads and apply to newly
-              launched work. Existing sessions retain only their session-level provider, model,
-              and temperature overrides.
-            </p>
+      <header class="settings-page-header">
+        <div class="mx-auto flex max-w-[90rem] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div class="flex items-center justify-between gap-4">
+            <.link
+              id="settings-return-workspace"
+              navigate={@return_path}
+              data-settings-navigation
+              data-unsaved-confirm={
+                @settings_status in [:dirty, :error] &&
+                  "Discard your unsaved settings and return to the workspace?"
+              }
+              class="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-2 text-sm font-medium settings-text-secondary transition-colors active:translate-y-px settings-focusable"
+            >
+              <.icon name="hero-arrow-left" class="h-4 w-4" /> Return to workspace
+            </.link>
+            <Layouts.logout_button id="settings-logout-form" />
           </div>
 
-          <section
-            id="settings-scope-summary"
-            aria-labelledby="settings-scope-title"
-            class="w-full border settings-token-border settings-token-surface p-4 lg:max-w-md"
-          >
-            <div class="flex items-start gap-3">
-              <span class="mt-1 h-2 w-2 shrink-0 settings-live-mark"></span>
-              <div class="min-w-0">
-                <h2 id="settings-scope-title" class="text-sm font-semibold settings-text-primary">
-                  Global defaults
-                </h2>
-                <p class="mt-1 text-sm leading-5 settings-text-secondary">
-                  Stored in local SQLite and shared by every workspace on this machine.
-                </p>
-                <div
-                  :if={@context_session}
-                  id="settings-session-context"
-                  class="mt-3 border-t settings-token-border pt-3"
-                >
-                  <p class="font-mono text-[11px] uppercase tracking-wider settings-text-secondary">
-                    Current session context
+          <div class="flex flex-col gap-5 lg:flex-row lg:flex-wrap lg:items-end lg:justify-between xl:flex-nowrap">
+            <div class="max-w-3xl">
+              <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] settings-live-text">
+                Local application control
+              </p>
+              <p id="settings-bench-identity" class="settings-bench-identity">
+                Calibration Bench
+              </p>
+              <h1 class="mt-2 text-3xl font-semibold tracking-[-0.035em] settings-text-primary sm:text-4xl">
+                Settings
+              </h1>
+              <p class="mt-3 max-w-[68ch] text-sm leading-6 settings-text-secondary">
+                These global defaults seed run setup when a workspace loads and apply to newly
+                launched work. Existing sessions retain only their session-level provider, model,
+                and temperature overrides.
+              </p>
+            </div>
+
+            <section
+              id="settings-scope-summary"
+              aria-labelledby="settings-scope-title"
+              class="w-full border settings-token-border settings-token-surface p-4 lg:max-w-md"
+            >
+              <div class="flex items-start gap-3">
+                <span class="mt-1 h-2 w-2 shrink-0 settings-live-mark"></span>
+                <div class="min-w-0">
+                  <h2
+                    id="settings-scope-title"
+                    class="text-sm font-semibold settings-text-primary"
+                  >
+                    Global defaults
+                  </h2>
+                  <p class="mt-1 text-sm leading-5 settings-text-secondary">
+                    Stored in local SQLite and shared by every workspace on this machine.
                   </p>
-                  <p class="mt-1 truncate text-sm font-medium settings-text-primary">
-                    {@context_session.title}
-                  </p>
-                  <p class="mt-1 truncate font-mono text-xs settings-text-secondary">
-                    {@context_session.model_provider} · {@context_session.model_name}
-                  </p>
+                  <div
+                    :if={@context_session}
+                    id="settings-session-context"
+                    class="mt-3 border-t settings-token-border pt-3"
+                  >
+                    <p class="font-mono text-[11px] uppercase tracking-wider settings-text-secondary">
+                      Current session context
+                    </p>
+                    <p class="mt-1 truncate text-sm font-medium settings-text-primary">
+                      {@context_session.title}
+                    </p>
+                    <p class="mt-1 truncate font-mono text-xs settings-text-secondary">
+                      {@context_session.model_provider} · {@context_session.model_name}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
 
-          <div id="settings-theme-controls" role="group" aria-label="Theme preference">
-            <span class="settings-theme-label">Theme</span>
-            <button id="settings-theme-dark" type="button" data-phx-theme="dark"
-              phx-click={JS.dispatch("phx:set-theme")} aria-pressed="false">Dark</button>
-            <button id="settings-theme-light" type="button" data-phx-theme="light"
-              phx-click={JS.dispatch("phx:set-theme")} aria-pressed="false">Light</button>
-            <button id="settings-theme-system" type="button" data-phx-theme="system"
-              phx-click={JS.dispatch("phx:set-theme")} aria-pressed="false">System</button>
+            <div id="settings-theme-controls" role="group" aria-label="Theme preference">
+              <span class="settings-theme-label">Theme</span>
+              <button
+                id="settings-theme-dark"
+                type="button"
+                data-phx-theme="dark"
+                phx-click={JS.dispatch("phx:set-theme")}
+                aria-pressed="false"
+              >Dark</button>
+              <button
+                id="settings-theme-light"
+                type="button"
+                data-phx-theme="light"
+                phx-click={JS.dispatch("phx:set-theme")}
+                aria-pressed="false"
+              >Light</button>
+              <button
+                id="settings-theme-system"
+                type="button"
+                data-phx-theme="system"
+                phx-click={JS.dispatch("phx:set-theme")}
+                aria-pressed="false"
+              >System</button>
+            </div>
           </div>
         </div>
-      </div>
-    </header>
+      </header>
 
-    <div class="settings-mobile-nav lg:hidden">
-      <nav
-        id="settings-mobile-section-nav"
-        aria-label="Settings sections"
-        class="flex gap-1 overflow-x-auto px-4 py-2"
-      >
-        <a
-          :for={{id, label} <- settings_sections()}
-          href={"##{id}"}
-          class="settings-mobile-nav-link"
-        >
-          {label}
-        </a>
-      </nav>
-    </div>
-
-    <div class="mx-auto grid max-w-[90rem] grid-cols-1 gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:px-8 lg:py-10 xl:gap-12">
-      <aside class="hidden lg:block">
+      <div class="settings-mobile-nav lg:hidden">
         <nav
-          id="settings-section-nav"
+          id="settings-mobile-section-nav"
           aria-label="Settings sections"
-          class="settings-section-rail"
+          class="flex gap-1 overflow-x-auto px-4 py-2"
         >
-          <p class="px-3 pb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] settings-text-secondary">
-            Sections
-          </p>
           <a
             :for={{id, label} <- settings_sections()}
-            id={"settings-nav-#{id}"}
             href={"##{id}"}
-            class="settings-section-link"
+            class="settings-mobile-nav-link"
           >
-            <span>{label}</span><.icon name="hero-chevron-right" class="h-3.5 w-3.5" />
+            {label}
           </a>
         </nav>
-      </aside>
+      </div>
 
-      <div class="min-w-0 max-w-5xl">
-        <div
-          :if={@invalid_session_context?}
-          id="settings-session-context-error"
-          role="status"
-          class="mb-6 flex items-start gap-3 border settings-warning-border settings-warning-bg p-4 text-sm settings-warning-text"
-        >
-          <.icon name="hero-information-circle" class="mt-0.5 h-5 w-5 shrink-0" />
-          <span>The requested session is unavailable. Showing safe global settings instead.</span>
-        </div>
-
-        <div
-          :if={@external_update?}
-          id="settings-external-update"
-          role="alert"
-          class="mb-6 flex flex-col gap-3 border settings-warning-border settings-warning-bg p-4 text-sm settings-warning-text sm:flex-row sm:items-center sm:justify-between"
-        >
-          <span>Settings changed elsewhere while you were editing. Discard to load the newer version.</span>
-          <button
-            type="button"
-            phx-click="discard_settings"
-            class="settings-text-action settings-warning-text"
+      <div class="mx-auto grid max-w-[90rem] grid-cols-1 gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:px-8 lg:py-10 xl:gap-12">
+        <aside class="hidden lg:block">
+          <nav
+            id="settings-section-nav"
+            aria-label="Settings sections"
+            class="settings-section-rail"
           >
-            Load saved version
-          </button>
-        </div>
+            <p class="px-3 pb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] settings-text-secondary">
+              Sections
+            </p>
+            <a
+              :for={{id, label} <- settings_sections()}
+              id={"settings-nav-#{id}"}
+              href={"##{id}"}
+              class="settings-section-link"
+            >
+              <span>{label}</span><.icon name="hero-chevron-right" class="h-3.5 w-3.5" />
+            </a>
+          </nav>
+        </aside>
 
-        <div
-          :if={@settings_status == :error}
-          id="settings-error-summary"
-          role="alert"
-          tabindex="-1"
-          class="mb-6 border settings-danger-border settings-danger-bg p-4"
-        >
-          <div class="flex items-start gap-3">
-            <.icon name="hero-exclamation-triangle" class="mt-0.5 h-5 w-5 shrink-0 settings-danger-text" />
-            <div>
-              <h2 class="text-sm font-semibold settings-danger-text">Settings were not saved</h2>
-              <p class="mt-1 text-sm leading-5 settings-danger-text">{@settings_message}</p>
-              <p
-                :if={form_error_count(@settings_form) > 0}
-                class="mt-2 font-mono text-xs settings-danger-text"
-              >
-                {form_error_count(@settings_form)} field {if form_error_count(@settings_form) ==
-                                                               1,
-                                                             do: "needs",
-                                                             else: "fields need"} attention.
-              </p>
+        <div class="min-w-0 max-w-5xl">
+          <div
+            :if={@invalid_session_context?}
+            id="settings-session-context-error"
+            role="status"
+            class="mb-6 flex items-start gap-3 border settings-warning-border settings-warning-bg p-4 text-sm settings-warning-text"
+          >
+            <.icon name="hero-information-circle" class="mt-0.5 h-5 w-5 shrink-0" />
+            <span>The requested session is unavailable. Showing safe global settings instead.</span>
+          </div>
+
+          <div
+            :if={@external_update?}
+            id="settings-external-update"
+            role="alert"
+            class="mb-6 flex flex-col gap-3 border settings-warning-border settings-warning-bg p-4 text-sm settings-warning-text sm:flex-row sm:items-center sm:justify-between"
+          >
+            <span>Settings changed elsewhere while you were editing. Discard to load the newer version.</span>
+            <button
+              type="button"
+              phx-click="discard_settings"
+              class="settings-text-action settings-warning-text"
+            >
+              Load saved version
+            </button>
+          </div>
+
+          <div
+            :if={@settings_status == :error}
+            id="settings-error-summary"
+            role="alert"
+            tabindex="-1"
+            class="mb-6 border settings-danger-border settings-danger-bg p-4"
+          >
+            <div class="flex items-start gap-3">
+              <.icon
+                name="hero-exclamation-triangle"
+                class="mt-0.5 h-5 w-5 shrink-0 settings-danger-text"
+              />
+              <div>
+                <h2 class="text-sm font-semibold settings-danger-text">
+                  Settings were not saved
+                </h2>
+                <p class="mt-1 text-sm leading-5 settings-danger-text">{@settings_message}</p>
+                <p
+                  :if={form_error_count(@settings_form) > 0}
+                  class="mt-2 font-mono text-xs settings-danger-text"
+                >
+                  {form_error_count(@settings_form)} field {if form_error_count(@settings_form) ==
+                                                                 1,
+                                                               do: "needs",
+                                                               else: "fields need"} attention.
+                </p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <.form
-          for={@settings_form}
-          id="settings-form"
-          phx-change="validate_settings"
-          phx-submit="save_settings"
-          class="space-y-8 pb-28"
-        >
-          <input
-            id="settings-provider-order"
-            type="hidden"
-            name="settings[search_provider_order]"
-            value={Enum.join(provider_order(@settings_form, @settings), ",")}
-          />
-          <section
-            id="models"
-            aria-labelledby="models-title"
-            class="settings-section-card scroll-mt-24"
+          <.form
+            for={@settings_form}
+            id="settings-form"
+            phx-change="validate_settings"
+            phx-submit="save_settings"
+            class="space-y-8 pb-28"
           >
-            <.settings_section_header
-              id="models-title"
-              eyebrow="Models"
-              title="Model defaults and credentials"
-              description="Choose the API protocol and model inherited by new sessions, then manage its local credentials. The selected provider is authoritative; model identifiers are passed through unchanged. Blank secret fields preserve the saved value."
+            <input
+              id="settings-provider-order"
+              type="hidden"
+              name="settings[search_provider_order]"
+              value={Enum.join(provider_order(@settings_form, @settings), ",")}
             />
-
-            <div class="grid gap-4 sm:grid-cols-2">
-              <.input
-                field={@settings_form[:default_model_provider]}
-                id="settings-default-model-provider"
-                type="select"
-                label="Default API protocol"
-                options={["OpenAI or compatible": "openai", Anthropic: "anthropic"]}
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:default_model]}
-                id="settings-default-model"
-                type="text"
-                label="Default model identifier"
-                maxlength="240"
-                autocomplete="off"
-                class="settings-control font-mono"
-                error_class="settings-control-error"
-              />
-            </div>
-
-            <div class="mt-5 grid gap-4 xl:grid-cols-2">
-              <article id="settings-openai-card" class="settings-credential-card">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 class="text-base font-semibold settings-text-primary">
-                      OpenAI / compatible endpoint
-                    </h3>
-                    <p class="mt-1 text-sm settings-text-secondary">
-                      Used whenever OpenAI or compatible is selected, including proxy-hosted models.
-                    </p>
-                  </div>
-                  <.credential_badge configured={credential_configured?(@settings.openai_api_key)} />
-                </div>
-                <div class="mt-4 space-y-3">
-                  <.input
-                    name="settings[openai_api_key]"
-                    id="settings-openai-api-key"
-                    type="password"
-                    value=""
-                    label="API key"
-                    autocomplete="new-password"
-                    placeholder={credential_placeholder(@settings.openai_api_key)}
-                    class="settings-control font-mono"
-                  />
-                  <.input
-                    field={@settings_form[:openai_base_url]}
-                    id="settings-openai-base-url"
-                    type="url"
-                    label="Base URL"
-                    class="settings-control font-mono"
-                    error_class="settings-control-error"
-                  />
-                </div>
-                <button
-                  :if={credential_configured?(@settings.openai_api_key)}
-                  id="settings-clear-openai"
-                  type="button"
-                  phx-click="clear_credential"
-                  phx-value-credential="openai"
-                  data-confirm="Remove the saved OpenAI credential immediately? Other unsaved form edits will remain available to save."
-                  class="settings-danger-action mt-2"
-                >
-                  Remove credential
-                </button>
-              </article>
-
-              <article id="settings-anthropic-card" class="settings-credential-card">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 class="text-base font-semibold settings-text-primary">Anthropic</h3>
-                    <p class="mt-1 text-sm settings-text-secondary">
-                      Used whenever Anthropic is explicitly selected.
-                    </p>
-                  </div>
-                  <.credential_badge configured={
-                    credential_configured?(@settings.anthropic_api_key)
-                  } />
-                </div>
-                <div class="mt-4 space-y-3">
-                  <.input
-                    name="settings[anthropic_api_key]"
-                    id="settings-anthropic-api-key"
-                    type="password"
-                    value=""
-                    label="API key"
-                    autocomplete="new-password"
-                    placeholder={credential_placeholder(@settings.anthropic_api_key)}
-                    class="settings-control font-mono"
-                  />
-                  <.input
-                    field={@settings_form[:anthropic_base_url]}
-                    id="settings-anthropic-base-url"
-                    type="url"
-                    label="Base URL"
-                    class="settings-control font-mono"
-                    error_class="settings-control-error"
-                  />
-                </div>
-                <button
-                  :if={credential_configured?(@settings.anthropic_api_key)}
-                  id="settings-clear-anthropic"
-                  type="button"
-                  phx-click="clear_credential"
-                  phx-value-credential="anthropic"
-                  data-confirm="Remove the saved Anthropic credential immediately? Other unsaved form edits will remain available to save."
-                  class="settings-danger-action mt-2"
-                >
-                  Remove credential
-                </button>
-              </article>
-            </div>
-
-            <div class="mt-5 grid gap-4 sm:grid-cols-2">
-              <.input
-                field={@settings_form[:temperature]}
-                id="settings-temperature"
-                type="number"
-                label="Default temperature"
-                min="0"
-                max="2"
-                step="0.05"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:max_tokens]}
-                id="settings-max-tokens"
-                type="number"
-                label="Maximum output tokens"
-                min="1"
-                max="128000"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-            </div>
-          </section>
-
-          <section
-            id="execution"
-            aria-labelledby="execution-title"
-            class="settings-section-card scroll-mt-24"
-          >
-            <.settings_section_header
-              id="execution-title"
-              eyebrow="Execution"
-              title="Ordinary prompts and long-running work"
-              description="Set the global policy inherited by new runs. Per-run setup in the workspace can override these values."
-            />
-            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              <.input
-                field={@settings_form[:default_dispatch_mode]}
-                id="settings-default-dispatch-mode"
-                type="select"
-                label="Prompt dispatch"
-                options={["Durable background": "background", "Live interactive": "interactive"]}
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:default_run_mode]}
-                id="settings-default-run-mode"
-                type="select"
-                label="Default mission type"
-                options={[
-                  "Single agent": "single",
-                  Swarm: "swarm",
-                  "Typed DAG": "dag",
-                  Research: "research"
-                ]}
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:default_run_priority]}
-                id="settings-default-run-priority"
-                type="select"
-                label="Queue priority"
-                options={[Low: "low", Normal: "normal", High: "high", Critical: "critical"]}
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:default_run_max_attempts]}
-                id="settings-default-run-max-attempts"
-                type="number"
-                label="Manual retry ceiling"
-                min="1"
-                max="10"
-                aria-description="Counts the initial execution; eligible terminal runs require a user-requested retry."
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:default_run_time_budget_minutes]}
-                id="settings-default-run-time-budget"
-                type="number"
-                label="Time budget (minutes)"
-                min="1"
-                max="10080"
-                placeholder="Not capped"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:default_run_token_budget]}
-                id="settings-default-run-token-budget"
-                type="number"
-                label="Token budget"
-                min="1"
-                placeholder="Not capped"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:default_run_cost_budget_cents]}
-                id="settings-default-run-cost-budget"
-                type="number"
-                label="Cost budget (cents)"
-                min="1"
-                placeholder="Not capped"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:agent_max_turns]}
-                id="settings-agent-max-turns"
-                type="number"
-                label="Agent / coder turn limit"
-                min="1"
-                max="20"
-                aria-description="Bounds the single-agent loop and each durable swarm coder invocation, including diagnostic repair passes."
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-            </div>
-            <div
-              id="settings-run-attempt-policy"
-              class="mt-5 flex items-start gap-3 border settings-token-border settings-token-surface p-4"
+            <section
+              id="models"
+              aria-labelledby="models-title"
+              class="settings-section-card scroll-mt-24"
             >
-              <.icon
-                name="hero-information-circle"
-                class="mt-0.5 h-5 w-5 shrink-0 settings-live-text"
+              <.settings_section_header
+                id="models-title"
+                eyebrow="Models"
+                title="Model defaults and credentials"
+                description="Choose the API protocol and model inherited by new sessions, then manage its local credentials. The selected provider is authoritative; model identifiers are passed through unchanged. Blank secret fields preserve the saved value."
               />
-              <p class="text-sm leading-6 settings-text-secondary">
-                The ceiling counts the initial execution. A value of
-                <strong class="font-semibold settings-text-primary">3</strong>
-                allows the first run plus up to two user-requested retries. Eligible failed,
-                cancelled, or interrupted runs are never requeued automatically. Exact deep-research
-                DAGs keep their fixed one-run contract; individual DAG steps own separate bounded retries.
-                The agent-turn limit separately bounds the single-agent loop and every coder
-                model/tool loop in a durable swarm, including each diagnostic repair invocation.
-              </p>
-            </div>
-            <fieldset id="settings-default-tools" class="settings-fieldset mt-5">
-              <legend>Optional tools for new runs</legend>
-              <p id="settings-core-tools-note" class="mt-2 text-xs leading-5 settings-text-secondary">
-                Core workspace read, edit, terminal, and Git tools are governed separately by the
-                execution engine and safety policy.
-              </p>
-              <div class="mt-3 grid gap-3 sm:grid-cols-2">
-                <.tool_checkbox
-                  id="settings-tool-ast-search"
-                  name="settings[default_tools][ast_search]"
-                  label="AST search"
-                  description="Search project symbols and syntax structure."
-                  checked={tool_enabled?(@settings_form, @settings, "ast_search")}
-                />
-                <.tool_checkbox
-                  id="settings-tool-web-search"
-                  name="settings[default_tools][web_search]"
-                  label="Web search"
-                  description="Allow enabled federated research providers."
-                  checked={tool_enabled?(@settings_form, @settings, "web_search")}
-                />
-              </div>
-            </fieldset>
-          </section>
 
-          <section
-            id="goals"
-            aria-labelledby="goals-title"
-            class="settings-section-card scroll-mt-24"
-          >
-            <.settings_section_header
-              id="goals-title"
-              eyebrow="Goals"
-              title="Autonomous goal defaults"
-              description="Goals inherit the execution policy above, including budgets and the manual run attempt ceiling."
-            />
-            <div class="settings-choice-row">
-              <.input
-                field={@settings_form[:goal_auto_start]}
-                id="settings-goal-auto-start"
-                type="checkbox"
-                label="Queue new goals immediately"
-                class="h-4 w-4 settings-checkbox"
-              />
-              <p class="text-sm leading-5 settings-text-secondary">
-                Turn this off to save newly created goals as durable drafts for review.
-              </p>
-            </div>
-          </section>
-
-          <section
-            id="swarm"
-            aria-labelledby="swarm-title"
-            class="settings-section-card scroll-mt-24"
-          >
-            <.settings_section_header
-              id="swarm-title"
-              eyebrow="Swarm"
-              title="Multi-agent guardrails"
-              description="Choose bounded defaults for the supervised agent fleet. Individual runs may request fewer agents."
-            />
-            <div class="grid gap-4 sm:grid-cols-2">
-              <.input
-                field={@settings_form[:swarm_agent_count]}
-                id="settings-swarm-agent-count"
-                type="number"
-                label="Default fleet size"
-                min="4"
-                max="32"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:swarm_max_retries]}
-                id="settings-swarm-max-retries"
-                type="number"
-                label="Swarm self-healing retries"
-                min="0"
-                max="10"
-                aria-description="Self-healing verification retries inside one run attempt."
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-            </div>
-            <p id="settings-swarm-retry-policy" class="settings-help-copy">
-              Verification self-healing retries happen inside one run attempt; they do not add
-              manual run retries. Fleet size remains constrained by durable run capacity and
-              workspace locks.
-            </p>
-          </section>
-
-          <section
-            id="research"
-            aria-labelledby="research-title"
-            class="settings-section-card settings-section-card-research scroll-mt-24"
-          >
-            <.settings_section_header
-              id="research-title"
-              eyebrow="Research"
-              title="Research effort and enforced caps"
-              description="Every preset remains bounded. Optional caps below can tighten a preset but never expand its safety ceiling."
-              tone="research"
-            />
-            <% {effort_name, effort_copy} =
-              research_effort_value(@settings_form[:research_level].value) %>
-            <div
-              id="settings-research-effort-summary"
-              class="mb-5 border settings-topology-border settings-topology-bg p-4"
-            >
-              <p class="font-mono text-xs font-semibold uppercase tracking-wider settings-topology-text">
-                {effort_name} effort
-              </p>
-              <p class="mt-1 text-sm leading-5 settings-text-primary">{effort_copy}</p>
-              <dl class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <div>
-                  <dt class="settings-text-secondary">Sources</dt><dd class="mt-1 font-mono settings-text-primary">
-                    up to {@settings_form[:research_max_sources].value}
-                  </dd>
-                </div>
-                <div>
-                  <dt class="settings-text-secondary">Fetch workers</dt><dd class="mt-1 font-mono settings-text-primary">
-                    {@settings_form[:research_parallelism].value}
-                  </dd>
-                </div>
-                <div>
-                  <dt class="settings-text-secondary">Token cap</dt><dd class="mt-1 font-mono settings-text-primary">
-                    {optional_limit(@settings_form[:research_max_tokens].value, "tokens")}
-                  </dd>
-                </div>
-                <div>
-                  <dt class="settings-text-secondary">Time cap</dt><dd class="mt-1 font-mono settings-text-primary">
-                    {optional_limit(
-                      @settings_form[:research_time_budget_minutes].value,
-                      "minutes"
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            </div>
-            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <.input
-                field={@settings_form[:research_level]}
-                id="settings-research-level"
-                type="select"
-                label="Research effort"
-                options={[Low: "low", Medium: "medium", High: "high", Ultra: "ultra"]}
-                class="settings-control settings-control-research"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:research_max_sources]}
-                id="settings-research-max-sources"
-                type="number"
-                label="Maximum sources"
-                min="1"
-                max="40"
-                class="settings-control settings-control-research"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:research_parallelism]}
-                id="settings-research-parallelism"
-                type="number"
-                label="Fetch parallelism"
-                min="1"
-                max="16"
-                class="settings-control settings-control-research"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:research_time_budget_minutes]}
-                id="settings-research-time-budget"
-                type="number"
-                label="Time cap (minutes)"
-                min="1"
-                max="1440"
-                placeholder="Preset ceiling"
-                class="settings-control settings-control-research"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:research_max_tokens]}
-                id="settings-research-max-tokens"
-                type="number"
-                label="Token cap"
-                min="0"
-                max="10000000"
-                placeholder="Preset ceiling"
-                aria-description="Hard admission cap. Zero blocks manifests that reserve tokens; leave blank to use the effort preset ceiling."
-                class="settings-control settings-control-research"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:research_max_cost_cents]}
-                id="settings-research-max-cost"
-                type="number"
-                label="Cost cap (cents)"
-                min="0"
-                max="10000000"
-                placeholder="Preset ceiling"
-                aria-description="Hard admission cap. Zero blocks manifests that reserve reported provider cost; leave blank to use the effort preset ceiling."
-                class="settings-control settings-control-research"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:research_depth]}
-                id="settings-research-depth"
-                type="select"
-                label="Legacy workflow depth"
-                options={[Quick: "quick", Standard: "standard", Deep: "deep"]}
-                class="settings-control settings-control-research"
-                error_class="settings-control-error"
-              />
-              <div class="settings-choice-row min-h-11">
+              <div class="grid gap-4 sm:grid-cols-2">
                 <.input
-                  field={@settings_form[:research_require_conflict_audit]}
-                  id="settings-research-conflict-audit"
-                  type="checkbox"
-                  label="Require conflict audit"
-                  class="h-4 w-4 settings-checkbox"
+                  field={@settings_form[:default_model_provider]}
+                  id="settings-default-model-provider"
+                  type="select"
+                  label="Default API protocol"
+                  options={["OpenAI or compatible": "openai", Anthropic: "anthropic"]}
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:default_model]}
+                  id="settings-default-model"
+                  type="text"
+                  label="Default model identifier"
+                  maxlength="240"
+                  autocomplete="off"
+                  class="settings-control font-mono"
+                  error_class="settings-control-error"
                 />
               </div>
-            </div>
-            <p id="settings-research-zero-cap-note" class="mt-4 text-xs leading-5 settings-text-secondary">
-              Token and reported-cost caps are hard admission limits. Entering 0 blocks any
-              research manifest that reserves that resource; leave a cap blank to use the bounded
-              effort-preset ceiling.
-            </p>
-          </section>
 
-          <section
-            id="providers"
-            aria-labelledby="providers-title"
-            class="settings-section-card settings-section-card-research scroll-mt-24"
-          >
-            <.settings_section_header
-              id="providers-title"
-              eyebrow="Providers"
-              title="Federated search order"
-              description="Enabled providers are tried in this order. Status reflects the current form configuration, not a live connectivity test. Retired adapters stay visible for compatibility but cannot enter new automatic runs."
-              tone="research"
-            />
-            <label for="settings-provider-filter" class="sr-only">Filter research providers</label>
-            <div class="relative mb-4">
-              <.icon
-                name="hero-magnifying-glass"
-                class="pointer-events-none absolute left-3 top-3.5 h-4 w-4 settings-text-secondary"
-              />
-              <input
-                id="settings-provider-filter"
-                name="provider_filter"
-                type="search"
-                value={@provider_filter}
-                placeholder="Filter providers by name, lifecycle, or capability"
-                phx-change="filter_providers"
-                phx-debounce="200"
-                class="settings-control w-full pl-10"
-              />
-            </div>
-
-            <div id="settings-search-providers" class="space-y-2">
-              <article
-                :for={
-                  descriptor <-
-                    filtered_descriptors(@search_provider_descriptors, @provider_filter)
-                }
-                id={"settings-search-provider-#{provider_id(descriptor)}"}
-                data-provider-lifecycle={descriptor.lifecycle}
-                class="settings-provider-row"
-              >
-                <% provider = provider_id(descriptor) %>
-                <% config = provider_config(@settings_form, @settings, provider) %>
-                <% {status_label, status_tone} = provider_status(descriptor, config) %>
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
-                  <div class="flex min-w-0 flex-1 items-start gap-3">
-                    <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center border settings-token-border settings-token-surface font-mono text-xs font-bold settings-text-primary">
-                      {provider |> String.first() |> String.upcase()}
-                    </div>
-                    <div class="min-w-0">
-                      <div class="flex flex-wrap items-center gap-2">
-                        <h3 class="text-sm font-semibold settings-text-primary">
-                          {provider_name(descriptor)}
-                        </h3>
-                        <span
-                          id={"settings-provider-status-#{provider}"}
-                          data-tone={status_tone}
-                          class="settings-provider-status"
-                        >
-                          {status_label}
-                        </span>
-                        <span class="font-mono text-[11px] uppercase tracking-wider settings-text-secondary">
-                          {descriptor.lifecycle}
-                        </span>
-                      </div>
-                      <p class="mt-1 text-sm leading-5 settings-text-secondary">
-                        {Enum.map_join(
-                          descriptor.capabilities,
-                          " · ",
-                          &(&1 |> Atom.to_string() |> String.replace("_", " "))
-                        )}
-                      </p>
-                      <p
-                        :if={provider_lifecycle_note(descriptor)}
-                        class="mt-1 text-xs leading-5 settings-text-secondary"
-                      >
-                        {provider_lifecycle_note(descriptor)}
+              <div class="mt-5 grid gap-4 xl:grid-cols-2">
+                <article id="settings-openai-card" class="settings-credential-card">
+                  <div class="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 class="text-base font-semibold settings-text-primary">
+                        OpenAI / compatible endpoint
+                      </h3>
+                      <p class="mt-1 text-sm settings-text-secondary">
+                        Used whenever OpenAI or compatible is selected, including proxy-hosted models.
                       </p>
                     </div>
+                    <.credential_badge configured={
+                      credential_configured?(@settings.openai_api_key)
+                    } />
                   </div>
-
-                  <div class="flex flex-wrap items-center gap-2 sm:justify-end">
-                    <input
-                      type="hidden"
-                      name={"settings[search_providers][#{provider}][enabled]"}
-                      value="false"
-                    />
-                    <label
-                      for={"settings-provider-enabled-#{provider}"}
-                      class="settings-provider-toggle"
-                    >
-                      <input
-                        id={"settings-provider-enabled-#{provider}"}
-                        type="checkbox"
-                        name={"settings[search_providers][#{provider}][enabled]"}
-                        value="true"
-                        checked={provider_enabled?(config)}
-                        disabled={descriptor.lifecycle == :retired}
-                        class="h-4 w-4 settings-checkbox"
-                      /> Enabled
-                    </label>
-                    <div
-                      class="flex"
-                      role="group"
-                      aria-label={"Move #{provider_name(descriptor)} in provider order"}
-                    >
-                      <button
-                        id={"settings-provider-move-up-#{provider}"}
-                        type="button"
-                        phx-click="move_provider"
-                        phx-value-provider={provider}
-                        phx-value-direction="up"
-                        disabled={first_provider?(@settings_form, @settings, provider)}
-                        aria-label={"Move #{provider_name(descriptor)} up"}
-                        class="settings-icon-action"
-                      ><.icon name="hero-arrow-up" class="h-4 w-4" /></button>
-                      <button
-                        id={"settings-provider-move-down-#{provider}"}
-                        type="button"
-                        phx-click="move_provider"
-                        phx-value-provider={provider}
-                        phx-value-direction="down"
-                        disabled={last_provider?(@settings_form, @settings, provider)}
-                        aria-label={"Move #{provider_name(descriptor)} down"}
-                        class="settings-icon-action -ml-px"
-                      ><.icon name="hero-arrow-down" class="h-4 w-4" /></button>
-                    </div>
-                    <button
-                      id={"settings-provider-advanced-#{provider}"}
-                      type="button"
-                      phx-click="toggle_provider_advanced"
-                      phx-value-provider={provider}
-                      aria-expanded={MapSet.member?(@expanded_providers, provider)}
-                      aria-controls={"settings-provider-panel-#{provider}"}
-                      aria-label={"Configure #{provider_name(descriptor)}"}
-                      class="settings-secondary-action"
-                    >
-                      Configure <.icon name="hero-chevron-down" class="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div
-                  :if={MapSet.member?(@expanded_providers, provider)}
-                  id={"settings-provider-panel-#{provider}"}
-                  class="mt-4 grid gap-4 border-t settings-token-border pt-4 sm:grid-cols-2"
-                >
-                  <div :if={:api_key in descriptor.config_fields}>
+                  <div class="mt-4 space-y-3">
                     <.input
-                      name={"settings[search_providers][#{provider}][api_key]"}
-                      id={"settings-provider-key-#{provider}"}
+                      name="settings[openai_api_key]"
+                      id="settings-openai-api-key"
                       type="password"
                       value=""
-                      label={descriptor.auth_label}
+                      label="API key"
                       autocomplete="new-password"
-                      placeholder={credential_placeholder(config["api_key"])}
+                      placeholder={credential_placeholder(@settings.openai_api_key)}
                       class="settings-control font-mono"
                     />
-                    <button
-                      :if={credential_configured?(config["api_key"])}
-                      id={"settings-provider-clear-#{provider}"}
-                      type="button"
-                      phx-click="clear_credential"
-                      phx-value-credential={"provider:#{provider}"}
-                      data-confirm={"Remove the saved #{provider_name(descriptor)} credential immediately? Other unsaved form edits will remain available to save."}
-                      class="settings-danger-action"
-                    >Remove credential</button>
+                    <.input
+                      field={@settings_form[:openai_base_url]}
+                      id="settings-openai-base-url"
+                      type="url"
+                      label="Base URL"
+                      class="settings-control font-mono"
+                      error_class="settings-control-error"
+                    />
                   </div>
-                  <.input
-                    :if={:base_url in descriptor.config_fields}
-                    name={"settings[search_providers][#{provider}][base_url]"}
-                    id={"settings-provider-url-#{provider}"}
-                    type="url"
-                    label={
-                      if descriptor.id == :searxng, do: "Instance URL", else: "Official endpoint"
-                    }
-                    value={config["base_url"] || ""}
-                    readonly={descriptor.id != :searxng}
-                    class="settings-control font-mono read-only:cursor-not-allowed read-only:settings-text-secondary"
-                  />
-                  <.input
-                    :if={descriptor.id == :google}
-                    name="settings[search_providers][google][engine_id]"
-                    id="settings-provider-engine-google"
-                    type="text"
-                    label="Search engine ID"
-                    value={config["engine_id"] || ""}
-                    class="settings-control font-mono"
-                  />
-                  <.input
-                    :if={descriptor.id == :serpapi}
-                    name="settings[search_providers][serpapi][engine]"
-                    id="settings-provider-engine-serpapi"
-                    type="select"
-                    label="Search engine"
-                    value={config["engine"] || "google"}
-                    options={
-                      Enum.map(
-                        ~w(google bing duckduckgo baidu yahoo yandex),
-                        &{String.capitalize(&1), &1}
-                      )
-                    }
-                    class="settings-control font-mono"
-                  />
-                </div>
-              </article>
+                  <button
+                    :if={credential_configured?(@settings.openai_api_key)}
+                    id="settings-clear-openai"
+                    type="button"
+                    phx-click="clear_credential"
+                    phx-value-credential="openai"
+                    data-confirm="Remove the saved OpenAI credential immediately? Other unsaved form edits will remain available to save."
+                    class="settings-danger-action mt-2"
+                  >
+                    Remove credential
+                  </button>
+                </article>
 
-              <div
-                :if={filtered_descriptors(@search_provider_descriptors, @provider_filter) == []}
-                id="settings-provider-filter-empty"
-                class="settings-empty-state"
-              >
-                No providers match this filter.
-              </div>
-            </div>
-          </section>
-
-          <section
-            id="editor"
-            aria-labelledby="editor-title"
-            class="settings-section-card scroll-mt-24"
-          >
-            <.settings_section_header
-              id="editor-title"
-              eyebrow="Editor"
-              title="File editing"
-              description="Control how workspace file edits behave after agent or user changes."
-            />
-            <div class="settings-choice-row">
-              <.input
-                field={@settings_form[:auto_save]}
-                id="settings-auto-save"
-                type="checkbox"
-                label="Automatically save file edits"
-                class="h-4 w-4 settings-checkbox"
-              />
-              <p class="text-sm leading-5 settings-text-secondary">
-                When disabled, edited buffers remain marked as unsaved until you confirm them.
-              </p>
-            </div>
-          </section>
-
-          <section
-            id="usage"
-            aria-labelledby="usage-title"
-            class="settings-section-card scroll-mt-24"
-          >
-            <.settings_section_header
-              id="usage-title"
-              eyebrow="Usage"
-              title={if @context_session, do: "Current session usage", else: "Global usage"}
-              description="Only provider-reported token-bearing messages are counted. No estimates or fabricated credit bars."
-            />
-            <div :if={@usage_status == :ready} id="settings-usage-ready">
-              <dl class="mb-5 grid gap-3 sm:grid-cols-2">
-                <div class="settings-metric">
-                  <dt>Observed tokens</dt><dd>{usage_total_value(@usage_totals)}</dd>
-                </div>
-                <div class="settings-metric">
-                  <dt>Reported cost</dt><dd>
-                    ${:erlang.float_to_binary(usage_cost_value(@usage_totals), decimals: 2)}
-                  </dd>
-                </div>
-              </dl>
-              <div
-                id="settings-usage-rows"
-                class="divide-y settings-token-border border-y settings-token-border"
-              >
-                <article
-                  :for={row <- Enum.take(@usage_rows, 20)}
-                  id={"settings-usage-row-#{usage_dom_id(row)}"}
-                  class="grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-5"
-                >
-                  <div class="min-w-0">
-                    <p class="truncate font-medium settings-text-primary">
-                      {usage_value(row, :model, "Unknown model")}
-                    </p><p class="mt-0.5 font-mono text-xs settings-text-secondary">
-                      {format_usage_date(usage_value(row, :date))}
-                    </p>
+                <article id="settings-anthropic-card" class="settings-credential-card">
+                  <div class="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 class="text-base font-semibold settings-text-primary">Anthropic</h3>
+                      <p class="mt-1 text-sm settings-text-secondary">
+                        Used whenever Anthropic is explicitly selected.
+                      </p>
+                    </div>
+                    <.credential_badge configured={
+                      credential_configured?(@settings.anthropic_api_key)
+                    } />
                   </div>
-                  <p class="font-mono text-xs settings-text-secondary">
-                    {usage_value(row, :provider, "unknown")}
-                  </p>
-                  <p class="font-mono text-sm font-semibold tabular-nums settings-text-primary">
-                    {usage_value(row, :tokens, 0)} tokens
-                  </p>
+                  <div class="mt-4 space-y-3">
+                    <.input
+                      name="settings[anthropic_api_key]"
+                      id="settings-anthropic-api-key"
+                      type="password"
+                      value=""
+                      label="API key"
+                      autocomplete="new-password"
+                      placeholder={credential_placeholder(@settings.anthropic_api_key)}
+                      class="settings-control font-mono"
+                    />
+                    <.input
+                      field={@settings_form[:anthropic_base_url]}
+                      id="settings-anthropic-base-url"
+                      type="url"
+                      label="Base URL"
+                      class="settings-control font-mono"
+                      error_class="settings-control-error"
+                    />
+                  </div>
+                  <button
+                    :if={credential_configured?(@settings.anthropic_api_key)}
+                    id="settings-clear-anthropic"
+                    type="button"
+                    phx-click="clear_credential"
+                    phx-value-credential="anthropic"
+                    data-confirm="Remove the saved Anthropic credential immediately? Other unsaved form edits will remain available to save."
+                    class="settings-danger-action mt-2"
+                  >
+                    Remove credential
+                  </button>
                 </article>
               </div>
-            </div>
-            <div
-              :if={@usage_status in [:empty, :unavailable]}
-              id="settings-usage-empty"
-              class="settings-empty-state"
-            >
-              <.icon name="hero-chart-bar" class="mx-auto mb-3 h-6 w-6 settings-text-secondary" />{@usage_message}
-            </div>
-            <div
-              :if={@usage_status == :error}
-              id="settings-usage-error"
-              role="alert"
-              class="settings-error-state"
-            >
-              <.icon name="hero-exclamation-triangle" class="h-5 w-5 shrink-0" />{@usage_message}
-            </div>
-          </section>
 
-          <section
-            id="resources"
-            aria-labelledby="resources-title"
-            class="settings-section-card scroll-mt-24"
-          >
-            <.settings_section_header
-              id="resources-title"
-              eyebrow="Resources"
-              title="Memory and lifecycle policy"
-              description="Tune safe admission and cleanup thresholds without changing agent reasoning, swarm topology, or the quality of running work. Under pressure, new heavy work queues; active work is never cancelled by this policy."
-            />
-
-            <div id="settings-resource-defaults" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <.input
-                field={@settings_form[:resource_pressure_percent]}
-                id="settings-resource-pressure"
-                type="number"
-                min="50"
-                max="90"
-                label="Queue new heavy work at (%)"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:resource_critical_percent]}
-                id="settings-resource-critical"
-                type="number"
-                min="60"
-                max="95"
-                label="Critical memory threshold (%)"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-              <.input
-                field={@settings_form[:terminal_idle_timeout_minutes]}
-                id="settings-terminal-idle-timeout"
-                type="number"
-                min="1"
-                max="1440"
-                label="Terminal idle timeout (minutes)"
-                class="settings-control"
-                error_class="settings-control-error"
-              />
-            </div>
-
-            <div class="mt-4 grid gap-3 sm:grid-cols-3">
-              <div class="settings-policy-note">
-                <span>70%</span><p>Default pressure threshold</p><em>Applies live</em>
-              </div>
-              <div class="settings-policy-note">
-                <span>85%</span><p>Default critical threshold</p><em>Applies live</em>
-              </div>
-              <div class="settings-policy-note">
-                <span>30 min</span><p>Dormant terminal cleanup</p><em>Applies live</em>
-              </div>
-            </div>
-
-            <details id="settings-resource-advanced" class="settings-advanced-disclosure mt-5">
-              <summary>
-                <span><strong>Advanced resource controls</strong><small>Guardrails prevent unsafe or contradictory values.</small></span>
-                <.icon name="hero-chevron-down" class="h-4 w-4" />
-              </summary>
-              <div class="grid gap-4 border-t settings-token-border p-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div class="mt-5 grid gap-4 sm:grid-cols-2">
                 <.input
-                  field={@settings_form[:session_idle_timeout_minutes]}
-                  id="settings-session-idle-timeout"
+                  field={@settings_form[:temperature]}
+                  id="settings-temperature"
+                  type="number"
+                  label="Default temperature"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:max_tokens]}
+                  id="settings-max-tokens"
+                  type="number"
+                  label="Maximum output tokens"
+                  min="1"
+                  max="128000"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+              </div>
+            </section>
+
+            <section
+              id="execution"
+              aria-labelledby="execution-title"
+              class="settings-section-card scroll-mt-24"
+            >
+              <.settings_section_header
+                id="execution-title"
+                eyebrow="Execution"
+                title="Ordinary prompts and long-running work"
+                description="Set the global policy inherited by new runs. Per-run setup in the workspace can override these values."
+              />
+              <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <.input
+                  field={@settings_form[:default_dispatch_mode]}
+                  id="settings-default-dispatch-mode"
+                  type="select"
+                  label="Prompt dispatch"
+                  options={["Durable background": "background", "Live interactive": "interactive"]}
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:default_run_mode]}
+                  id="settings-default-run-mode"
+                  type="select"
+                  label="Default mission type"
+                  options={[
+                    "Single agent": "single",
+                    Swarm: "swarm",
+                    "Typed DAG": "dag",
+                    Research: "research"
+                  ]}
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:default_run_priority]}
+                  id="settings-default-run-priority"
+                  type="select"
+                  label="Queue priority"
+                  options={[Low: "low", Normal: "normal", High: "high", Critical: "critical"]}
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:default_run_max_attempts]}
+                  id="settings-default-run-max-attempts"
+                  type="number"
+                  label="Manual retry ceiling"
+                  min="1"
+                  max="10"
+                  aria-description="Counts the initial execution; eligible terminal runs require a user-requested retry."
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:default_run_time_budget_minutes]}
+                  id="settings-default-run-time-budget"
+                  type="number"
+                  label="Time budget (minutes)"
+                  min="1"
+                  max="10080"
+                  placeholder="Not capped"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:default_run_token_budget]}
+                  id="settings-default-run-token-budget"
+                  type="number"
+                  label="Token budget"
+                  min="1"
+                  placeholder="Not capped"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:default_run_cost_budget_cents]}
+                  id="settings-default-run-cost-budget"
+                  type="number"
+                  label="Cost budget (cents)"
+                  min="1"
+                  placeholder="Not capped"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:agent_max_turns]}
+                  id="settings-agent-max-turns"
+                  type="number"
+                  label="Agent / coder turn limit"
+                  min="1"
+                  max="20"
+                  aria-description="Bounds the single-agent loop and each durable swarm coder invocation, including diagnostic repair passes."
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+              </div>
+              <div
+                id="settings-run-attempt-policy"
+                class="mt-5 flex items-start gap-3 border settings-token-border settings-token-surface p-4"
+              >
+                <.icon
+                  name="hero-information-circle"
+                  class="mt-0.5 h-5 w-5 shrink-0 settings-live-text"
+                />
+                <p class="text-sm leading-6 settings-text-secondary">
+                  The ceiling counts the initial execution. A value of
+                  <strong class="font-semibold settings-text-primary">3</strong>
+                  allows the first run plus up to two user-requested retries. Eligible failed,
+                  cancelled, or interrupted runs are never requeued automatically. Exact deep-research
+                  DAGs keep their fixed one-run contract; individual DAG steps own separate bounded retries.
+                  The agent-turn limit separately bounds the single-agent loop and every coder
+                  model/tool loop in a durable swarm, including each diagnostic repair invocation.
+                </p>
+              </div>
+              <fieldset id="settings-default-tools" class="settings-fieldset mt-5">
+                <legend>Optional tools for new runs</legend>
+                <p
+                  id="settings-core-tools-note"
+                  class="mt-2 text-xs leading-5 settings-text-secondary"
+                >
+                  Core workspace read, edit, terminal, and Git tools are governed separately by the
+                  execution engine and safety policy.
+                </p>
+                <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                  <.tool_checkbox
+                    id="settings-tool-ast-search"
+                    name="settings[default_tools][ast_search]"
+                    label="AST search"
+                    description="Search project symbols and syntax structure."
+                    checked={tool_enabled?(@settings_form, @settings, "ast_search")}
+                  />
+                  <.tool_checkbox
+                    id="settings-tool-web-search"
+                    name="settings[default_tools][web_search]"
+                    label="Web search"
+                    description="Allow enabled federated research providers."
+                    checked={tool_enabled?(@settings_form, @settings, "web_search")}
+                  />
+                </div>
+              </fieldset>
+            </section>
+
+            <section
+              id="goals"
+              aria-labelledby="goals-title"
+              class="settings-section-card scroll-mt-24"
+            >
+              <.settings_section_header
+                id="goals-title"
+                eyebrow="Goals"
+                title="Autonomous goal defaults"
+                description="Goals inherit the execution policy above, including budgets and the manual run attempt ceiling."
+              />
+              <div class="settings-choice-row">
+                <.input
+                  field={@settings_form[:goal_auto_start]}
+                  id="settings-goal-auto-start"
+                  type="checkbox"
+                  label="Queue new goals immediately"
+                  class="h-4 w-4 settings-checkbox"
+                />
+                <p class="text-sm leading-5 settings-text-secondary">
+                  Turn this off to save newly created goals as durable drafts for review.
+                </p>
+              </div>
+            </section>
+
+            <section
+              id="swarm"
+              aria-labelledby="swarm-title"
+              class="settings-section-card scroll-mt-24"
+            >
+              <.settings_section_header
+                id="swarm-title"
+                eyebrow="Swarm"
+                title="Multi-agent guardrails"
+                description="Choose bounded defaults for the supervised agent fleet. Individual runs may request fewer agents."
+              />
+              <div class="grid gap-4 sm:grid-cols-2">
+                <.input
+                  field={@settings_form[:swarm_agent_count]}
+                  id="settings-swarm-agent-count"
+                  type="number"
+                  label="Default fleet size"
+                  min="4"
+                  max="32"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:swarm_max_retries]}
+                  id="settings-swarm-max-retries"
+                  type="number"
+                  label="Swarm self-healing retries"
+                  min="0"
+                  max="10"
+                  aria-description="Self-healing verification retries inside one run attempt."
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+              </div>
+              <p id="settings-swarm-retry-policy" class="settings-help-copy">
+                Verification self-healing retries happen inside one run attempt; they do not add
+                manual run retries. Fleet size remains constrained by durable run capacity and
+                workspace locks.
+              </p>
+            </section>
+
+            <section
+              id="research"
+              aria-labelledby="research-title"
+              class="settings-section-card settings-section-card-research scroll-mt-24"
+            >
+              <.settings_section_header
+                id="research-title"
+                eyebrow="Research"
+                title="Research effort and enforced caps"
+                description="Every preset remains bounded. Optional caps below can tighten a preset but never expand its safety ceiling."
+                tone="research"
+              />
+              <% {effort_name, effort_copy} =
+                research_effort_value(@settings_form[:research_level].value) %>
+              <div
+                id="settings-research-effort-summary"
+                class="mb-5 border settings-topology-border settings-topology-bg p-4"
+              >
+                <p class="font-mono text-xs font-semibold uppercase tracking-wider settings-topology-text">
+                  {effort_name} effort
+                </p>
+                <p class="mt-1 text-sm leading-5 settings-text-primary">{effort_copy}</p>
+                <dl class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                  <div>
+                    <dt class="settings-text-secondary">Sources</dt><dd class="mt-1 font-mono settings-text-primary">
+                      up to {@settings_form[:research_max_sources].value}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt class="settings-text-secondary">Fetch workers</dt><dd class="mt-1 font-mono settings-text-primary">
+                      {@settings_form[:research_parallelism].value}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt class="settings-text-secondary">Token cap</dt><dd class="mt-1 font-mono settings-text-primary">
+                      {optional_limit(@settings_form[:research_max_tokens].value, "tokens")}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt class="settings-text-secondary">Time cap</dt><dd class="mt-1 font-mono settings-text-primary">
+                      {optional_limit(
+                        @settings_form[:research_time_budget_minutes].value,
+                        "minutes"
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+              <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <.input
+                  field={@settings_form[:research_level]}
+                  id="settings-research-level"
+                  type="select"
+                  label="Research effort"
+                  options={[Low: "low", Medium: "medium", High: "high", Ultra: "ultra"]}
+                  class="settings-control settings-control-research"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:research_max_sources]}
+                  id="settings-research-max-sources"
+                  type="number"
+                  label="Maximum sources"
+                  min="1"
+                  max="40"
+                  class="settings-control settings-control-research"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:research_parallelism]}
+                  id="settings-research-parallelism"
+                  type="number"
+                  label="Fetch parallelism"
+                  min="1"
+                  max="16"
+                  class="settings-control settings-control-research"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:research_time_budget_minutes]}
+                  id="settings-research-time-budget"
+                  type="number"
+                  label="Time cap (minutes)"
+                  min="1"
+                  max="1440"
+                  placeholder="Preset ceiling"
+                  class="settings-control settings-control-research"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:research_max_tokens]}
+                  id="settings-research-max-tokens"
+                  type="number"
+                  label="Token cap"
+                  min="0"
+                  max="10000000"
+                  placeholder="Preset ceiling"
+                  aria-description="Hard admission cap. Zero blocks manifests that reserve tokens; leave blank to use the effort preset ceiling."
+                  class="settings-control settings-control-research"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:research_max_cost_cents]}
+                  id="settings-research-max-cost"
+                  type="number"
+                  label="Cost cap (cents)"
+                  min="0"
+                  max="10000000"
+                  placeholder="Preset ceiling"
+                  aria-description="Hard admission cap. Zero blocks manifests that reserve reported provider cost; leave blank to use the effort preset ceiling."
+                  class="settings-control settings-control-research"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:research_depth]}
+                  id="settings-research-depth"
+                  type="select"
+                  label="Legacy workflow depth"
+                  options={[Quick: "quick", Standard: "standard", Deep: "deep"]}
+                  class="settings-control settings-control-research"
+                  error_class="settings-control-error"
+                />
+                <div class="settings-choice-row min-h-11">
+                  <.input
+                    field={@settings_form[:research_require_conflict_audit]}
+                    id="settings-research-conflict-audit"
+                    type="checkbox"
+                    label="Require conflict audit"
+                    class="h-4 w-4 settings-checkbox"
+                  />
+                </div>
+              </div>
+              <p
+                id="settings-research-zero-cap-note"
+                class="mt-4 text-xs leading-5 settings-text-secondary"
+              >
+                Token and reported-cost caps are hard admission limits. Entering 0 blocks any
+                research manifest that reserves that resource; leave a cap blank to use the bounded
+                effort-preset ceiling.
+              </p>
+            </section>
+
+            <section
+              id="providers"
+              aria-labelledby="providers-title"
+              class="settings-section-card settings-section-card-research scroll-mt-24"
+            >
+              <.settings_section_header
+                id="providers-title"
+                eyebrow="Providers"
+                title="Federated search order"
+                description="Enabled providers are tried in this order. Status reflects the current form configuration, not a live connectivity test. Retired adapters stay visible for compatibility but cannot enter new automatic runs."
+                tone="research"
+              />
+              <label for="settings-provider-filter" class="sr-only">Filter research providers</label>
+              <div class="relative mb-4">
+                <.icon
+                  name="hero-magnifying-glass"
+                  class="pointer-events-none absolute left-3 top-3.5 h-4 w-4 settings-text-secondary"
+                />
+                <input
+                  id="settings-provider-filter"
+                  name="provider_filter"
+                  type="search"
+                  value={@provider_filter}
+                  placeholder="Filter providers by name, lifecycle, or capability"
+                  phx-change="filter_providers"
+                  phx-debounce="200"
+                  class="settings-control w-full pl-10"
+                />
+              </div>
+
+              <div id="settings-search-providers" class="space-y-2">
+                <article
+                  :for={
+                    descriptor <-
+                      filtered_descriptors(@search_provider_descriptors, @provider_filter)
+                  }
+                  id={"settings-search-provider-#{provider_id(descriptor)}"}
+                  data-provider-lifecycle={descriptor.lifecycle}
+                  class="settings-provider-row"
+                >
+                  <% provider = provider_id(descriptor) %>
+                  <% config = provider_config(@settings_form, @settings, provider) %>
+                  <% {status_label, status_tone} = provider_status(descriptor, config) %>
+                  <div class="flex flex-col gap-4 sm:flex-row sm:items-center">
+                    <div class="flex min-w-0 flex-1 items-start gap-3">
+                      <div class="mt-1 flex h-8 w-8 shrink-0 items-center justify-center border settings-token-border settings-token-surface font-mono text-xs font-bold settings-text-primary">
+                        {provider |> String.first() |> String.upcase()}
+                      </div>
+                      <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <h3 class="text-sm font-semibold settings-text-primary">
+                            {provider_name(descriptor)}
+                          </h3>
+                          <span
+                            id={"settings-provider-status-#{provider}"}
+                            data-tone={status_tone}
+                            class="settings-provider-status"
+                          >
+                            {status_label}
+                          </span>
+                          <span class="font-mono text-[11px] uppercase tracking-wider settings-text-secondary">
+                            {descriptor.lifecycle}
+                          </span>
+                        </div>
+                        <p class="mt-1 text-sm leading-5 settings-text-secondary">
+                          {Enum.map_join(
+                            descriptor.capabilities,
+                            " · ",
+                            &(&1 |> Atom.to_string() |> String.replace("_", " "))
+                          )}
+                        </p>
+                        <p
+                          :if={provider_lifecycle_note(descriptor)}
+                          class="mt-1 text-xs leading-5 settings-text-secondary"
+                        >
+                          {provider_lifecycle_note(descriptor)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2 sm:justify-end">
+                      <input
+                        type="hidden"
+                        name={"settings[search_providers][#{provider}][enabled]"}
+                        value="false"
+                      />
+                      <label
+                        for={"settings-provider-enabled-#{provider}"}
+                        class="settings-provider-toggle"
+                      >
+                        <input
+                          id={"settings-provider-enabled-#{provider}"}
+                          type="checkbox"
+                          name={"settings[search_providers][#{provider}][enabled]"}
+                          value="true"
+                          checked={provider_enabled?(config)}
+                          disabled={descriptor.lifecycle == :retired}
+                          class="h-4 w-4 settings-checkbox"
+                        /> Enabled
+                      </label>
+                      <div
+                        class="flex"
+                        role="group"
+                        aria-label={"Move #{provider_name(descriptor)} in provider order"}
+                      >
+                        <button
+                          id={"settings-provider-move-up-#{provider}"}
+                          type="button"
+                          phx-click="move_provider"
+                          phx-value-provider={provider}
+                          phx-value-direction="up"
+                          disabled={first_provider?(@settings_form, @settings, provider)}
+                          aria-label={"Move #{provider_name(descriptor)} up"}
+                          class="settings-icon-action"
+                        ><.icon name="hero-arrow-up" class="h-4 w-4" /></button>
+                        <button
+                          id={"settings-provider-move-down-#{provider}"}
+                          type="button"
+                          phx-click="move_provider"
+                          phx-value-provider={provider}
+                          phx-value-direction="down"
+                          disabled={last_provider?(@settings_form, @settings, provider)}
+                          aria-label={"Move #{provider_name(descriptor)} down"}
+                          class="settings-icon-action -ml-px"
+                        ><.icon name="hero-arrow-down" class="h-4 w-4" /></button>
+                      </div>
+                      <button
+                        id={"settings-provider-advanced-#{provider}"}
+                        type="button"
+                        phx-click="toggle_provider_advanced"
+                        phx-value-provider={provider}
+                        aria-expanded={MapSet.member?(@expanded_providers, provider)}
+                        aria-controls={"settings-provider-panel-#{provider}"}
+                        aria-label={"Configure #{provider_name(descriptor)}"}
+                        class="settings-secondary-action"
+                      >
+                        Configure <.icon name="hero-chevron-down" class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    :if={MapSet.member?(@expanded_providers, provider)}
+                    id={"settings-provider-panel-#{provider}"}
+                    class="mt-4 grid gap-4 border-t settings-token-border pt-4 sm:grid-cols-2"
+                  >
+                    <div :if={:api_key in descriptor.config_fields}>
+                      <.input
+                        name={"settings[search_providers][#{provider}][api_key]"}
+                        id={"settings-provider-key-#{provider}"}
+                        type="password"
+                        value=""
+                        label={descriptor.auth_label}
+                        autocomplete="new-password"
+                        placeholder={credential_placeholder(config["api_key"])}
+                        class="settings-control font-mono"
+                      />
+                      <button
+                        :if={credential_configured?(config["api_key"])}
+                        id={"settings-provider-clear-#{provider}"}
+                        type="button"
+                        phx-click="clear_credential"
+                        phx-value-credential={"provider:#{provider}"}
+                        data-confirm={"Remove the saved #{provider_name(descriptor)} credential immediately? Other unsaved form edits will remain available to save."}
+                        class="settings-danger-action"
+                      >Remove credential</button>
+                    </div>
+                    <.input
+                      :if={:base_url in descriptor.config_fields}
+                      name={"settings[search_providers][#{provider}][base_url]"}
+                      id={"settings-provider-url-#{provider}"}
+                      type="url"
+                      label={
+                        if descriptor.id == :searxng,
+                          do: "Instance URL",
+                          else: "Official endpoint"
+                      }
+                      value={config["base_url"] || ""}
+                      readonly={descriptor.id != :searxng}
+                      class="settings-control font-mono read-only:cursor-not-allowed read-only:settings-text-secondary"
+                    />
+                    <.input
+                      :if={descriptor.id == :google}
+                      name="settings[search_providers][google][engine_id]"
+                      id="settings-provider-engine-google"
+                      type="text"
+                      label="Search engine ID"
+                      value={config["engine_id"] || ""}
+                      class="settings-control font-mono"
+                    />
+                    <.input
+                      :if={descriptor.id == :serpapi}
+                      name="settings[search_providers][serpapi][engine]"
+                      id="settings-provider-engine-serpapi"
+                      type="select"
+                      label="Search engine"
+                      value={config["engine"] || "google"}
+                      options={
+                        Enum.map(
+                          ~w(google bing duckduckgo baidu yahoo yandex),
+                          &{String.capitalize(&1), &1}
+                        )
+                      }
+                      class="settings-control font-mono"
+                    />
+                  </div>
+                </article>
+
+                <div
+                  :if={filtered_descriptors(@search_provider_descriptors, @provider_filter) == []}
+                  id="settings-provider-filter-empty"
+                  class="settings-empty-state"
+                >
+                  No providers match this filter.
+                </div>
+              </div>
+            </section>
+
+            <section
+              id="editor"
+              aria-labelledby="editor-title"
+              class="settings-section-card scroll-mt-24"
+            >
+              <.settings_section_header
+                id="editor-title"
+                eyebrow="Editor"
+                title="File editing"
+                description="Control how workspace file edits behave after agent or user changes."
+              />
+              <div class="settings-choice-row">
+                <.input
+                  field={@settings_form[:auto_save]}
+                  id="settings-auto-save"
+                  type="checkbox"
+                  label="Automatically save file edits"
+                  class="h-4 w-4 settings-checkbox"
+                />
+                <p class="text-sm leading-5 settings-text-secondary">
+                  When disabled, edited buffers remain marked as unsaved until you confirm them.
+                </p>
+              </div>
+            </section>
+
+            <section
+              id="usage"
+              aria-labelledby="usage-title"
+              class="settings-section-card scroll-mt-24"
+            >
+              <.settings_section_header
+                id="usage-title"
+                eyebrow="Usage"
+                title={if @context_session, do: "Current session usage", else: "Global usage"}
+                description="Only provider-reported token-bearing messages are counted. No estimates or fabricated credit bars."
+              />
+              <div :if={@usage_status == :ready} id="settings-usage-ready">
+                <dl class="mb-5 grid gap-3 sm:grid-cols-2">
+                  <div class="settings-metric">
+                    <dt>Observed tokens</dt><dd>{usage_total_value(@usage_totals)}</dd>
+                  </div>
+                  <div class="settings-metric">
+                    <dt>Reported cost</dt><dd>
+                      ${:erlang.float_to_binary(usage_cost_value(@usage_totals), decimals: 2)}
+                    </dd>
+                  </div>
+                </dl>
+                <div
+                  id="settings-usage-rows"
+                  class="divide-y settings-token-border border-y settings-token-border"
+                >
+                  <article
+                    :for={row <- Enum.take(@usage_rows, 20)}
+                    id={"settings-usage-row-#{usage_dom_id(row)}"}
+                    class="grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-5"
+                  >
+                    <div class="min-w-0">
+                      <p class="truncate font-medium settings-text-primary">
+                        {usage_value(row, :model, "Unknown model")}
+                      </p><p class="mt-0.5 font-mono text-xs settings-text-secondary">
+                        {format_usage_date(usage_value(row, :date))}
+                      </p>
+                    </div>
+                    <p class="font-mono text-xs settings-text-secondary">
+                      {usage_value(row, :provider, "unknown")}
+                    </p>
+                    <p class="font-mono text-sm font-semibold tabular-nums settings-text-primary">
+                      {usage_value(row, :tokens, 0)} tokens
+                    </p>
+                  </article>
+                </div>
+              </div>
+              <div
+                :if={@usage_status in [:empty, :unavailable]}
+                id="settings-usage-empty"
+                class="settings-empty-state"
+              >
+                <.icon name="hero-chart-bar" class="mx-auto mb-3 h-6 w-6 settings-text-secondary" />{@usage_message}
+              </div>
+              <div
+                :if={@usage_status == :error}
+                id="settings-usage-error"
+                role="alert"
+                class="settings-error-state"
+              >
+                <.icon name="hero-exclamation-triangle" class="h-5 w-5 shrink-0" />{@usage_message}
+              </div>
+            </section>
+
+            <section
+              id="resources"
+              aria-labelledby="resources-title"
+              class="settings-section-card scroll-mt-24"
+            >
+              <.settings_section_header
+                id="resources-title"
+                eyebrow="Resources"
+                title="Memory and lifecycle policy"
+                description="Tune safe admission and cleanup thresholds without changing agent reasoning, swarm topology, or the quality of running work. Under pressure, new heavy work queues; active work is never cancelled by this policy."
+              />
+
+              <div
+                id="settings-resource-defaults"
+                class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+              >
+                <.input
+                  field={@settings_form[:resource_pressure_percent]}
+                  id="settings-resource-pressure"
+                  type="number"
+                  min="50"
+                  max="90"
+                  label="Queue new heavy work at (%)"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:resource_critical_percent]}
+                  id="settings-resource-critical"
+                  type="number"
+                  min="60"
+                  max="95"
+                  label="Critical memory threshold (%)"
+                  class="settings-control"
+                  error_class="settings-control-error"
+                />
+                <.input
+                  field={@settings_form[:terminal_idle_timeout_minutes]}
+                  id="settings-terminal-idle-timeout"
                   type="number"
                   min="1"
                   max="1440"
-                  label="Session idle timeout (minutes)"
-                  class="settings-control"
-                  error_class="settings-control-error"
-                />
-                <.input
-                  field={@settings_form[:output_artifact_limit_mib]}
-                  id="settings-output-artifact-limit"
-                  type="number"
-                  min="16"
-                  max="1024"
-                  label="Per-producer cap (MiB)"
-                  class="settings-control"
-                  error_class="settings-control-error"
-                />
-                <.input
-                  field={@settings_form[:output_spool_quota_mib]}
-                  id="settings-output-spool-quota"
-                  type="number"
-                  min="256"
-                  max="10240"
-                  label="Output spool quota (MiB)"
-                  class="settings-control"
-                  error_class="settings-control-error"
-                />
-                <.input
-                  field={@settings_form[:output_retention_days]}
-                  id="settings-output-retention"
-                  type="number"
-                  min="1"
-                  max="90"
-                  label="Output retention (days)"
+                  label="Terminal idle timeout (minutes)"
                   class="settings-control"
                   error_class="settings-control-error"
                 />
               </div>
-              <p
-                id="settings-resource-advanced-note"
-                class="border-t settings-token-border px-4 py-3 text-xs leading-5 settings-text-secondary"
+
+              <div class="mt-4 grid gap-3 sm:grid-cols-3">
+                <div class="settings-policy-note">
+                  <span>70%</span><p>Default pressure threshold</p><em>Applies live</em>
+                </div>
+                <div class="settings-policy-note">
+                  <span>85%</span><p>Default critical threshold</p><em>Applies live</em>
+                </div>
+                <div class="settings-policy-note">
+                  <span>30 min</span><p>Dormant terminal cleanup</p><em>Applies live</em>
+                </div>
+              </div>
+
+              <details id="settings-resource-advanced" class="settings-advanced-disclosure mt-5">
+                <summary>
+                  <span><strong>Advanced resource controls</strong><small>Guardrails prevent unsafe or contradictory values.</small></span>
+                  <.icon name="hero-chevron-down" class="h-4 w-4" />
+                </summary>
+                <div class="grid gap-4 border-t settings-token-border p-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <.input
+                    field={@settings_form[:session_idle_timeout_minutes]}
+                    id="settings-session-idle-timeout"
+                    type="number"
+                    min="1"
+                    max="1440"
+                    label="Session idle timeout (minutes)"
+                    class="settings-control"
+                    error_class="settings-control-error"
+                  />
+                  <.input
+                    field={@settings_form[:output_artifact_limit_mib]}
+                    id="settings-output-artifact-limit"
+                    type="number"
+                    min="16"
+                    max="1024"
+                    label="Per-producer cap (MiB)"
+                    class="settings-control"
+                    error_class="settings-control-error"
+                  />
+                  <.input
+                    field={@settings_form[:output_spool_quota_mib]}
+                    id="settings-output-spool-quota"
+                    type="number"
+                    min="256"
+                    max="10240"
+                    label="Output spool quota (MiB)"
+                    class="settings-control"
+                    error_class="settings-control-error"
+                  />
+                  <.input
+                    field={@settings_form[:output_retention_days]}
+                    id="settings-output-retention"
+                    type="number"
+                    min="1"
+                    max="90"
+                    label="Output retention (days)"
+                    class="settings-control"
+                    error_class="settings-control-error"
+                  />
+                </div>
+                <p
+                  id="settings-resource-advanced-note"
+                  class="border-t settings-token-border px-4 py-3 text-xs leading-5 settings-text-secondary"
+                >
+                  Defaults: 30-minute session passivation, 256 MiB per producer, 2 GiB total spool, and 7-day retention. Output and session changes apply to new work; admission thresholds and terminal cleanup apply live.
+                </p>
+              </details>
+
+              <% deployment = runtime_group(@runtime_status, :deployment) %>
+              <div
+                id="settings-deployment-limits"
+                class="mt-5 border settings-token-border settings-token-surface p-4"
               >
-                Defaults: 30-minute session passivation, 256 MiB per producer, 2 GiB total spool, and 7-day retention. Output and session changes apply to new work; admission thresholds and terminal cleanup apply live.
-              </p>
-            </details>
-
-            <% deployment = runtime_group(@runtime_status, :deployment) %>
-            <div
-              id="settings-deployment-limits"
-              class="mt-5 border settings-token-border settings-token-surface p-4"
-            >
-              <div class="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <h3 class="text-sm font-semibold settings-text-primary">Container envelope</h3><p class="mt-1 text-xs settings-text-secondary">
-                    Read-only · change with the VPS installer or manager, then restart.
-                  </p>
-                </div>
-                <span class="settings-restart-badge">Restart required</span>
-              </div>
-              <dl class="grid gap-px overflow-hidden border settings-token-border settings-token-border-bg sm:grid-cols-2 lg:grid-cols-5">
-                <div>
-                  <dt>Profile</dt><dd id="settings-resource-profile">
-                    {deployment_value(deployment, :profile)}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Memory limit</dt><dd>
-                    {deployment_value(deployment, :memory_limit_mib, " MiB")}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Reservation</dt><dd>
-                    {deployment_value(deployment, :memory_reservation_mib, " MiB")}
-                  </dd>
-                </div>
-                <div>
-                  <dt>PID limit</dt><dd>{deployment_value(deployment, :pids_limit)}</dd>
-                </div>
-                <div>
-                  <dt>Open files / +Q</dt><dd>{deployment_value(deployment, :nofile_limit)}</dd>
-                </div>
-              </dl>
-            </div>
-          </section>
-
-          <section
-            id="runtime"
-            aria-labelledby="runtime-title"
-            class="settings-section-card scroll-mt-24"
-          >
-            <.settings_section_header
-              id="runtime-title"
-              eyebrow="Runtime"
-              title="Live operational status"
-              description="Read-only activity, memory, and capacity facts from the local OTP runtime. Values refresh every five seconds while this page is open."
-            />
-            <% container = runtime_group(@runtime_status, :container) %>
-            <% beam = runtime_group(@runtime_status, :beam) %>
-            <% dispatcher = runtime_group(@runtime_status, :dispatcher) %>
-            <% activity = runtime_group(@runtime_status, :activity) %>
-            <% governor = runtime_group(@runtime_status, :governor) %>
-            <div
-              id="settings-runtime-panel"
-              data-state={@runtime_status.state}
-              class="settings-runtime-panel"
-            >
-              <div class="settings-runtime-overview">
-                <div class="min-w-0">
-                  <p class="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] settings-text-secondary">
-                    Work state
-                  </p>
-                  <div class="mt-2 flex flex-wrap items-center gap-3">
-                    <span
-                      id="settings-runtime-state"
-                      role="status"
-                      aria-live="polite"
-                      data-tone={runtime_state_tone(@runtime_status)}
-                      class="settings-runtime-state"
-                    >
-                      <span class="settings-runtime-state-dot"></span>
-                      {runtime_state_label(@runtime_status)}
-                    </span>
-                    <span class="font-mono text-[11px] uppercase tracking-[0.1em] settings-text-secondary">
-                      Auto-refresh · 5s
-                    </span>
+                <div class="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 class="text-sm font-semibold settings-text-primary">
+                      Container envelope
+                    </h3><p class="mt-1 text-xs settings-text-secondary">
+                      Read-only · change with the VPS installer or manager, then restart.
+                    </p>
                   </div>
-                  <p
-                    id="settings-runtime-state-note"
-                    class="mt-3 max-w-[66ch] text-sm leading-6 settings-text-secondary"
+                  <span class="settings-restart-badge">Restart required</span>
+                </div>
+                <dl class="grid gap-px overflow-hidden border settings-token-border settings-token-border-bg sm:grid-cols-2 lg:grid-cols-5">
+                  <div>
+                    <dt>Profile</dt><dd id="settings-resource-profile">
+                      {deployment_value(deployment, :profile)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Memory limit</dt><dd>
+                      {deployment_value(deployment, :memory_limit_mib, " MiB")}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Reservation</dt><dd>
+                      {deployment_value(deployment, :memory_reservation_mib, " MiB")}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>PID limit</dt><dd>{deployment_value(deployment, :pids_limit)}</dd>
+                  </div>
+                  <div>
+                    <dt>Open files / +Q</dt><dd>{deployment_value(deployment, :nofile_limit)}</dd>
+                  </div>
+                </dl>
+              </div>
+            </section>
+
+            <section
+              id="runtime"
+              aria-labelledby="runtime-title"
+              class="settings-section-card scroll-mt-24"
+            >
+              <.settings_section_header
+                id="runtime-title"
+                eyebrow="Runtime"
+                title="Live operational status"
+                description="Read-only activity, memory, and capacity facts from the local OTP runtime. Values refresh every five seconds while this page is open."
+              />
+              <% container = runtime_group(@runtime_status, :container) %>
+              <% beam = runtime_group(@runtime_status, :beam) %>
+              <% dispatcher = runtime_group(@runtime_status, :dispatcher) %>
+              <% activity = runtime_group(@runtime_status, :activity) %>
+              <% governor = runtime_group(@runtime_status, :governor) %>
+              <div
+                id="settings-runtime-panel"
+                data-state={@runtime_status.state}
+                class="settings-runtime-panel"
+              >
+                <div class="settings-runtime-overview">
+                  <div class="min-w-0">
+                    <p class="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] settings-text-secondary">
+                      Work state
+                    </p>
+                    <div class="mt-2 flex flex-wrap items-center gap-3">
+                      <span
+                        id="settings-runtime-state"
+                        role="status"
+                        aria-live="polite"
+                        data-tone={runtime_state_tone(@runtime_status)}
+                        class="settings-runtime-state"
+                      >
+                        <span class="settings-runtime-state-dot"></span>
+                        {runtime_state_label(@runtime_status)}
+                      </span>
+                      <span class="font-mono text-[11px] uppercase tracking-[0.1em] settings-text-secondary">
+                        Auto-refresh · 5s
+                      </span>
+                    </div>
+                    <p
+                      id="settings-runtime-state-note"
+                      class="mt-3 max-w-[66ch] text-sm leading-6 settings-text-secondary"
+                    >
+                      {runtime_state_note(@runtime_status)}
+                    </p>
+                  </div>
+                  <div id="settings-runtime-memory-container" class="settings-runtime-memory-hero">
+                    <span>Container memory</span>
+                    <strong>{runtime_memory_value(container)}</strong>
+                  </div>
+                </div>
+
+                <dl id="settings-runtime-metrics" class="settings-runtime-grid">
+                  <div
+                    id="settings-runtime-runs"
+                    class="settings-runtime-metric settings-runtime-metric-wide"
                   >
-                    {runtime_state_note(@runtime_status)}
+                    <dt><.icon name="hero-queue-list" class="h-4 w-4" /> Runs</dt>
+                    <dd>{runtime_dispatcher_value(dispatcher)}</dd>
+                  </div>
+                  <div id="settings-runtime-agents" class="settings-runtime-metric">
+                    <dt>Agents</dt><dd>{runtime_count(activity, :agents)}</dd>
+                  </div>
+                  <div id="settings-runtime-fleets" class="settings-runtime-metric">
+                    <dt>Fleets</dt><dd>{runtime_count(activity, :fleets)}</dd>
+                  </div>
+                  <div id="settings-runtime-sessions" class="settings-runtime-metric">
+                    <dt>Sessions</dt><dd>{runtime_count(activity, :sessions)}</dd>
+                  </div>
+                  <div id="settings-runtime-terminals" class="settings-runtime-metric">
+                    <dt>Terminals</dt><dd>{runtime_count(activity, :terminals)}</dd>
+                  </div>
+                  <div id="settings-runtime-beam-memory" class="settings-runtime-metric">
+                    <dt>BEAM memory</dt><dd>{runtime_beam_memory_value(beam)}</dd>
+                  </div>
+                  <div id="settings-runtime-memory-peak" class="settings-runtime-metric">
+                    <dt>Container peak</dt><dd>{runtime_peak_memory_value(container)}</dd>
+                  </div>
+                  <div id="settings-runtime-pids" class="settings-runtime-metric">
+                    <dt>Container PIDs</dt><dd>{runtime_pids_value(container)}</dd>
+                  </div>
+                  <div id="settings-runtime-oom" class="settings-runtime-metric">
+                    <dt>OOM history</dt><dd>{runtime_oom_value(container)}</dd>
+                  </div>
+                  <div id="settings-runtime-pressure" class="settings-runtime-metric">
+                    <dt>Admission pressure</dt><dd>{runtime_governor_state(governor)}</dd>
+                  </div>
+                  <div
+                    id="settings-runtime-governor"
+                    class="settings-runtime-metric settings-runtime-metric-full"
+                  >
+                    <dt><.icon name="hero-scale" class="h-4 w-4" /> Governor tickets</dt><dd>
+                      {runtime_governor_value(governor)}
+                    </dd>
+                  </div>
+                  <div id="settings-runtime-ports" class="settings-runtime-metric">
+                    <dt>BEAM ports</dt><dd>{runtime_ports_value(beam)}</dd>
+                  </div>
+                  <div
+                    id="settings-runtime-dag-attempts"
+                    class="settings-runtime-metric settings-runtime-metric-full"
+                  >
+                    <dt><.icon name="hero-command-line" class="h-4 w-4" /> Research attempts</dt>
+                    <dd>{runtime_count(activity, :dag_attempts)} active DAG attempts</dd>
+                  </div>
+                </dl>
+              </div>
+              <div class="mt-4 flex items-start gap-2 text-xs leading-5 settings-text-secondary">
+                <.icon name="hero-information-circle" class="mt-0.5 h-4 w-4 shrink-0" />
+                A dormant session or terminal can remain open while the application is idle. Only queued or executing work makes the runtime active.
+              </div>
+            </section>
+
+            <div id="settings-save-bar" class="settings-save-bar">
+              <div id="settings-save-status" role="status" aria-live="polite" class="min-w-0">
+                <div class="phx-submit-loading:hidden">
+                  <p class={["text-sm font-semibold", status_text_class(@settings_status)]}>
+                    {status_title(@settings_status)}
+                  </p>
+                  <p class="mt-0.5 text-xs leading-5 settings-text-secondary">
+                    {@settings_message}
+                    <%= if @saved_at && @settings_status == :saved do %>
+                      · {Calendar.strftime(@saved_at, "%H:%M:%S UTC")}
+                    <% end %>
                   </p>
                 </div>
-                <div id="settings-runtime-memory-container" class="settings-runtime-memory-hero">
-                  <span>Container memory</span>
-                  <strong>{runtime_memory_value(container)}</strong>
+                <div class="hidden phx-submit-loading:block">
+                  <p class="text-sm font-semibold settings-live-text">Saving</p>
+                  <p class="mt-0.5 text-xs settings-text-secondary">
+                    Writing validated defaults to local storage…
+                  </p>
                 </div>
               </div>
-
-              <dl id="settings-runtime-metrics" class="settings-runtime-grid">
-                <div
-                  id="settings-runtime-runs"
-                  class="settings-runtime-metric settings-runtime-metric-wide"
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  id="settings-discard"
+                  type="button"
+                  phx-click="discard_settings"
+                  disabled={@settings_status not in [:dirty, :error]}
+                  aria-describedby="settings-save-status"
+                  class="settings-discard-button"
                 >
-                  <dt><.icon name="hero-queue-list" class="h-4 w-4" /> Runs</dt>
-                  <dd>{runtime_dispatcher_value(dispatcher)}</dd>
-                </div>
-                <div id="settings-runtime-agents" class="settings-runtime-metric">
-                  <dt>Agents</dt><dd>{runtime_count(activity, :agents)}</dd>
-                </div>
-                <div id="settings-runtime-fleets" class="settings-runtime-metric">
-                  <dt>Fleets</dt><dd>{runtime_count(activity, :fleets)}</dd>
-                </div>
-                <div id="settings-runtime-sessions" class="settings-runtime-metric">
-                  <dt>Sessions</dt><dd>{runtime_count(activity, :sessions)}</dd>
-                </div>
-                <div id="settings-runtime-terminals" class="settings-runtime-metric">
-                  <dt>Terminals</dt><dd>{runtime_count(activity, :terminals)}</dd>
-                </div>
-                <div id="settings-runtime-beam-memory" class="settings-runtime-metric">
-                  <dt>BEAM memory</dt><dd>{runtime_beam_memory_value(beam)}</dd>
-                </div>
-                <div id="settings-runtime-memory-peak" class="settings-runtime-metric">
-                  <dt>Container peak</dt><dd>{runtime_peak_memory_value(container)}</dd>
-                </div>
-                <div id="settings-runtime-pids" class="settings-runtime-metric">
-                  <dt>Container PIDs</dt><dd>{runtime_pids_value(container)}</dd>
-                </div>
-                <div id="settings-runtime-oom" class="settings-runtime-metric">
-                  <dt>OOM history</dt><dd>{runtime_oom_value(container)}</dd>
-                </div>
-                <div id="settings-runtime-pressure" class="settings-runtime-metric">
-                  <dt>Admission pressure</dt><dd>{runtime_governor_state(governor)}</dd>
-                </div>
-                <div
-                  id="settings-runtime-governor"
-                  class="settings-runtime-metric settings-runtime-metric-full"
+                  Discard
+                </button>
+                <button
+                  id="settings-save"
+                  type="submit"
+                  phx-disable-with="Saving…"
+                  disabled={@settings_status not in [:dirty, :error]}
+                  aria-describedby="settings-save-status"
+                  class="settings-save-button phx-submit-loading:cursor-wait"
                 >
-                  <dt><.icon name="hero-scale" class="h-4 w-4" /> Governor tickets</dt><dd>
-                    {runtime_governor_value(governor)}
-                  </dd>
-                </div>
-                <div id="settings-runtime-ports" class="settings-runtime-metric">
-                  <dt>BEAM ports</dt><dd>{runtime_ports_value(beam)}</dd>
-                </div>
-                <div
-                  id="settings-runtime-dag-attempts"
-                  class="settings-runtime-metric settings-runtime-metric-full"
-                >
-                  <dt><.icon name="hero-command-line" class="h-4 w-4" /> Research attempts</dt>
-                  <dd>{runtime_count(activity, :dag_attempts)} active DAG attempts</dd>
-                </div>
-              </dl>
-            </div>
-            <div class="mt-4 flex items-start gap-2 text-xs leading-5 settings-text-secondary">
-              <.icon name="hero-information-circle" class="mt-0.5 h-4 w-4 shrink-0" />
-              A dormant session or terminal can remain open while the application is idle. Only queued or executing work makes the runtime active.
-            </div>
-          </section>
-
-          <div id="settings-save-bar" class="settings-save-bar">
-            <div id="settings-save-status" role="status" aria-live="polite" class="min-w-0">
-              <div class="phx-submit-loading:hidden">
-                <p class={["text-sm font-semibold", status_text_class(@settings_status)]}>
-                  {status_title(@settings_status)}
-                </p>
-                <p class="mt-0.5 text-xs leading-5 settings-text-secondary">
-                  {@settings_message}
-                  <%= if @saved_at && @settings_status == :saved do %>
-                    · {Calendar.strftime(@saved_at, "%H:%M:%S UTC")}
-                  <% end %>
-                </p>
-              </div>
-              <div class="hidden phx-submit-loading:block">
-                <p class="text-sm font-semibold settings-live-text">Saving</p>
-                <p class="mt-0.5 text-xs settings-text-secondary">
-                  Writing validated defaults to local storage…
-                </p>
+                  Save settings
+                </button>
               </div>
             </div>
-            <div class="flex shrink-0 items-center gap-2">
-              <button
-                id="settings-discard"
-                type="button"
-                phx-click="discard_settings"
-                disabled={@settings_status not in [:dirty, :error]}
-                aria-describedby="settings-save-status"
-                class="settings-discard-button"
-              >
-                Discard
-              </button>
-              <button
-                id="settings-save"
-                type="submit"
-                phx-disable-with="Saving…"
-                disabled={@settings_status not in [:dirty, :error]}
-                aria-describedby="settings-save-status"
-                class="settings-save-button phx-submit-loading:cursor-wait"
-              >
-                Save settings
-              </button>
-            </div>
-          </div>
-        </.form>
+          </.form>
+        </div>
       </div>
-    </div>
     </div>
   </main>
   <div

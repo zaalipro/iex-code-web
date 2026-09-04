@@ -1,0 +1,562 @@
+<Layouts.app flash={@flash}>
+  <div id="workflows-live-container" class="min-h-screen bg-[#07090e] text-gray-100 flex flex-col">
+    <!-- Studio Header Navigation Bar -->
+    <header class="border-b border-[#1c2128] bg-[#0d1117]/90 backdrop-blur-md px-6 py-4 shrink-0">
+      <div class="flex flex-wrap items-center justify-between gap-4 max-w-[100rem] mx-auto">
+        <!-- Left: Return Link & Breadcrumb -->
+        <div class="flex items-center gap-3">
+          <.link
+            navigate={@return_path}
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs font-mono text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <.icon name="hero-arrow-left" class="w-3.5 h-3.5" />
+            <span>Workspace</span>
+          </.link>
+
+          <span class="text-zinc-600 font-mono">/</span>
+
+          <.link
+            navigate={IexCodeWeb.WorkflowsLive.workflows_index_path(@context_session)}
+            class="text-xs font-mono text-cyan-400 hover:underline font-bold"
+          >
+            Workflows
+          </.link>
+
+          <%= if @workflow do %>
+            <span class="text-zinc-600 font-mono">/</span>
+            <span class="text-xs font-mono text-zinc-400 truncate max-w-[200px]">
+              {@workflow.name}
+            </span>
+          <% end %>
+
+          <%= if @run do %>
+            <span class="text-zinc-600 font-mono">/</span>
+            <span class="text-xs font-mono text-cyan-300">
+              Cockpit #{String.slice(to_string(@run.id), 0, 8)}
+            </span>
+          <% end %>
+        </div>
+
+        <!-- Right: Action Buttons -->
+        <div class="flex items-center gap-2">
+          <%= if @live_action not in [:new, :session_new] do %>
+            <.link
+              id="header-btn-new-workflow"
+              navigate={IexCodeWeb.WorkflowsLive.workflows_new_path(@context_session)}
+              class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-mono text-xs font-bold hover:brightness-110 shadow-md shadow-cyan-500/20 transition-all"
+            >
+              <.icon name="hero-plus" class="w-3.5 h-3.5" />
+              <span>New Workflow</span>
+            </.link>
+          <% end %>
+
+          <%= if @live_action not in [:index, :session_index] do %>
+            <.link
+              id="header-btn-gallery"
+              navigate={IexCodeWeb.WorkflowsLive.workflows_index_path(@context_session)}
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs font-mono text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <.icon name="hero-rectangle-stack" class="w-3.5 h-3.5" />
+              <span>All Workflows</span>
+            </.link>
+          <% end %>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-y-auto p-6 max-w-[100rem] mx-auto w-full">
+      <!-- =================================================================== -->
+      <!-- 1. GALLERY VIEW (:index, :session_index)                             -->
+      <!-- =================================================================== -->
+      <%= if @live_action in [:index, :session_index] do %>
+        <div id="workflows-gallery" class="space-y-6">
+          <!-- Gallery Banner & Metrics -->
+          <div class="rounded-3xl border border-white/10 bg-gradient-to-br from-[#0d131f] via-[#090e17] to-[#07090e] p-8 shadow-2xl relative overflow-hidden">
+            <div class="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+              <div class="max-w-2xl">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-mono text-xs mb-3">
+                  <.icon name="hero-sparkles" class="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Grok-Like Autonomous Execution Engine</span>
+                </div>
+                <h1 class="text-3xl font-extrabold text-white tracking-tight sm:text-4xl">
+                  Project Workflows
+                </h1>
+                <p class="mt-2 text-sm text-zinc-400 leading-relaxed">
+                  Chain Deep Research, Swarm Code Generation, Automated Test Verification, Security Audits, and Git Commits into autonomous, model-aware directed graphs.
+                </p>
+              </div>
+
+              <!-- Quick Metrics Grid -->
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 shrink-0">
+                <div class="p-4 rounded-2xl bg-white/5 border border-white/10 text-center">
+                  <p class="text-[10px] font-mono text-zinc-400 uppercase">Workflows</p>
+                  <p class="text-2xl font-bold text-white mt-1">{length(@workflows)}</p>
+                </div>
+                <div class="p-4 rounded-2xl bg-white/5 border border-white/10 text-center">
+                  <p class="text-[10px] font-mono text-zinc-400 uppercase">Active Runs</p>
+                  <p class="text-2xl font-bold text-cyan-400 mt-1">
+                    {Enum.count(@active_runs, &(&1.status == "running"))}
+                  </p>
+                </div>
+                <div class="p-4 rounded-2xl bg-white/5 border border-white/10 text-center col-span-2 sm:col-span-1">
+                  <p class="text-[10px] font-mono text-zinc-400 uppercase">Total Runs</p>
+                  <p class="text-2xl font-bold text-emerald-400 mt-1">{length(@active_runs)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Controls: Search & Tag Filters -->
+          <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="relative w-full sm:w-80">
+              <.icon
+                name="hero-magnifying-glass"
+                class="w-4 h-4 text-zinc-500 absolute left-3.5 top-3"
+              />
+              <input
+                type="text"
+                id="workflows-search-input"
+                placeholder="Search workflows by name or slug..."
+                value={@search_query}
+                phx-input="search"
+                class="w-full pl-10 pr-4 py-2 rounded-xl bg-[#0e131b] border border-[#21262d] text-xs font-mono text-white placeholder-zinc-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-all"
+              />
+            </div>
+
+            <!-- Tags Filter -->
+            <div class="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
+              <button
+                type="button"
+                phx-click="filter_tag"
+                phx-value-tag="all"
+                class={[
+                  "px-3 py-1.5 rounded-lg text-xs font-mono transition-colors shrink-0",
+                  @tag_filter == "all" &&
+                    "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40",
+                  @tag_filter != "all" && "bg-zinc-800/40 text-zinc-400 hover:text-white"
+                ]}
+              >
+                All
+              </button>
+              <%= for tag <- ["autonomous", "swarm", "full-cycle", "research"] do %>
+                <button
+                  type="button"
+                  phx-click="filter_tag"
+                  phx-value-tag={tag}
+                  class={[
+                    "px-3 py-1.5 rounded-lg text-xs font-mono transition-colors shrink-0",
+                    @tag_filter == tag &&
+                      "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40",
+                    @tag_filter != tag && "bg-zinc-800/40 text-zinc-400 hover:text-white"
+                  ]}
+                >
+                  #{tag}
+                </button>
+              <% end %>
+            </div>
+          </div>
+
+          <!-- Workflows Cards Grid -->
+          <%= if length(@workflows) > 0 do %>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              <%= for workflow <- @workflows do %>
+                <% active_run =
+                  Enum.find(@active_runs, fn r ->
+                    r.workflow_id == workflow.id and r.status == "running"
+                  end) %>
+                <.workflow_card
+                  workflow={workflow}
+                  active_run={active_run}
+                  on_launch="launch_workflow"
+                  on_delete="delete_workflow"
+                />
+              <% end %>
+            </div>
+          <% else %>
+            <!-- Empty State -->
+            <div class="rounded-3xl border border-dashed border-zinc-800 p-12 text-center space-y-4">
+              <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto text-zinc-600" />
+              <div class="max-w-md mx-auto">
+                <h3 class="text-base font-bold text-white">No workflows configured yet</h3>
+                <p class="text-xs text-zinc-500 mt-1">
+                  Synthesize an autonomous 5-step pipeline from a natural language objective or build a custom DAG.
+                </p>
+              </div>
+              <.link
+                navigate={IexCodeWeb.WorkflowsLive.workflows_new_path(@context_session)}
+                class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-mono text-xs font-bold hover:brightness-110 shadow-lg shadow-cyan-500/20"
+              >
+                <.icon name="hero-plus" class="w-4 h-4" />
+                <span>Create Workflow</span>
+              </.link>
+            </div>
+          <% end %>
+
+          <!-- Recent Runs Section -->
+          <%= if length(@active_runs) > 0 do %>
+            <div class="mt-10 pt-8 border-t border-white/5 space-y-4">
+              <h3 class="text-sm font-mono text-zinc-400 uppercase tracking-wider font-bold">
+                Recent Execution Runs
+              </h3>
+              <div class="overflow-x-auto rounded-2xl border border-[#21262d] bg-[#0c1017]">
+                <table class="w-full text-left text-xs font-mono">
+                  <thead class="bg-[#12161f] text-zinc-400 border-b border-[#21262d]">
+                    <tr>
+                      <th class="p-3.5">Run ID</th>
+                      <th class="p-3.5">Workflow</th>
+                      <th class="p-3.5">Status</th>
+                      <th class="p-3.5">Progress</th>
+                      <th class="p-3.5">Duration</th>
+                      <th class="p-3.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-white/5 text-zinc-300">
+                    <%= for run <- @active_runs do %>
+                      <tr class="hover:bg-white/[0.02] transition-colors">
+                        <td class="p-3.5 text-cyan-400">
+                          #{String.slice(to_string(run.id), 0, 8)}
+                        </td>
+                        <td class="p-3.5 font-bold text-white">
+                          {if run.workflow, do: run.workflow.name, else: "Workflow"}
+                        </td>
+                        <td class="p-3.5">
+                          <span class={[
+                            "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
+                            status_badge_class(run.status)
+                          ]}>
+                            {run.status}
+                          </span>
+                        </td>
+                        <td class="p-3.5">
+                          <div class="flex items-center gap-2">
+                            <div class="w-20 bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                              <div
+                                class="bg-cyan-400 h-1.5 rounded-full"
+                                style={"width: #{run.progress}%"}
+                              >
+                              </div>
+                            </div>
+                            <span class="text-[10px] text-zinc-500 tabular-nums">{run.progress}%</span>
+                          </div>
+                        </td>
+                        <td class="p-3.5 text-zinc-400 tabular-nums">
+                          {format_duration(run.duration_ms)}
+                        </td>
+                        <td class="p-3.5 text-right">
+                          <.link
+                            navigate={
+                              IexCodeWeb.WorkflowsLive.workflow_run_path(
+                                @context_session,
+                                run.workflow_id,
+                                run.id
+                              )
+                            }
+                            class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-cyan-300 text-xs font-semibold transition-colors"
+                          >
+                            Open Cockpit →
+                          </.link>
+                        </td>
+                      </tr>
+                    <% end %>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          <% end %>
+        </div>
+      <% end %>
+
+      <!-- =================================================================== -->
+      <!-- 2. WORKFLOW BUILDER / ASSISTANT (:new, :session_new)                 -->
+      <!-- =================================================================== -->
+      <%= if @live_action in [:new, :session_new] do %>
+        <div id="workflows-builder" class="space-y-8 max-w-4xl mx-auto">
+          <!-- Header -->
+          <div class="border-b border-[#21262d] pb-6">
+            <h1 class="text-2xl font-bold text-white tracking-tight">
+              Create New Workflow
+            </h1>
+            <p class="text-xs text-zinc-400 mt-1">
+              Synthesize a multi-step blueprint from natural language or customize the DAG parameters.
+            </p>
+          </div>
+
+          <!-- Natural Language Synthesis Assistant -->
+          <div class="rounded-2xl border border-cyan-500/30 bg-[#0c131f] p-6 space-y-4 shadow-xl">
+            <div class="flex items-center gap-2 text-cyan-300 font-mono text-xs font-bold">
+              <.icon name="hero-sparkles" class="w-4 h-4 text-cyan-400" />
+              <span>Autonomous Blueprint Synthesizer</span>
+            </div>
+
+            <form id="blueprint-prompt-form" phx-submit="synthesize_blueprint" class="space-y-3">
+              <div class="relative">
+                <textarea
+                  id="blueprint-prompt-input"
+                  name="prompt"
+                  rows="3"
+                  placeholder="e.g. Build user authentication with bcrypt, rate limiting, live tests, security audits, and git commits..."
+                  class="w-full p-3.5 rounded-xl bg-[#06090e] border border-white/10 text-xs font-mono text-white placeholder-zinc-500 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 outline-none"
+                >{@blueprint_prompt}</textarea>
+              </div>
+
+              <div class="flex justify-end">
+                <button
+                  type="submit"
+                  id="btn-synthesize-blueprint"
+                  class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-mono text-xs font-bold hover:brightness-110 shadow-md shadow-cyan-500/20"
+                >
+                  <.icon name="hero-sparkles" class="w-4 h-4" />
+                  <span>Synthesize 5-Step Pipeline</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Workflow Definition Form -->
+          <div class="rounded-2xl border border-[#21262d] bg-[#0d1117] p-6 space-y-6">
+            <h3 class="text-sm font-mono text-white font-bold uppercase tracking-wider">
+              Workflow Configuration
+            </h3>
+
+            <.form
+              for={@workflow_form}
+              id="workflow-config-form"
+              phx-change="validate_workflow"
+              phx-submit="save_workflow"
+              class="space-y-4"
+            >
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <.input
+                  field={@workflow_form[:name]}
+                  label="Workflow Name"
+                  placeholder="e.g. Feature Implementation Pipeline"
+                  required
+                />
+                <.input
+                  field={@workflow_form[:slug]}
+                  label="URL Slug"
+                  placeholder="e.g. feature-pipeline"
+                />
+              </div>
+
+              <.input
+                field={@workflow_form[:description]}
+                type="textarea"
+                label="Description"
+                placeholder="Explain what this workflow accomplishes..."
+                rows="2"
+              />
+
+              <div class="pt-4 border-t border-white/5">
+                <h4 class="text-xs font-mono text-zinc-400 font-bold uppercase mb-2">
+                  Configured DAG Steps
+                </h4>
+                <div class="space-y-2">
+                  <% steps = @workflow_form[:steps].value || [] %>
+                  <%= for {step, idx} <- Enum.with_index(steps) do %>
+                    <div class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between text-xs font-mono">
+                      <div class="flex items-center gap-2">
+                        <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-bold">
+                          {idx + 1}
+                        </span>
+                        <span class="text-white font-bold">{Map.get(step, "title") ||
+                          Map.get(step, :title)}</span>
+                        <span class="text-zinc-500">({Map.get(step, "kind") ||
+                          Map.get(step, :kind)})</span>
+                      </div>
+                      <span class="text-[10px] text-zinc-400">
+                        deps: {inspect(Map.get(step, "depends_on") || [])}
+                      </span>
+                    </div>
+                  <% end %>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-end gap-3 pt-6 border-t border-white/5">
+                <.link
+                  navigate={IexCodeWeb.WorkflowsLive.workflows_index_path(@context_session)}
+                  class="px-4 py-2 rounded-xl text-xs font-mono text-zinc-400 hover:text-white"
+                >
+                  Cancel
+                </.link>
+
+                <button
+                  type="submit"
+                  id="btn-save-workflow"
+                  class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-mono text-xs font-bold hover:brightness-110 shadow-lg shadow-emerald-500/20"
+                >
+                  <.icon name="hero-check" class="w-4 h-4" />
+                  <span>Save Workflow</span>
+                </button>
+              </div>
+            </.form>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- =================================================================== -->
+      <!-- 3. WORKFLOW DETAILS (:show, :session_show)                           -->
+      <!-- =================================================================== -->
+      <%= if @live_action in [:show, :session_show] && @workflow do %>
+        <div id="workflows-details" class="space-y-6">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[#21262d] pb-6">
+            <div>
+              <h1 class="text-2xl font-bold text-white tracking-tight">{@workflow.name}</h1>
+              <p class="text-xs font-mono text-zinc-400 mt-0.5">
+                {@workflow.slug} · Version {@workflow.version}
+              </p>
+              <p class="text-xs text-zinc-300 mt-2 max-w-2xl leading-relaxed">
+                {@workflow.description}
+              </p>
+            </div>
+
+            <div class="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                id="btn-launch-details"
+                phx-click="launch_workflow"
+                phx-value-id={@workflow.id}
+                class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-mono text-xs font-bold hover:brightness-110 shadow-md shadow-cyan-500/20"
+              >
+                <.icon name="hero-play" class="w-4 h-4" />
+                <span>Launch Workflow</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Static Preview of DAG Canvas -->
+          <div class="space-y-2">
+            <h3 class="text-xs font-mono text-zinc-400 uppercase tracking-wider font-bold">
+              Directed Graph Architecture
+            </h3>
+            <.workflow_canvas
+              id="details-preview-canvas"
+              workflow={@workflow}
+              run={
+                %WorkflowRun{
+                  status: "pending",
+                  progress: 0,
+                  resolved_steps: @workflow.steps,
+                  step_states: %{}
+                }
+              }
+              zoom_level={0.9}
+            />
+          </div>
+        </div>
+      <% end %>
+
+      <!-- =================================================================== -->
+      <!-- 4. REAL-TIME EXECUTION COCKPIT (:run, :session_run)                  -->
+      <!-- =================================================================== -->
+      <%= if @live_action in [:run, :session_run] && @run && @workflow do %>
+        <div id="workflows-cockpit" class="space-y-6">
+          <!-- Execution Toolbar -->
+          <.execution_toolbar
+            run={@run}
+            workflow={@workflow}
+            on_pause="pause_run"
+            on_resume="resume_run"
+            on_cancel="cancel_run"
+            on_launch="launch_workflow"
+          />
+
+          <!-- Interactive SVG DAG Canvas -->
+          <div class="space-y-2">
+            <.workflow_canvas
+              id="cockpit-canvas"
+              workflow={@workflow}
+              run={@run}
+              selected_step_key={@selected_step_key}
+              zoom_level={@zoom_level}
+              pan_offset={@pan_offset}
+              on_select_step="inspect_step"
+              on_pan="canvas_pan"
+              on_zoom="canvas_zoom"
+            />
+          </div>
+
+          <!-- Slide-over Live Step Inspector Drawer -->
+          <%= if @selected_step do %>
+            <.step_inspector
+              step={@selected_step}
+              run={@run}
+              active_tab={@inspector_tab}
+              on_close="close_step_inspector"
+              on_set_tab="set_inspector_tab"
+              on_retry="retry_workflow_step"
+            />
+          <% end %>
+        </div>
+      <% end %>
+
+      <!-- =================================================================== -->
+      <!-- 5. LAUNCH MODAL WITH VARIABLE PROMPTS                                -->
+      <!-- =================================================================== -->
+      <%= if @show_launch_modal && @launching_workflow do %>
+        <div
+          id="launch-workflow-modal-backdrop"
+          class="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4"
+        >
+          <div
+            id="launch-workflow-modal"
+            class="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0d1218] p-6 shadow-2xl space-y-5 text-gray-100"
+          >
+            <div class="flex items-center justify-between border-b border-white/10 pb-4">
+              <div>
+                <h3 class="text-base font-bold text-white">Launch {@launching_workflow.name}</h3>
+                <p class="text-xs font-mono text-zinc-400 mt-0.5">Provide execution inputs</p>
+              </div>
+              <button
+                type="button"
+                phx-click="close_launch_modal"
+                class="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-white/10"
+              >
+                <.icon name="hero-x-mark" class="w-5 h-5" />
+              </button>
+            </div>
+
+            <.form
+              for={@launch_form}
+              id="launch-workflow-form"
+              phx-submit="submit_launch"
+              class="space-y-4"
+            >
+              <% vars = @launching_workflow.variables || [] %>
+              <%= for var <- vars do %>
+                <% var_name = Map.get(var, "name") || Map.get(var, :name) %>
+                <.input
+                  field={@launch_form[to_string(var_name)]}
+                  name={"inputs[#{var_name}]"}
+                  label={var_name}
+                  value={Map.get(var, "default") || Map.get(var, :default)}
+                  required={Map.get(var, "required") == true}
+                  placeholder={Map.get(var, "description") || "Enter #{var_name}..."}
+                />
+              <% end %>
+
+              <div class="flex items-center justify-end gap-3 pt-4 border-t border-white/5">
+                <button
+                  type="button"
+                  phx-click="close_launch_modal"
+                  class="px-4 py-2 rounded-xl text-xs font-mono text-zinc-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  id="btn-confirm-launch"
+                  class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-mono text-xs font-bold hover:brightness-110 shadow-lg shadow-cyan-500/20"
+                >
+                  <.icon name="hero-play" class="w-4 h-4" />
+                  <span>Start Execution</span>
+                </button>
+              </div>
+            </.form>
+          </div>
+        </div>
+      <% end %>
+    </main>
+  </div>
+</Layouts.app>

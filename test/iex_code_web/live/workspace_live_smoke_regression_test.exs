@@ -94,7 +94,7 @@ defmodule IexCodeWeb.WorkspaceLiveSmokeRegressionTest do
       create_project_fixture(%{name: "Beta Regression Workspace", root_path: beta_path})
 
     alpha_session = create_session_fixture(alpha_project, %{title: "Alpha Regression Session"})
-    beta_session = create_session_fixture(alpha_project, %{title: "Beta Regression Session"})
+    _beta_session = create_session_fixture(alpha_project, %{title: "Beta Regression Session"})
 
     alpha_message =
       create_message_fixture(alpha_session, %{content: "Alpha chat content must remain visible"})

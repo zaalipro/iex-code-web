@@ -53,6 +53,7 @@ defmodule IexCodeWeb.LayoutsRootTest do
     document = conn |> get(~p"/login") |> html_response(200) |> LazyHTML.from_document()
 
     assert document |> LazyHTML.query("html[data-theme]") |> Enum.empty?()
+
     assert document
            |> LazyHTML.query(~s|html[style="color-scheme: light dark;"]|)
            |> Enum.any?()
@@ -81,6 +82,7 @@ defmodule IexCodeWeb.LayoutsRootTest do
       |> LazyHTML.from_document()
 
     assert document |> LazyHTML.query("html[data-theme]") |> Enum.empty?()
+
     assert document
            |> LazyHTML.query(~s|html[style="color-scheme: light dark;"]|)
            |> Enum.any?()

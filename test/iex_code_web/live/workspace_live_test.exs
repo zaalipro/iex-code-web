@@ -40,7 +40,8 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
 
     assert_patch(view, ~p"/sessions/#{session.id}?view=calendar")
 
-    assert render(view) =~ "Scheduled Tasks" or render(view) =~ "August, 2026"
+    current_cal_month = Calendar.strftime(Date.utc_today(), "%B, %Y")
+    assert render(view) =~ "Scheduled Tasks" or render(view) =~ current_cal_month
 
     # Switch to changes tab
     render_click(view, "switch_tab", %{"tab" => "changes"})
@@ -545,7 +546,8 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     |> render_click()
 
     html = render(view)
-    assert html =~ "August, 2026"
+    current_cal_month = Calendar.strftime(Date.utc_today(), "%B, %Y")
+    assert html =~ current_cal_month
     assert html =~ "calendar-day-16"
     assert html =~ "calendar-day-7"
 
@@ -611,25 +613,43 @@ defmodule IexCodeWeb.WorkspaceLiveTest do
     assert html =~ "target-date-picker-trigger"
 
     # Open popover
+    today_date = Date.utc_today()
+    current_picker_month = Calendar.strftime(today_date, "%B %Y")
+
+    next_picker_date =
+      if today_date.month == 12,
+        do: Date.new!(today_date.year + 1, 1, 1),
+        else: Date.new!(today_date.year, today_date.month + 1, 1)
+
+    next_picker_month = Calendar.strftime(next_picker_date, "%B %Y")
+
     html = render_click(view, "toggle_date_picker_popover")
     assert html =~ "custom-date-picker-popover"
-    assert html =~ "August 2026"
+    assert html =~ current_picker_month
     assert html =~ "Clear"
     assert html =~ "Today"
 
     # Navigate month
     html = render_click(view, "picker_next_month")
-    assert html =~ "September 2026"
+    assert html =~ next_picker_month
 
     html = render_click(view, "picker_prev_month")
-    assert html =~ "August 2026"
+    assert html =~ current_picker_month
 
     # Select day 15
     html =
-      render_click(view, "picker_select_day", %{"year" => "2026", "month" => "8", "day" => "15"})
+      render_click(view, "picker_select_day", %{
+        "year" => Integer.to_string(today_date.year),
+        "month" => Integer.to_string(today_date.month),
+        "day" => "15"
+      })
 
     refute html =~ "custom-date-picker-popover"
-    assert html =~ "08/15/2026"
+
+    formatted_15 =
+      "#{String.pad_leading(Integer.to_string(today_date.month), 2, "0")}/15/#{today_date.year}"
+
+    assert html =~ formatted_15
 
     # Re-open and click Today
     today = Calendar.strftime(Date.utc_today(), "%m/%d/%Y")

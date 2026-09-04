@@ -86,6 +86,7 @@ defmodule IexCodeWeb do
       import Phoenix.HTML
       # Core UI components
       import IexCodeWeb.CoreComponents
+      import IexCodeWeb.SwarmConsensusComponents
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

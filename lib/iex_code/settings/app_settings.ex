@@ -29,6 +29,10 @@ defmodule IexCode.Settings.AppSettings do
     field :swarm_max_retries, :integer, default: 3
     field :lock_version, :integer, default: 1
 
+    field :default_reasoning_effort, :string, default: "medium"
+    field :default_thinking_budget, :integer, default: 4096
+    field :model_overrides, :map, default: %{}
+
     field :default_tools, :map, default: %{"ast_search" => true, "web_search" => false}
 
     field :search_providers, :map,
@@ -60,6 +64,36 @@ defmodule IexCode.Settings.AppSettings do
     field :research_max_cost_cents, :integer
     field :research_max_tokens, :integer
     field :research_time_budget_minutes, :integer
+
+    # Codex CLI Parity & Safety Settings
+    field :tool_approval_mode, :string, default: "prompt_dangerous"
+
+    field :tool_category_overrides, :map,
+      default: %{
+        "shell_execution" => "prompt",
+        "file_mutations" => "prompt",
+        "git_push" => "prompt",
+        "web_search" => "auto"
+      }
+
+    field :context_window_tokens, :integer, default: 128_000
+    field :context_prune_threshold_percent, :integer, default: 75
+    field :context_compaction_strategy, :string, default: "token_compaction"
+    field :keep_recent_turns, :integer, default: 6
+    field :custom_system_prompt, :string
+    field :workspace_persona, :string, default: "pragmatic_engineer"
+    field :coding_style_rules, :string
+    field :custom_env_vars, :map, default: %{}
+    field :sandbox_mode, :string, default: "inherit_filtered"
+    field :sound_enabled, :boolean, default: true
+    field :sound_volume, :integer, default: 80
+    field :completion_chime, :string, default: "hero"
+    field :error_alert_chime, :string, default: "basso"
+    field :approval_prompt_chime, :string, default: "ping"
+    field :theme_accent, :string, default: "cyan"
+    field :layout_density, :string, default: "comfortable"
+
+    # VPS Resource Policy Settings
     field :resource_pressure_percent, :integer, default: 70
     field :resource_critical_percent, :integer, default: 85
     field :terminal_idle_timeout_minutes, :integer, default: 30
@@ -73,6 +107,14 @@ defmodule IexCode.Settings.AppSettings do
 
   @model_providers ~w(openai anthropic)
   @search_provider_ids ~w(tavily brave exa perplexity firecrawl linkup serper serpapi google bing searxng duckduckgo)
+  @tool_approval_modes ~w(full_auto prompt_dangerous read_only)
+  @compaction_strategies ~w(token_compaction rolling_summary sliding_window)
+  @workspace_personas ~w(pragmatic_engineer architect security_auditor minimalist custom)
+  @sandbox_modes ~w(isolated inherit_filtered passthrough)
+  @chimes ~w(hero sosumi basso ping glass bottle funk)
+  @theme_accents ~w(cyan emerald violet amber rose carbon)
+  @layout_densities ~w(comfortable compact)
+
   @required_fields [
     :anthropic_base_url,
     :openai_base_url,
@@ -115,6 +157,9 @@ defmodule IexCode.Settings.AppSettings do
       :openai_base_url,
       :default_model_provider,
       :default_model,
+      :default_reasoning_effort,
+      :default_thinking_budget,
+      :model_overrides,
       :swarm_agent_count,
       :auto_save,
       :temperature,
@@ -140,6 +185,24 @@ defmodule IexCode.Settings.AppSettings do
       :research_max_cost_cents,
       :research_max_tokens,
       :research_time_budget_minutes,
+      :tool_approval_mode,
+      :tool_category_overrides,
+      :context_window_tokens,
+      :context_prune_threshold_percent,
+      :context_compaction_strategy,
+      :keep_recent_turns,
+      :custom_system_prompt,
+      :workspace_persona,
+      :coding_style_rules,
+      :custom_env_vars,
+      :sandbox_mode,
+      :sound_enabled,
+      :sound_volume,
+      :completion_chime,
+      :error_alert_chime,
+      :approval_prompt_chime,
+      :theme_accent,
+      :layout_density,
       :resource_pressure_percent,
       :resource_critical_percent,
       :terminal_idle_timeout_minutes,
@@ -210,13 +273,51 @@ defmodule IexCode.Settings.AppSettings do
       greater_than_or_equal_to: 1,
       less_than_or_equal_to: 1_440
     )
+    |> check_constraint(:research_level, name: :app_settings_research_level_check)
+    |> validate_inclusion(:default_reasoning_effort, ~w(none low medium high max))
+    |> validate_number(:default_thinking_budget,
+      greater_than_or_equal_to: 1024,
+      less_than_or_equal_to: 128_000
+    )
+    |> validate_model_overrides()
+    |> validate_search_providers()
+    |> validate_search_provider_order()
+    |> validate_inclusion(:tool_approval_mode, @tool_approval_modes)
+    |> validate_tool_category_overrides()
+    |> validate_number(:context_window_tokens,
+      greater_than_or_equal_to: 1_000,
+      less_than_or_equal_to: 10_000_000
+    )
+    |> validate_number(:context_prune_threshold_percent,
+      greater_than_or_equal_to: 10,
+      less_than_or_equal_to: 95
+    )
+    |> validate_inclusion(:context_compaction_strategy, @compaction_strategies)
+    |> validate_number(:keep_recent_turns,
+      greater_than_or_equal_to: 1,
+      less_than_or_equal_to: 50
+    )
+    |> validate_length(:custom_system_prompt, max: 20_000)
+    |> validate_inclusion(:workspace_persona, @workspace_personas)
+    |> validate_length(:coding_style_rules, max: 20_000)
+    |> validate_custom_env_vars()
+    |> validate_inclusion(:sandbox_mode, @sandbox_modes)
+    |> validate_number(:sound_volume,
+      greater_than_or_equal_to: 0,
+      less_than_or_equal_to: 100
+    )
+    |> validate_inclusion(:completion_chime, @chimes)
+    |> validate_inclusion(:error_alert_chime, @chimes)
+    |> validate_inclusion(:approval_prompt_chime, @chimes)
+    |> validate_inclusion(:theme_accent, @theme_accents)
+    |> validate_inclusion(:layout_density, @layout_densities)
     |> validate_number(:resource_pressure_percent,
-      greater_than_or_equal_to: 50,
-      less_than_or_equal_to: 90
+      greater_than_or_equal_to: 40,
+      less_than_or_equal_to: 95
     )
     |> validate_number(:resource_critical_percent,
-      greater_than_or_equal_to: 60,
-      less_than_or_equal_to: 95
+      greater_than_or_equal_to: 50,
+      less_than_or_equal_to: 99
     )
     |> validate_number(:terminal_idle_timeout_minutes,
       greater_than_or_equal_to: 1,
@@ -239,11 +340,106 @@ defmodule IexCode.Settings.AppSettings do
       less_than_or_equal_to: 90
     )
     |> validate_resource_policy()
-    |> check_constraint(:research_level, name: :app_settings_research_level_check)
-    |> validate_search_providers()
-    |> validate_search_provider_order()
     |> optimistic_lock(:lock_version)
   end
+
+  defp validate_resource_policy(changeset) do
+    pressure = get_field(changeset, :resource_pressure_percent)
+    critical = get_field(changeset, :resource_critical_percent)
+    artifact_limit = get_field(changeset, :output_artifact_limit_mib)
+    spool_quota = get_field(changeset, :output_spool_quota_mib)
+
+    changeset =
+      if is_integer(pressure) and is_integer(critical) and pressure >= critical,
+        do: add_error(changeset, :resource_critical_percent, "must exceed pressure threshold"),
+        else: changeset
+
+    if is_integer(artifact_limit) and is_integer(spool_quota) and
+         artifact_limit > spool_quota,
+       do: add_error(changeset, :output_spool_quota_mib, "must cover one output artifact"),
+       else: changeset
+  end
+
+  defp validate_model_overrides(changeset) do
+    case get_field(changeset, :model_overrides) do
+      nil ->
+        put_change(changeset, :model_overrides, %{})
+
+      overrides when is_map(overrides) and map_size(overrides) <= 128 ->
+        if Enum.all?(overrides, &valid_model_override?/1) do
+          changeset
+        else
+          add_error(
+            changeset,
+            :model_overrides,
+            "contains an invalid model override configuration"
+          )
+        end
+
+      _ ->
+        add_error(changeset, :model_overrides, "must be a map with at most 128 model overrides")
+    end
+  end
+
+  defp valid_model_override?({model_name, config})
+       when is_binary(model_name) and byte_size(model_name) <= 240 and is_map(config) do
+    budget =
+      Map.get(
+        config,
+        "budget_tokens",
+        Map.get(
+          config,
+          :budget_tokens,
+          Map.get(config, "thinking_budget", Map.get(config, :thinking_budget))
+        )
+      )
+
+    valid_override_keys?(config) and
+      valid_override_effort?(
+        Map.get(config, "reasoning_effort", Map.get(config, :reasoning_effort))
+      ) and
+      valid_override_budget?(budget) and
+      valid_override_tokens?(Map.get(config, "max_tokens", Map.get(config, :max_tokens))) and
+      valid_override_temp?(Map.get(config, "temperature", Map.get(config, :temperature)))
+  end
+
+  defp valid_model_override?(_), do: false
+
+  defp valid_override_keys?(config) do
+    allowed = ~w(reasoning_effort budget_tokens thinking_budget max_tokens temperature)
+
+    keys =
+      Enum.map(Map.keys(config), fn
+        k when is_binary(k) -> k
+        k when is_atom(k) -> Atom.to_string(k)
+        _ -> :invalid
+      end)
+
+    Enum.all?(keys, &(&1 in allowed))
+  end
+
+  defp valid_override_effort?(nil), do: true
+
+  defp valid_override_effort?(effort) when is_binary(effort),
+    do: effort in ~w(none low medium high max)
+
+  defp valid_override_effort?(effort) when is_atom(effort),
+    do: Atom.to_string(effort) in ~w(none low medium high max)
+
+  defp valid_override_effort?(_), do: false
+
+  defp valid_override_budget?(nil), do: true
+  defp valid_override_budget?(b) when is_integer(b), do: b >= 1024 and b <= 128_000
+  defp valid_override_budget?(_), do: false
+
+  defp valid_override_tokens?(nil), do: true
+  defp valid_override_tokens?(t) when is_integer(t), do: t >= 1 and t <= 128_000
+  defp valid_override_tokens?(_), do: false
+
+  defp valid_override_temp?(nil), do: true
+  defp valid_override_temp?(temp) when is_float(temp), do: temp >= 0.0 and temp <= 2.0
+  defp valid_override_temp?(temp) when is_integer(temp), do: temp >= 0 and temp <= 2
+  defp valid_override_temp?(_), do: false
 
   defp validate_search_providers(changeset) do
     case get_field(changeset, :search_providers) do
@@ -264,23 +460,6 @@ defmodule IexCode.Settings.AppSettings do
       _ ->
         add_error(changeset, :search_providers, "must be a map with at most 32 providers")
     end
-  end
-
-  defp validate_resource_policy(changeset) do
-    pressure = get_field(changeset, :resource_pressure_percent)
-    critical = get_field(changeset, :resource_critical_percent)
-    artifact_limit = get_field(changeset, :output_artifact_limit_mib)
-    spool_quota = get_field(changeset, :output_spool_quota_mib)
-
-    changeset =
-      if is_integer(pressure) and is_integer(critical) and pressure >= critical,
-        do: add_error(changeset, :resource_critical_percent, "must exceed pressure threshold"),
-        else: changeset
-
-    if is_integer(artifact_limit) and is_integer(spool_quota) and
-         artifact_limit > spool_quota,
-       do: add_error(changeset, :output_spool_quota_mib, "must cover one output artifact"),
-       else: changeset
   end
 
   defp valid_provider_config?({id, config}) when is_binary(id) and is_map(config) do
@@ -400,5 +579,65 @@ defmodule IexCode.Settings.AppSettings do
           [{field, "must be an http(s) URL without embedded credentials"}]
       end
     end)
+  end
+
+  defp validate_tool_category_overrides(changeset) do
+    case get_field(changeset, :tool_category_overrides) do
+      nil ->
+        put_change(changeset, :tool_category_overrides, %{
+          "shell_execution" => "prompt",
+          "file_mutations" => "prompt",
+          "git_push" => "prompt",
+          "web_search" => "auto"
+        })
+
+      overrides when is_map(overrides) and map_size(overrides) <= 32 ->
+        allowed_cats = ~w(shell_execution file_mutations git_push web_search read_only other)
+        allowed_vals = ~w(auto prompt deny)
+
+        valid? =
+          Enum.all?(overrides, fn {k, v} ->
+            k_str = to_string(k)
+            v_str = to_string(v)
+            k_str in allowed_cats and v_str in allowed_vals
+          end)
+
+        if valid?,
+          do: changeset,
+          else:
+            add_error(changeset, :tool_category_overrides, "contains invalid category overrides")
+
+      _ ->
+        add_error(changeset, :tool_category_overrides, "must be a map of category overrides")
+    end
+  end
+
+  defp validate_custom_env_vars(changeset) do
+    case get_field(changeset, :custom_env_vars) do
+      nil ->
+        put_change(changeset, :custom_env_vars, %{})
+
+      vars when is_map(vars) and map_size(vars) <= 128 ->
+        valid? =
+          Enum.all?(vars, fn {k, v} ->
+            k_str = to_string(k)
+            v_str = to_string(v)
+
+            byte_size(k_str) > 0 and byte_size(k_str) <= 256 and
+              not String.contains?(k_str, "=") and
+              byte_size(v_str) <= 4096
+          end)
+
+        if valid?,
+          do: changeset,
+          else: add_error(changeset, :custom_env_vars, "contains invalid environment variables")
+
+      _ ->
+        add_error(
+          changeset,
+          :custom_env_vars,
+          "must be a map with at most 128 environment variables"
+        )
+    end
   end
 end

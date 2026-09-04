@@ -34,4 +34,24 @@ defmodule IexCode.Repo do
         reraise e, __STACKTRACE__
       end
   end
+
+  @doc """
+  Flushes SQLite write-ahead log (WAL) frames to the database file and truncates the WAL.
+  Executes `PRAGMA wal_checkpoint(TRUNCATE);`.
+  """
+  @spec checkpoint_wal() :: {:ok, term()} | {:error, term()}
+  def checkpoint_wal do
+    retry_on_busy(
+      fn ->
+        result = Ecto.Adapters.SQL.query!(__MODULE__, "PRAGMA wal_checkpoint(TRUNCATE);", [])
+        {:ok, result}
+      end,
+      3,
+      10
+    )
+  rescue
+    e -> {:error, e}
+  catch
+    :exit, e -> {:error, e}
+  end
 end

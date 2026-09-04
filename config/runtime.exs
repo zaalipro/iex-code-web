@@ -190,6 +190,8 @@ if config_env() == :prod do
 
   config :iex_code, :resource_governor, profile: resource_profile
 
+  config :iex_code, :memory_guardrail, memory_limit_bytes: memory_limit_mib * 1_048_576
+
   config :iex_code, :http_pool,
     size: http_pool_size,
     pool_max_idle_time: http_pool_idle_ms,

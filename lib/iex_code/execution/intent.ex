@@ -30,9 +30,10 @@ defmodule IexCode.Execution.Intent do
           | :research_attachment
           | :navigate
           | :help
+          | :create_workflow
 
   @type durability :: :interactive | :durable | :none
-  @type mode :: :single | :swarm | :research | :navigation | :help
+  @type mode :: :single | :swarm | :research | :navigation | :help | :workflow
 
   @type t :: %__MODULE__{
           kind: kind(),

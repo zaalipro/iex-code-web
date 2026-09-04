@@ -445,13 +445,23 @@ defmodule IexCodeWeb.WorkspaceLiveM3M4Test do
     test "switches calendar months and dates", %{view: view} do
       view |> element("#instrument-card-calendar") |> render_click()
 
+      today = Date.utc_today()
+      current_month_str = Calendar.strftime(today, "%B, %Y")
+
+      next_month_date =
+        if today.month == 12,
+          do: Date.new!(today.year + 1, 1, 1),
+          else: Date.new!(today.year, today.month + 1, 1)
+
+      next_month_str = Calendar.strftime(next_month_date, "%B, %Y")
+
       # Next month
       render_click(view, "calendar_next_month")
-      assert render(view) =~ "September, 2026"
+      assert render(view) =~ next_month_str
 
-      # Prev month back to August
+      # Prev month back to current month
       render_click(view, "calendar_prev_month")
-      assert render(view) =~ "August, 2026"
+      assert render(view) =~ current_month_str
     end
 
     test "modifies task priority and assignee from Task Drawer", %{

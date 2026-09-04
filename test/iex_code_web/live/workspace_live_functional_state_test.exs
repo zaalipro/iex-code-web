@@ -290,22 +290,30 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
     project = create_project_fixture(%{root_path: path})
     session = create_session_fixture(project)
 
+    today = Date.utc_today()
+    this_month_dt = DateTime.new!(Date.new!(today.year, today.month, 14), ~T[09:00:00], "Etc/UTC")
+
+    {next_year, next_month} =
+      if today.month == 12, do: {today.year + 1, 1}, else: {today.year, today.month + 1}
+
+    next_month_dt = DateTime.new!(Date.new!(next_year, next_month, 14), ~T[09:00:00], "Etc/UTC")
+
     {:ok, _task} =
       Kanban.create_task(%{
         project_id: project.id,
         session_id: session.id,
-        title: "August target task",
+        title: "Current month target task",
         status: "scheduled",
-        scheduled_at: ~U[2026-08-14 09:00:00Z]
+        scheduled_at: this_month_dt
       })
 
     {:ok, _task} =
       Kanban.create_task(%{
         project_id: project.id,
         session_id: session.id,
-        title: "September same-day task",
+        title: "Next month same-day task",
         status: "scheduled",
-        scheduled_at: ~U[2026-09-14 09:00:00Z]
+        scheduled_at: next_month_dt
       })
 
     {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}")
@@ -318,8 +326,8 @@ defmodule IexCodeWeb.WorkspaceLiveFunctionalStateTest do
       |> LazyHTML.query("#calendar-grid")
       |> LazyHTML.text()
 
-    assert calendar_grid =~ "August target task"
-    refute calendar_grid =~ "September same-day task"
+    assert calendar_grid =~ "Current month target task"
+    refute calendar_grid =~ "Next month same-day task"
   end
 
   test "file atlas workbench exposes bounded inventory and focus controls", %{
