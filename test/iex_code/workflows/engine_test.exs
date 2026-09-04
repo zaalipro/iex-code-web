@@ -366,6 +366,8 @@ defmodule IexCode.Workflows.EngineTest do
       # DB record reflects failed status and explicit abort reason
       db_run = Workflows.get_run!(run.id)
       assert db_run.status == "failed"
+      assert db_run.completed_at != nil
+      assert db_run.step_states["step_1"]["status"] == "pending"
 
       assert db_run.error_message ==
                "Workflow run aborted: critical memory pressure persisted for >120s"
@@ -423,6 +425,187 @@ defmodule IexCode.Workflows.EngineTest do
 
       db_run = Workflows.get_run!(run.id)
       assert db_run.status == "completed"
+    end
+
+    test "tolerates exceptions in memory_checker without crashing engine and proceeds" do
+      project = create_test_project()
+
+      single_step_workflow = %{
+        project_id: project.id,
+        name: "Resilient Pipeline",
+        slug: "resilient-pipeline-#{System.unique_integer([:positive])}",
+        steps: [
+          %{
+            "key" => "step_1",
+            "kind" => "deep_research",
+            "title" => "Step 1",
+            "depends_on" => [],
+            "params" => %{"query" => "Query 1"}
+          }
+        ]
+      }
+
+      {:ok, workflow} = Workflows.create_workflow(single_step_workflow)
+      {:ok, run} = Workflows.launch_workflow(workflow, %{}, async: false)
+
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{run.id}")
+
+      # Memory checker raises an unhandled error
+      faulty_checker = fn -> raise "Simulated memory subsystem failure" end
+
+      {:ok, engine_pid} =
+        Engine.start_link(
+          run_id: run.id,
+          memory_checker: faulty_checker,
+          max_pressure_backoffs: 3,
+          pressure_backoff_interval_ms: 10
+        )
+
+      ref = Process.monitor(engine_pid)
+
+      # Engine survives the checker exception and proceeds to execute step
+      assert_receive {:workflow_run_started, _started_run}, 2000
+      assert_receive {:workflow_step_started, "step_1", _step}, 2000
+      assert_receive {:workflow_step_completed, "step_1", _output}, 3000
+      assert_receive {:workflow_run_completed, completed_run}, 3000
+
+      assert completed_run.status == "completed"
+      assert_receive {:DOWN, ^ref, :process, ^engine_pid, :normal}, 2000
+    end
+
+    test "resets pressure backoff count when run is resumed" do
+      project = create_test_project()
+
+      single_step_workflow = %{
+        project_id: project.id,
+        name: "Backoff Reset Pipeline",
+        slug: "backoff-reset-pipeline-#{System.unique_integer([:positive])}",
+        steps: [
+          %{
+            "key" => "step_1",
+            "kind" => "deep_research",
+            "title" => "Step 1",
+            "depends_on" => [],
+            "params" => %{"query" => "Query 1"}
+          }
+        ]
+      }
+
+      {:ok, workflow} = Workflows.create_workflow(single_step_workflow)
+      {:ok, run} = Workflows.launch_workflow(workflow, %{}, async: false)
+
+      {:ok, engine_pid} =
+        Engine.start_link(
+          run_id: run.id,
+          memory_checker: fn -> true end,
+          max_pressure_backoffs: 10,
+          pressure_backoff_interval_ms: 10
+        )
+
+      # Wait for at least 2 backoff increments
+      Process.sleep(30)
+      {:ok, status} = Engine.get_status(run.id)
+      assert status.pressure_backoff_count >= 1
+
+      # Pause and resume
+      assert :ok = Engine.pause_run(run.id)
+      assert :ok = Engine.resume_run(run.id)
+
+      {:ok, status_after} = Engine.get_status(run.id)
+      # Resume reset the counter to 0 (or 1 if immediate next backoff occurred)
+      assert status_after.pressure_backoff_count < status.pressure_backoff_count
+
+      Process.exit(engine_pid, :kill)
+    end
+
+    test "step failure updates pending steps to failed and marks completed_at timestamp" do
+      project = create_test_project()
+
+      failing_step_workflow = %{
+        project_id: project.id,
+        name: "Failing Pipeline",
+        slug: "failing-pipeline-#{System.unique_integer([:positive])}",
+        steps: [
+          %{
+            "key" => "step_1",
+            "kind" => "git_commit",
+            "title" => "Will Fail",
+            "depends_on" => [],
+            "params" => %{"commit_message" => "test"},
+            "safety_policy" => "read_only"
+          },
+          %{
+            "key" => "step_2",
+            "kind" => "deep_research",
+            "title" => "Should Be Aborted",
+            "depends_on" => ["step_1"],
+            "params" => %{}
+          }
+        ]
+      }
+
+      {:ok, workflow} = Workflows.create_workflow(failing_step_workflow)
+      {:ok, run} = Workflows.launch_workflow(workflow, %{}, async: false)
+
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{run.id}")
+
+      {:ok, engine_pid} = Engine.start_link(run_id: run.id)
+      ref = Process.monitor(engine_pid)
+
+      assert_receive {:workflow_run_started, _started_run}, 2000
+      assert_receive {:workflow_step_failed, "step_1", _err}, 3000
+      assert_receive {:workflow_run_failed, failed_run, _reason}, 3000
+      assert_receive {:DOWN, ^ref, :process, ^engine_pid, :normal}, 2000
+
+      assert failed_run.status == "failed"
+
+      db_run = Workflows.get_run!(run.id)
+      assert db_run.status == "failed"
+      assert db_run.completed_at != nil
+      assert db_run.step_states["step_1"]["status"] == "failed"
+      assert db_run.step_states["step_2"]["status"] == "pending"
+    end
+
+    test "Workflows.launch_workflow forwards engine options to Engine.start_run" do
+      project = create_test_project()
+
+      single_step_workflow = %{
+        project_id: project.id,
+        name: "Opts Forwarding Pipeline",
+        slug: "opts-forward-pipeline-#{System.unique_integer([:positive])}",
+        steps: [
+          %{
+            "key" => "step_1",
+            "kind" => "deep_research",
+            "title" => "Step 1",
+            "depends_on" => [],
+            "params" => %{"query" => "Query 1"}
+          }
+        ]
+      }
+
+      {:ok, workflow} = Workflows.create_workflow(single_step_workflow)
+
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{workflow.id}")
+
+      # Launch workflow with custom max_pressure_backoffs and interval via async Engine.start_run
+      {:ok, run} =
+        Workflows.launch_workflow(workflow, %{},
+          async: true,
+          memory_checker: fn -> true end,
+          max_pressure_backoffs: 2,
+          pressure_backoff_interval_ms: 10
+        )
+
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{run.id}")
+
+      assert_receive {:workflow_run_failed, _failed_run,
+                      "Workflow run aborted: critical memory pressure persisted for >120s"},
+                     2000
+
+      db_run = Workflows.get_run!(run.id)
+      assert db_run.status == "failed"
+      assert db_run.completed_at != nil
     end
   end
 end

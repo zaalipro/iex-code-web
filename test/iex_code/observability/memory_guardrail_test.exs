@@ -32,6 +32,11 @@ defmodule IexCode.Observability.MemoryGuardrailTest do
       assert is_boolean(MemoryGuardrail.critical?())
       assert is_boolean(MemoryGuardrail.under_pressure?())
     end
+
+    test "critical?/1 and under_pressure?/1 fallback safely when server is nil or dead" do
+      assert is_boolean(MemoryGuardrail.critical?(nil))
+      assert is_boolean(MemoryGuardrail.under_pressure?(nil))
+    end
   end
 
   describe "force_remediation/0" do

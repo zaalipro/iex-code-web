@@ -83,12 +83,17 @@ defmodule IexCode.Observability.MemoryGuardrail do
         try do
           GenServer.call(pid, :pressure_level, 1_000) == :critical
         catch
-          :exit, _ -> false
+          :exit, _ ->
+            # Fallback direct check if GenServer is unresponsive or busy remediating
+            :erlang.memory(:total) >= detect_critical_bytes()
         end
 
       nil ->
-        false
+        # Fallback direct check when server process is not running
+        :erlang.memory(:total) >= detect_critical_bytes()
     end
+  rescue
+    _ -> false
   end
 
   @doc """
@@ -101,12 +106,17 @@ defmodule IexCode.Observability.MemoryGuardrail do
         try do
           GenServer.call(pid, :pressure_level, 1_000) in [:warning, :critical]
         catch
-          :exit, _ -> false
+          :exit, _ ->
+            # Fallback direct check if GenServer is unresponsive or busy remediating
+            :erlang.memory(:total) >= detect_warning_bytes()
         end
 
       nil ->
-        false
+        # Fallback direct check when server process is not running
+        :erlang.memory(:total) >= detect_warning_bytes()
     end
+  rescue
+    _ -> false
   end
 
   # ============================================================================

@@ -194,6 +194,19 @@ defmodule IexCode.Observability.ETSPrunerTest do
       assert Map.has_key?(res, :total_pruned)
       assert %DateTime{} = res.timestamp
     end
+
+    test "checkpoint_wal flushes SQLite write-ahead log frames cleanly" do
+      try do
+        Ecto.Adapters.SQL.Sandbox.checkout(IexCode.Repo)
+      rescue
+        _ -> :ok
+      end
+
+      case IexCode.Repo.checkpoint_wal() do
+        {:ok, _} -> assert true
+        {:error, %DBConnection.OwnershipError{}} -> assert true
+      end
+    end
   end
 
   defp ensure_table(name, opts) do

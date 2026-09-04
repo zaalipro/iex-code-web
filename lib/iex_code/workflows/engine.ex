@@ -206,7 +206,20 @@ defmodule IexCode.Workflows.Engine do
 
   @impl true
   def handle_info(:execute_next_layer, state) do
-    if state.memory_checker.() do
+    critical? =
+      try do
+        state.memory_checker.()
+      rescue
+        e ->
+          Logger.warning("[Workflows.Engine] Memory checker failed with exception: #{inspect(e)}")
+          false
+      catch
+        :exit, e ->
+          Logger.warning("[Workflows.Engine] Memory checker caught exit: #{inspect(e)}")
+          false
+      end
+
+    if critical? do
       new_count = state.pressure_backoff_count + 1
 
       if new_count >= state.max_pressure_backoffs do
@@ -317,7 +330,8 @@ defmodule IexCode.Workflows.Engine do
       state
       | step_states: new_step_states,
         step_outputs: new_outputs,
-        active_tasks: active_tasks
+        active_tasks: active_tasks,
+        pressure_backoff_count: 0
     }
 
     send(self(), :execute_next_layer)
@@ -366,9 +380,9 @@ defmodule IexCode.Workflows.Engine do
         active_tasks: active_tasks
     }
 
-    # If there are no other active tasks, stop
+    # If there are no other active tasks, finalize failure cleanly
     if map_size(active_tasks) == 0 do
-      {:stop, :normal, new_state}
+      finalize_run_failure(new_state, "Step #{step_key} failed: #{error_str}")
     else
       {:noreply, new_state}
     end
@@ -441,7 +455,7 @@ defmodule IexCode.Workflows.Engine do
       broadcast_run_event(updated_run, {:workflow_run_updated, updated_run})
     end
 
-    new_state = %{state | paused?: false, status: :running}
+    new_state = %{state | paused?: false, status: :running, pressure_backoff_count: 0}
     send(self(), :execute_next_layer)
     {:reply, :ok, new_state}
   end
@@ -523,12 +537,43 @@ defmodule IexCode.Workflows.Engine do
         broadcast_run_event(updated_run, {:workflow_run_updated, updated_run})
       end
 
-      new_state = %{state | status: :running, step_states: new_step_states, paused?: false}
+      new_state = %{
+        state
+        | status: :running,
+          step_states: new_step_states,
+          paused?: false,
+          pressure_backoff_count: 0
+      }
+
       send(self(), :execute_next_layer)
       {:reply, {:ok, updated_run || run}, new_state}
     else
       {:reply, {:error, :step_not_failed}, state}
     end
+  end
+
+  @impl true
+  def terminate(reason, state) do
+    Enum.each(state.active_tasks, fn {_k, pid} ->
+      if is_pid(pid) and Process.alive?(pid) do
+        Process.exit(pid, :kill)
+      end
+    end)
+
+    if reason not in [:normal, :shutdown] and
+         state.status not in [:completed, :cancelled, :failed] do
+      run = load_run(state.run_id)
+
+      if run && run.status not in ["completed", "cancelled", "failed"] do
+        update_run_record(run, %{
+          status: "failed",
+          error_message: "Engine terminated unexpectedly: #{inspect(reason)}",
+          completed_at: DateTime.utc_now()
+        })
+      end
+    end
+
+    :ok
   end
 
   # Helpers
@@ -651,13 +696,42 @@ defmodule IexCode.Workflows.Engine do
   end
 
   defp finalize_run_failure(state, reason) do
+    # Kill any active tasks to prevent resource leaks
+    Enum.each(state.active_tasks, fn {_k, pid} ->
+      if is_pid(pid) and Process.alive?(pid) do
+        Process.exit(pid, :kill)
+      end
+    end)
+
     run = load_run(state.run_id)
+    curr_step_states = (run && run.step_states) || state.step_states || %{}
+
+    {updated_step_states, aborted_keys} =
+      Enum.reduce(curr_step_states, {%{}, []}, fn {step_k, sinfo}, {acc_map, acc_keys} ->
+        sinfo_map = if is_map(sinfo), do: sinfo, else: %{}
+        status = Map.get(sinfo_map, "status")
+
+        if status == "running" do
+          new_sinfo =
+            sinfo_map
+            |> Map.put("status", "failed")
+            |> Map.put_new("error", reason)
+
+          {Map.put(acc_map, step_k, new_sinfo), [step_k | acc_keys]}
+        else
+          {Map.put(acc_map, step_k, sinfo), acc_keys}
+        end
+      end)
+
+    now = DateTime.utc_now()
 
     updated_run =
       if run do
         update_run_record(run, %{
           status: "failed",
           error_message: reason,
+          step_states: updated_step_states,
+          completed_at: now,
           current_step_key: nil
         })
       else
@@ -665,11 +739,16 @@ defmodule IexCode.Workflows.Engine do
       end
 
     if updated_run do
+      Enum.each(aborted_keys, fn step_k ->
+        broadcast_run_event(updated_run, {:step_state_updated, run.id, step_k, "failed"})
+      end)
+
       broadcast_run_event(updated_run, {:workflow_run_failed, updated_run, reason})
       broadcast_run_event(updated_run, {:workflow_run_updated, updated_run})
     end
 
-    {:stop, :normal, %{state | status: :failed}}
+    {:stop, :normal,
+     %{state | status: :failed, step_states: updated_step_states, active_tasks: %{}}}
   end
 
   defp load_run(run_id) do

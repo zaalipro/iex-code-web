@@ -237,7 +237,7 @@ defmodule IexCode.Workflows do
             )
 
           if async do
-            case Engine.start_run(run.id) do
+            case Engine.start_run(run.id, opts) do
               {:ok, _pid} ->
                 :ok
 
