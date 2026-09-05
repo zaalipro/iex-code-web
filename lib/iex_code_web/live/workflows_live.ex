@@ -605,7 +605,7 @@ defmodule IexCodeWeb.WorkflowsLive do
   def handle_event("validate_workflow", %{"workflow" => params}, socket) do
     changeset =
       %Workflow{}
-      |> Workflow.changeset(Map.put(params, "project_id", socket.assigns.project.id))
+      |> Workflow.changeset(workflow_form_params(params, socket))
       |> Map.put(:action, :validate)
 
     {:noreply, assign(socket, :workflow_form, to_form(changeset, as: :workflow))}
@@ -613,19 +613,7 @@ defmodule IexCodeWeb.WorkflowsLive do
 
   @impl true
   def handle_event("save_workflow", %{"workflow" => params}, socket) do
-    existing_steps =
-      case socket.assigns[:workflow_form] do
-        %{source: %Ecto.Changeset{} = cs} ->
-          Ecto.Changeset.get_field(cs, :steps) || []
-
-        _ ->
-          []
-      end
-
-    params =
-      params
-      |> Map.put("project_id", socket.assigns.project.id)
-      |> Map.put_new("steps", existing_steps)
+    params = workflow_form_params(params, socket)
 
     case Workflows.create_workflow(params) do
       {:ok, workflow} ->
@@ -686,6 +674,21 @@ defmodule IexCodeWeb.WorkflowsLive do
     %Workflow{}
     |> Workflow.changeset(blueprint)
     |> to_form(as: :workflow)
+  end
+
+  defp workflow_form_params(params, socket) do
+    existing_steps =
+      case socket.assigns[:workflow_form] do
+        %{source: %Ecto.Changeset{} = changeset} ->
+          Ecto.Changeset.get_field(changeset, :steps) || []
+
+        _ ->
+          []
+      end
+
+    params
+    |> Map.put("project_id", socket.assigns.project.id)
+    |> Map.put_new("steps", existing_steps)
   end
 
   defp load_context_session(nil), do: nil

@@ -330,7 +330,9 @@ defmodule IexCode.Engine.Agents.CoderAgent do
 
               run_tool_loop(
                 session_id,
-                messages ++ assistant_messages(text) ++ tool_messages,
+                messages ++
+                  [%{role: "assistant", content: text || "", tool_calls: tool_calls}] ++
+                  tool_messages,
                 system_prompt,
                 session,
                 project_root,
@@ -463,11 +465,6 @@ defmodule IexCode.Engine.Agents.CoderAgent do
   defp with_workspace_delegation(delegation, fun) do
     IexCode.WorkspaceLocks.with_delegation(delegation, fun)
   end
-
-  defp assistant_messages(text) when text in [nil, ""], do: []
-
-  defp assistant_messages(text) when is_binary(text),
-    do: [%{role: "assistant", content: text}]
 
   defp format_tool_output(output) when is_binary(output) do
     if byte_size(output) > 4000 do

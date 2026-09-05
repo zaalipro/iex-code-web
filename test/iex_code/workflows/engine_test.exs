@@ -4,6 +4,7 @@ defmodule IexCode.Workflows.EngineTest do
   alias IexCode.Projects.Project
   alias IexCode.Workflows
   alias IexCode.Workflows.Engine
+  alias IexCode.Workflows.WorkflowRun
 
   alias IexCode.Workflows.Steps.{
     DeepResearch,
@@ -223,6 +224,124 @@ defmodule IexCode.Workflows.EngineTest do
   end
 
   describe "Engine workflow run orchestration" do
+    test "fails closed when a persisted running step has no live task after restart" do
+      project = create_test_project()
+
+      {:ok, workflow} =
+        Workflows.create_workflow(%{
+          project_id: project.id,
+          name: "Restarted Pipeline",
+          slug: "restarted-pipeline-#{System.unique_integer([:positive])}",
+          steps: [
+            %{
+              "key" => "effect",
+              "kind" => "deep_research",
+              "title" => "External effect",
+              "depends_on" => [],
+              "params" => %{"query" => "durable workflows"}
+            }
+          ]
+        })
+
+      {:ok, run} = Workflows.launch_workflow(workflow, %{}, async: false)
+
+      run
+      |> WorkflowRun.changeset(%{
+        status: "running",
+        current_step_key: "effect",
+        step_states: %{"effect" => %{"status" => "running"}}
+      })
+      |> Repo.update!()
+
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{run.id}")
+
+      engine_pid = start_supervised!({Engine, run_id: run.id})
+      ref = Process.monitor(engine_pid)
+
+      assert_receive {:workflow_run_failed, failed_run, reason}, 2_000
+      assert reason =~ "interrupted while step(s) were in flight"
+      assert failed_run.step_states["effect"]["status"] == "failed"
+      assert_receive {:DOWN, ^ref, :process, ^engine_pid, :normal}, 2_000
+
+      persisted = Workflows.get_run!(run.id)
+      assert persisted.status == "failed"
+      assert persisted.step_states["effect"]["status"] == "failed"
+    end
+
+    test "fails the run when an untrappable step task exit produces no result" do
+      project = create_test_project()
+
+      {:ok, workflow} =
+        Workflows.create_workflow(%{
+          project_id: project.id,
+          name: "Killed Step Pipeline",
+          slug: "killed-step-pipeline-#{System.unique_integer([:positive])}",
+          steps: [
+            %{
+              "key" => "effect",
+              "kind" => "deep_research",
+              "title" => "External effect",
+              "depends_on" => [],
+              "params" => %{"query" => "durable workflows", "delay_ms" => 30_000}
+            }
+          ]
+        })
+
+      {:ok, run} = Workflows.launch_workflow(workflow, %{}, async: false)
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{run.id}")
+
+      engine_pid = start_supervised!({Engine, run_id: run.id})
+      engine_ref = Process.monitor(engine_pid)
+
+      assert_receive {:workflow_step_started, "effect", _step}, 2_000
+      %{active_tasks: %{"effect" => task_pid}} = :sys.get_state(engine_pid)
+      Process.exit(task_pid, :kill)
+
+      assert_receive {:workflow_step_failed, "effect", reason}, 2_000
+      assert reason =~ "killed"
+      assert_receive {:DOWN, ^engine_ref, :process, ^engine_pid, :normal}, 2_000
+
+      persisted = Workflows.get_run!(run.id)
+      assert persisted.status == "failed"
+      assert persisted.step_states["effect"]["status"] == "failed"
+    end
+
+    test "terminates supervised step tasks when the engine is killed" do
+      project = create_test_project()
+
+      {:ok, workflow} =
+        Workflows.create_workflow(%{
+          project_id: project.id,
+          name: "Engine Lifetime Pipeline",
+          slug: "engine-lifetime-pipeline-#{System.unique_integer([:positive])}",
+          steps: [
+            %{
+              "key" => "effect",
+              "kind" => "deep_research",
+              "title" => "External effect",
+              "depends_on" => [],
+              "params" => %{"query" => "durable workflows", "delay_ms" => 30_000}
+            }
+          ]
+        })
+
+      {:ok, run} = Workflows.launch_workflow(workflow, %{}, async: false)
+      Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{run.id}")
+
+      engine_pid = start_supervised!({Engine, run_id: run.id})
+      assert_receive {:workflow_step_started, "effect", _step}, 2_000
+
+      %{active_tasks: %{"effect" => task_pid}} = :sys.get_state(engine_pid)
+      task_ref = Process.monitor(task_pid)
+      Process.exit(engine_pid, :kill)
+
+      assert_receive {:DOWN, ^task_ref, :process, ^task_pid, _reason}, 2_000
+      assert_receive {:workflow_run_failed, failed_run, reason}, 2_000
+      assert reason =~ "interrupted while step(s) were in flight"
+      assert failed_run.step_states["effect"]["status"] == "failed"
+      assert Workflows.get_run!(run.id).status == "failed"
+    end
+
     test "launches workflow, advances topologically, pipes variables, and broadcasts PubSub" do
       project = create_test_project()
       {:ok, workflow} = Workflows.create_workflow(sample_workflow_attrs(project.id))
@@ -494,28 +613,28 @@ defmodule IexCode.Workflows.EngineTest do
       {:ok, workflow} = Workflows.create_workflow(single_step_workflow)
       {:ok, run} = Workflows.launch_workflow(workflow, %{}, async: false)
 
-      {:ok, engine_pid} =
-        Engine.start_link(
-          run_id: run.id,
-          memory_checker: fn -> true end,
-          max_pressure_backoffs: 10,
-          pressure_backoff_interval_ms: 10
+      engine_pid =
+        start_supervised!(
+          {Engine,
+           run_id: run.id,
+           memory_checker: fn -> true end,
+           max_pressure_backoffs: 10,
+           pressure_backoff_interval_ms: 60_000}
         )
 
-      # Wait for at least 2 backoff increments
-      Process.sleep(30)
+      # Drive checks through the mailbox; automatic retries stay outside the test window.
+      send(engine_pid, :execute_next_layer)
+      send(engine_pid, :execute_next_layer)
       {:ok, status} = Engine.get_status(run.id)
-      assert status.pressure_backoff_count >= 1
+      assert status.pressure_backoff_count >= 2
 
       # Pause and resume
       assert :ok = Engine.pause_run(run.id)
       assert :ok = Engine.resume_run(run.id)
 
       {:ok, status_after} = Engine.get_status(run.id)
-      # Resume reset the counter to 0 (or 1 if immediate next backoff occurred)
-      assert status_after.pressure_backoff_count < status.pressure_backoff_count
-
-      Process.exit(engine_pid, :kill)
+      # Resume schedules exactly one immediate pressure check after resetting.
+      assert status_after.pressure_backoff_count == 1
     end
 
     test "step failure updates pending steps to failed and marks completed_at timestamp" do

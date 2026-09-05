@@ -103,7 +103,7 @@ defmodule IexCode.LLM.ContextCompactor do
   defp apply_strategy("sliding_window", messages, _target_tokens, keep_turns, _model_name) do
     case messages do
       [root | rest] when length(rest) > keep_turns ->
-        recent = Enum.take(rest, -keep_turns)
+        {_older, recent} = split_recent(rest, keep_turns)
         [root | recent]
 
       _other ->
@@ -114,9 +114,7 @@ defmodule IexCode.LLM.ContextCompactor do
   defp apply_strategy("rolling_summary", messages, target_tokens, keep_turns, model_name) do
     case messages do
       [root | rest] when length(rest) > keep_turns ->
-        older_count = length(rest) - keep_turns
-        older = Enum.take(rest, older_count)
-        recent = Enum.take(rest, -keep_turns)
+        {older, recent} = split_recent(rest, keep_turns)
 
         summary_lines = build_summary_lines(older)
 
@@ -175,6 +173,24 @@ defmodule IexCode.LLM.ContextCompactor do
   defp apply_strategy(_unknown_strategy, messages, target_tokens, keep_turns, model_name) do
     apply_strategy("token_compaction", messages, target_tokens, keep_turns, model_name)
   end
+
+  # A tool request and all of its replies are one protocol exchange. Expand a
+  # cut through the replies back to the assistant request, even when that means
+  # keeping more than the preferred number of recent messages.
+  defp split_recent(messages, keep_turns) do
+    {older, recent} = Enum.split(messages, max(length(messages) - keep_turns, 0))
+    restore_tool_request(Enum.reverse(older), recent)
+  end
+
+  defp restore_tool_request([previous | older] = reversed_older, [first | _] = recent) do
+    if to_string(get_message_field(first, :role)) == "tool" do
+      restore_tool_request(older, [previous | recent])
+    else
+      {Enum.reverse(reversed_older), recent}
+    end
+  end
+
+  defp restore_tool_request(reversed_older, recent), do: {Enum.reverse(reversed_older), recent}
 
   @doc """
   Compacts a single message if it contains bulky tool outputs.

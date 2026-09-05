@@ -125,6 +125,57 @@ defmodule IexCode.Engine.OperationMonitorTest do
     assert %Operation{status: "failed"} = Sessions.get_operation(operation.id)
   end
 
+  test "a registered task that exits normally before terminal persistence is finalized", %{
+    session: session
+  } do
+    {:ok, operation} =
+      Sessions.create_operation(%{
+        session_id: session.id,
+        agent_name: "EarlyNormalExitWorker",
+        op_type: "early_normal_exit",
+        title: "Exit before terminal persistence",
+        status: "running",
+        started_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+
+    test_pid = self()
+
+    task_pid =
+      start_supervised!(
+        Supervisor.child_spec(
+          {Task,
+           fn ->
+             send(test_pid, {:normal_exit_task_ready, self()})
+             receive do: (:finish -> :ok)
+           end},
+          id: :early_normal_exit_operation_task,
+          restart: :temporary
+        )
+      )
+
+    assert_receive {:normal_exit_task_ready, ^task_pid}
+
+    assert :ok =
+             OperationMonitor.register(task_pid, %{
+               session_id: session.id,
+               operation_id: operation.id,
+               started_monotonic_ms: System.monotonic_time(:millisecond),
+               parent_caller: self(),
+               agent_name: operation.agent_name,
+               op_type: operation.op_type,
+               parent_op_id: operation.parent_op_id
+             })
+
+    send(task_pid, :finish)
+
+    assert :ok = OperationMonitor.await_idle()
+
+    assert %Operation{status: "failed", error_message: message} =
+             Sessions.get_operation(operation.id)
+
+    assert message =~ "exited normally"
+  end
+
   test "registration stays responsive while crash persistence is blocked" do
     test_pid = self()
 
@@ -182,6 +233,7 @@ defmodule IexCode.Engine.OperationMonitorTest do
 
     state = :sys.get_state(monitor)
     send(state.finalizer_pid, :release_finalization)
+    assert :ok = OperationMonitor.unregister(second, monitor)
     send(second, :finish)
     assert :ok = OperationMonitor.await_idle(1_000, monitor)
   end
@@ -271,6 +323,7 @@ defmodule IexCode.Engine.OperationMonitorTest do
 
     state = :sys.get_state(monitor)
     send(state.finalizer_pid, :release_reconciliation)
+    assert :ok = OperationMonitor.unregister(waiting_task, monitor)
     send(waiting_task, :finish)
     assert :ok = OperationMonitor.await_idle(1_000, monitor)
   end

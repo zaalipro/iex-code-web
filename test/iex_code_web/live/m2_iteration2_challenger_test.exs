@@ -127,13 +127,31 @@ defmodule IexCodeWeb.M2Iteration2ChallengerTest do
     test "mid-flight cancellation transitions running AND pending steps to 'cancelled' in DB and broadcasts",
          %{conn: conn, project: project, session: session} do
       workflow = create_3step_workflow(project)
-      run = create_test_run(workflow, project, session)
+
+      blocking_steps =
+        List.update_at(workflow.steps, 0, fn step ->
+          put_in(step, ["params", "delay_ms"], 30_000)
+        end)
+
+      pending_states =
+        Map.new(blocking_steps, fn step ->
+          {step["key"], %{"status" => "pending", "progress" => 0, "output" => %{}}}
+        end)
+
+      run =
+        create_test_run(workflow, project, session, %{
+          status: "pending",
+          progress: 0,
+          current_step_key: nil,
+          resolved_steps: blocking_steps,
+          step_states: pending_states
+        })
 
       Phoenix.PubSub.subscribe(IexCode.PubSub, "workflow_run:#{run.id}")
 
-      # Start live engine for run
-      {:ok, engine_pid} = Engine.start_link(run_id: run.id)
-      assert Process.alive?(engine_pid)
+      engine_pid = start_supervised!({Engine, run_id: run.id})
+      engine_ref = Process.monitor(engine_pid)
+      assert_receive {:workflow_step_started, "research", _step}, 2_000
 
       # Connect LiveView cockpit
       {:ok, view, _html} = live(conn, ~p"/workflows/#{workflow.id}/runs/#{run.id}")
@@ -142,8 +160,8 @@ defmodule IexCodeWeb.M2Iteration2ChallengerTest do
       assert :ok = Workflows.cancel_run(run.id)
 
       # Engine must terminate
+      assert_receive {:DOWN, ^engine_ref, :process, ^engine_pid, :normal}, 2_000
       _ = :sys.get_state(view.pid)
-      refute Process.alive?(engine_pid)
 
       # Assert DB record: run status and step_states strictly set to "cancelled"
       reloaded_run = Workflows.get_run!(run.id)

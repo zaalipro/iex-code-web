@@ -248,6 +248,44 @@ defmodule IexCodeWeb.WorkflowsLiveTest do
       assert html =~ "git_commit"
     end
 
+    test "metadata validation preserves generated steps when saving a session workflow", %{
+      conn: conn,
+      project: project,
+      session: session
+    } do
+      {:ok, view, _html} = live(conn, ~p"/sessions/#{session.id}/workflows/new")
+      slug = "review-generated-dag-#{System.unique_integer([:positive])}"
+
+      assert has_element?(view, "#workflow-config-form")
+
+      view
+      |> form("#workflow-config-form", %{
+        "workflow" => %{
+          "name" => "Reviewed Generated DAG",
+          "slug" => slug,
+          "description" => "Metadata edited after synthesis"
+        }
+      })
+      |> render_change()
+
+      result =
+        view
+        |> form("#workflow-config-form", %{
+          "workflow" => %{
+            "name" => "Reviewed Generated DAG",
+            "slug" => slug,
+            "description" => "Metadata edited after synthesis"
+          }
+        })
+        |> render_submit()
+
+      assert {:error, {:live_redirect, %{to: target_path}}} = result
+      workflow = Workflows.get_workflow_by_slug(project.id, slug)
+
+      assert target_path == ~p"/sessions/#{session.id}/workflows/#{workflow.id}"
+      assert length(workflow.steps) == 5
+    end
+
     test "submits valid workflow and navigates to workflow show view", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/workflows/new")
 

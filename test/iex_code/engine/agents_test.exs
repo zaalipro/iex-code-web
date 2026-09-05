@@ -106,6 +106,24 @@ defmodule IexCode.Engine.AgentsTest do
   end
 
   describe "PlannerAgent GenServer" do
+    test "propagates provider cancellation instead of reporting a default plan", %{
+      session: session,
+      project: project
+    } do
+      {:ok, pid} =
+        AgentSupervisor.start_agent(session.id, :planner,
+          project_root: project.root_path,
+          llm: IexCode.CancelledLLMStub
+        )
+
+      Ecto.Adapters.SQL.Sandbox.allow(IexCode.Repo, self(), pid)
+
+      assert {:error, :cancelled} = PlannerAgent.plan(pid, "Cancellation must stop planning")
+      assert PlannerAgent.get_state(pid).last_result == {:error, :cancelled}
+
+      AgentSupervisor.stop_agent(session.id, :planner)
+    end
+
     test "plans goal decomposition and tracks state", %{session: session, project: project} do
       {:ok, pid} =
         AgentSupervisor.start_agent(session.id, :planner, project_root: project.root_path)

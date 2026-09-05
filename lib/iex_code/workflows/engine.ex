@@ -26,6 +26,7 @@ defmodule IexCode.Workflows.Engine do
     step_states: %{},
     step_outputs: %{},
     active_tasks: %{},
+    task_refs: %{},
     paused?: false,
     cancelled?: false,
     pressure_backoff_count: 0,
@@ -117,6 +118,7 @@ defmodule IexCode.Workflows.Engine do
 
   @impl true
   def init(opts) do
+    Process.flag(:trap_exit, true)
     run_id = Keyword.fetch!(opts, :run_id)
     max_pressure_backoffs = Keyword.get(opts, :max_pressure_backoffs, 120)
     pressure_backoff_interval_ms = Keyword.get(opts, :pressure_backoff_interval_ms, 1_000)
@@ -175,22 +177,35 @@ defmodule IexCode.Workflows.Engine do
             step_outputs: step_outputs
         }
 
-        if current_status == :running do
-          # Update DB to running
-          updated_run =
-            update_run_record(run, %{
-              status: "running",
-              started_at: run.started_at || DateTime.utc_now(),
-              step_states: initial_step_states
-            })
+        in_flight_keys =
+          initial_step_states
+          |> Enum.filter(fn {_key, step_state} -> Map.get(step_state, "status") == "running" end)
+          |> Enum.map(&elem(&1, 0))
 
-          broadcast_run_event(updated_run, {:workflow_run_started, updated_run})
-          broadcast_run_event(updated_run, {:workflow_run_updated, updated_run})
+        cond do
+          in_flight_keys != [] ->
+            finalize_run_failure(
+              new_state,
+              "Workflow engine interrupted while step(s) were in flight: #{Enum.join(in_flight_keys, ", ")}; retry is required"
+            )
 
-          send(self(), :execute_next_layer)
+          current_status == :running ->
+            updated_run =
+              update_run_record(run, %{
+                status: "running",
+                started_at: run.started_at || DateTime.utc_now(),
+                step_states: initial_step_states
+              })
+
+            broadcast_run_event(updated_run, {:workflow_run_started, updated_run})
+            broadcast_run_event(updated_run, {:workflow_run_updated, updated_run})
+
+            send(self(), :execute_next_layer)
+            {:noreply, new_state}
+
+          true ->
+            {:noreply, new_state}
         end
-
-        {:noreply, new_state}
     end
   end
 
@@ -290,6 +305,8 @@ defmodule IexCode.Workflows.Engine do
   # Step completion from async Task
   @impl true
   def handle_info({:step_completed, step_key, output, duration_ms}, state) do
+    state = drop_active_task(state, step_key)
+
     updated_step_state = %{
       "status" => "completed",
       "output" => output,
@@ -299,8 +316,6 @@ defmodule IexCode.Workflows.Engine do
 
     new_step_states = Map.put(state.step_states, step_key, updated_step_state)
     new_outputs = Map.put(state.step_outputs, step_key, output)
-    active_tasks = Map.delete(state.active_tasks, step_key)
-
     total_count = max(1, length(state.steps))
 
     completed_count =
@@ -330,7 +345,6 @@ defmodule IexCode.Workflows.Engine do
       state
       | step_states: new_step_states,
         step_outputs: new_outputs,
-        active_tasks: active_tasks,
         pressure_backoff_count: 0
     }
 
@@ -341,6 +355,7 @@ defmodule IexCode.Workflows.Engine do
   # Step failure from async Task
   @impl true
   def handle_info({:step_failed, step_key, error_reason, duration_ms}, state) do
+    state = drop_active_task(state, step_key)
     error_str = format_error_reason(error_reason)
 
     updated_step_state = %{
@@ -351,8 +366,6 @@ defmodule IexCode.Workflows.Engine do
     }
 
     new_step_states = Map.put(state.step_states, step_key, updated_step_state)
-    active_tasks = Map.delete(state.active_tasks, step_key)
-
     run = load_run(state.run_id)
 
     updated_run =
@@ -376,15 +389,37 @@ defmodule IexCode.Workflows.Engine do
     new_state = %{
       state
       | status: :failed,
-        step_states: new_step_states,
-        active_tasks: active_tasks
+        step_states: new_step_states
     }
 
     # If there are no other active tasks, finalize failure cleanly
-    if map_size(active_tasks) == 0 do
+    if map_size(new_state.active_tasks) == 0 do
       finalize_run_failure(new_state, "Step #{step_key} failed: #{error_str}")
     else
       {:noreply, new_state}
+    end
+  end
+
+  @impl true
+  def handle_info({ref, {:step_result, result, duration_ms}}, state) when is_reference(ref) do
+    case Map.get(state.task_refs, ref) do
+      nil ->
+        {:noreply, state}
+
+      step_key ->
+        case result do
+          {:ok, output} ->
+            handle_info({:step_completed, step_key, output, duration_ms}, state)
+
+          {:error, reason} ->
+            handle_info({:step_failed, step_key, reason, duration_ms}, state)
+
+          unexpected ->
+            handle_info(
+              {:step_failed, step_key, {:unexpected_step_result, unexpected}, duration_ms},
+              state
+            )
+        end
     end
   end
 
@@ -394,8 +429,20 @@ defmodule IexCode.Workflows.Engine do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
-    {:noreply, state}
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.task_refs, ref) do
+      {nil, _task_refs} ->
+        {:noreply, state}
+
+      {step_key, task_refs} ->
+        state = %{
+          state
+          | task_refs: task_refs,
+            active_tasks: Map.delete(state.active_tasks, step_key)
+        }
+
+        handle_info({:step_failed, step_key, {:step_task_exit, reason}, 0}, state)
+    end
   end
 
   @impl true
@@ -580,7 +627,6 @@ defmodule IexCode.Workflows.Engine do
 
   defp launch_step(step, state) do
     step_key = WorkflowDag.step_key(step)
-    engine_pid = self()
 
     # Mark step as running
     updated_step_state = %{
@@ -618,25 +664,41 @@ defmodule IexCode.Workflows.Engine do
         _ -> step
       end
 
-    # Spawn async worker task
-    {:ok, task_pid} =
-      Task.start(fn ->
+    # Supervise and monitor every step so an exit without a result cannot leave
+    # durable state stuck in "running".
+    task =
+      Task.Supervisor.async(IexCode.TaskSupervisor, fn ->
         start_mono = System.monotonic_time(:millisecond)
-
-        case Dispatcher.dispatch(interpolated_step, context) do
-          {:ok, output} ->
-            dur = System.monotonic_time(:millisecond) - start_mono
-            send(engine_pid, {:step_completed, step_key, output, dur})
-
-          {:error, reason} ->
-            dur = System.monotonic_time(:millisecond) - start_mono
-            send(engine_pid, {:step_failed, step_key, reason, dur})
-        end
+        result = Dispatcher.dispatch(interpolated_step, context)
+        duration_ms = System.monotonic_time(:millisecond) - start_mono
+        {:step_result, result, duration_ms}
       end)
 
-    active_tasks = Map.put(state.active_tasks, step_key, task_pid)
+    active_tasks = Map.put(state.active_tasks, step_key, task.pid)
+    task_refs = Map.put(state.task_refs, task.ref, step_key)
 
-    %{state | step_states: new_step_states, active_tasks: active_tasks}
+    %{
+      state
+      | step_states: new_step_states,
+        active_tasks: active_tasks,
+        task_refs: task_refs
+    }
+  end
+
+  defp drop_active_task(state, step_key) do
+    case Enum.find(state.task_refs, fn {_ref, key} -> key == step_key end) do
+      {ref, ^step_key} ->
+        Process.demonitor(ref, [:flush])
+
+        %{
+          state
+          | active_tasks: Map.delete(state.active_tasks, step_key),
+            task_refs: Map.delete(state.task_refs, ref)
+        }
+
+      nil ->
+        %{state | active_tasks: Map.delete(state.active_tasks, step_key)}
+    end
   end
 
   defp build_step_context(state) do
@@ -819,5 +881,6 @@ defmodule IexCode.Workflows.Engine do
     do: "Verification failed: #{map["verdict"]}"
 
   defp format_error_reason({:step_exception, msg, _}), do: "Exception: #{msg}"
+  defp format_error_reason({:step_task_exit, reason}), do: "Step task exited: #{inspect(reason)}"
   defp format_error_reason(other), do: inspect(other)
 end

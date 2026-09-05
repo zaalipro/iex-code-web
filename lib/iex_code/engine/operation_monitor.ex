@@ -315,8 +315,9 @@ defmodule IexCode.Engine.OperationMonitor do
     end
   end
 
-  defp enqueue_finalization(state, _metadata, :normal), do: state
-
+  # Successful operation tasks unregister only after persisting their terminal
+  # state. Any task still registered at DOWN therefore needs finalization, even
+  # when its exit reason is :normal.
   defp enqueue_finalization(state, metadata, reason) do
     send(state.finalizer_pid, {:finalize, metadata, reason, 1})
     %{state | pending_finalizations: state.pending_finalizations + 1}

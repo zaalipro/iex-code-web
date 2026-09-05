@@ -199,6 +199,9 @@ defmodule IexCode.Engine.Agents.PlannerAgent do
                     {:ok, plan_text}
                   end
 
+                {:error, :cancelled} ->
+                  {:error, :cancelled}
+
                 _ ->
                   fallback_plan =
                     """
