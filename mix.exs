@@ -63,7 +63,7 @@ defmodule IexCode.MixProject do
       {:jason, "~> 1.2"},
       {:req, "~> 0.7.4"},
       {:floki, ">= 0.36.0"},
-      {:dns_cluster, "~> 0.2.0"},
+      {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.5"}
     ]
   end
